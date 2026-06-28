@@ -1,0 +1,128 @@
+import { describe, expect, it } from 'vitest'
+import { drizzleUsageSink, llmCalls, type InsertableDb } from './index.js'
+import type { JsonValue, LlmCallRecord } from '@anyllm/core'
+
+type InsertCall = {
+  table: unknown
+  values: Record<string, unknown>
+  conflictIgnored: boolean
+}
+
+function makeRecord(overrides: Partial<LlmCallRecord> = {}): LlmCallRecord {
+  return {
+    recordSchemaVersion: 1,
+    callId: 'call_1',
+    attemptId: 'attempt_1',
+    callSiteId: 'site_1',
+    provider: 'google',
+    model: 'gemini-2.5-pro',
+    modelVersion: 'gemini-2.5-pro-001',
+    responseId: 'resp_123',
+    serviceTier: 'flex',
+    status: 'ok',
+    finishReason: 'stop',
+    latencyMs: 321,
+    inputTokens: 100,
+    outputTokens: 20,
+    cachedInputTokens: 10,
+    thinkingTokens: 4,
+    totalTokens: 120,
+    costMicroUsd: 456,
+    pricingVersion: 'gemini-2026-06-27',
+    tokenDetails: { input: 100, output: 20 } satisfies JsonValue,
+    rawUsage: { promptTokenCount: 100 } satisfies JsonValue,
+    providerMetadata: { safetyRatings: [] } satisfies JsonValue,
+    warnings: [{ type: 'other', message: 'warn' }] satisfies JsonValue,
+    generationConfig: { temperature: 0.2 } satisfies JsonValue,
+    reasoningText: 'thought summary',
+    errorKind: 'server',
+    errorMessage: 'boom',
+    metadata: { tenantId: 'tenant_1' } satisfies JsonValue,
+    createdAt: '2026-06-27T00:00:00.000Z',
+    ...overrides,
+  }
+}
+
+function makeDb(spy: InsertCall[]): InsertableDb {
+  return {
+    insert(table: unknown) {
+      return {
+        values(values: Record<string, unknown>) {
+          return {
+            async onConflictDoNothing() {
+              spy.push({ table, values, conflictIgnored: true })
+              return undefined
+            },
+          }
+        },
+      }
+    },
+  }
+}
+
+describe('drizzleUsageSink', () => {
+  it('maps every record field and dedupes retries with onConflictDoNothing', async () => {
+    const calls: InsertCall[] = []
+    const db = makeDb(calls)
+    const sink = drizzleUsageSink(db)
+    const record = makeRecord()
+
+    await sink.record(record)
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.table).toBe(llmCalls)
+    expect(calls[0]?.conflictIgnored).toBe(true)
+    expect(calls[0]?.values).toEqual({
+      recordSchemaVersion: 1,
+      callId: 'call_1',
+      attemptId: 'attempt_1',
+      callSiteId: 'site_1',
+      provider: 'google',
+      model: 'gemini-2.5-pro',
+      modelVersion: 'gemini-2.5-pro-001',
+      responseId: 'resp_123',
+      serviceTier: 'flex',
+      status: 'ok',
+      finishReason: 'stop',
+      latencyMs: 321,
+      inputTokens: 100,
+      outputTokens: 20,
+      cachedInputTokens: 10,
+      thinkingTokens: 4,
+      totalTokens: 120,
+      costMicroUsd: 456,
+      pricingVersion: 'gemini-2026-06-27',
+      tokenDetails: { input: 100, output: 20 },
+      rawUsage: { promptTokenCount: 100 },
+      providerMetadata: { safetyRatings: [] },
+      warnings: [{ type: 'other', message: 'warn' }],
+      generationConfig: { temperature: 0.2 },
+      reasoningText: 'thought summary',
+      errorKind: 'server',
+      errorMessage: 'boom',
+      metadata: { tenantId: 'tenant_1' },
+      createdAt: new Date('2026-06-27T00:00:00.000Z'),
+    })
+  })
+
+  it('persists api_error postmortem fields', async () => {
+    const calls: InsertCall[] = []
+    const db = makeDb(calls)
+    const sink = drizzleUsageSink(db)
+
+    await sink.record(
+      makeRecord({
+        status: 'api_error',
+        errorKind: 'invalid_auth',
+        errorMessage: 'upstream 503',
+      }),
+    )
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.values).toMatchObject({
+      status: 'api_error',
+      errorKind: 'invalid_auth',
+      errorMessage: 'upstream 503',
+    })
+  })
+})

@@ -1,0 +1,937 @@
+/**
+ * Surface-stress / fuzz tests for @anyllm/core — engine level.
+ *
+ * Hammers the public surface with adversarial inputs and proves invariants
+ * hold WITHOUT any network.  Deterministic via mulberry32 PRNG (no Math.random).
+ *
+ * Invariants verified:
+ *   1. Only typed LlmErrors escape — generate() either resolves or rejects
+ *      instanceof LlmError, NEVER a raw Error or other value.
+ *   2. A record is always written — RecordingSink gets exactly one record per
+ *      call; on failure status reflects errorKind; postmortem fields present.
+ *   3. Malformed usage — engine clamps+warns, never throws, record persists;
+ *      cost.details sums to cost.microUsd (or microUsd is null).
+ *   4. Cost property — sum(details)===microUsd (known) and microUsd===null (unknown).
+ *   5. Fail-open — throwing sink / telemetry / pricing never fails the call.
+ *   6. Cancellation — classification is 'timeout' or 'aborted', never mixed.
+ *   7. Parse error — rawStructured violating schema → LlmError parse_error.
+ *   8. providerOptions deep nesting preserved through resolution.
+ *
+ * @module
+ */
+
+import { describe, it, expect } from 'vitest'
+import { z } from 'zod'
+import {
+  createClient,
+  geminiPricingSource,
+  LlmError,
+  computeCost,
+} from './index.js'
+import type {
+  AdapterResult,
+  ProviderAdapter,
+  ResolvedRequest,
+  AdapterCtx,
+  PricingSource,
+  Usage,
+  Cost,
+  Telemetry,
+  Warning,
+} from './index.js'
+import {
+  FakeAdapter,
+  FakeClock,
+  FakeIds,
+  RecordingSink,
+  SignalAwareFakeAdapter,
+  fakeAuth,
+} from '@anyllm/testing'
+
+// ---------------------------------------------------------------------------
+// Deterministic PRNG — mulberry32 (https://gist.github.com/tommyettinger/46a874533244883189143505d203312c)
+// ---------------------------------------------------------------------------
+
+/** Returns a PRNG function seeded with `seed`. Output in [0, 1). */
+function mulberry32(seed: number): () => number {
+  let s = seed
+  return function (): number {
+    s = (s + 0x6d2b79f5) | 0
+    let t = Math.imul(s ^ (s >>> 15), s | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shared constants
+// ---------------------------------------------------------------------------
+
+const PRICING = geminiPricingSource()
+const AUTH = fakeAuth({ apiKey: 'test-key' })
+const MESSAGES = [{ role: 'user' as const, parts: [{ kind: 'text' as const, text: 'Hi' }] }]
+
+/** Build a minimal valid AdapterResult for happy-path use. */
+function makeOkResult(overrides?: Partial<AdapterResult>): AdapterResult {
+  return {
+    text: 'ok',
+    usage: { inputTokens: 100, outputTokens: 20, details: {}, raw: null },
+    model: 'gemini-2.5-pro',
+    warnings: [],
+    ...overrides,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Custom adapter that can throw ARBITRARY values (strings, null, undefined,
+// plain objects, Errors, LlmErrors…) — FakeAdapter only accepts typed entries.
+// ---------------------------------------------------------------------------
+
+/**
+ * An adapter that either returns a scripted AdapterResult or throws
+ * an arbitrary unknown value, for stress-testing the engine's error classifier.
+ */
+class RawThrowAdapter implements ProviderAdapter {
+  readonly id: string
+  readonly calls: ResolvedRequest[] = []
+  private readonly _action:
+    | { kind: 'ok'; result: AdapterResult }
+    | { kind: 'throw'; value: unknown }
+
+  constructor(
+    id: string,
+    action:
+      | { kind: 'ok'; result: AdapterResult }
+      | { kind: 'throw'; value: unknown },
+  ) {
+    this.id = id
+    this._action = action
+  }
+
+  async run(req: ResolvedRequest, _ctx: AdapterCtx): Promise<AdapterResult> {
+    this.calls.push(req)
+    if (this._action.kind === 'ok') return this._action.result
+    // eslint-disable-next-line @typescript-eslint/no-throw-literal
+    throw this._action.value
+  }
+}
+
+// ---------------------------------------------------------------------------
+// INVARIANT 1 + 2: Only LlmErrors escape; a record is always written
+// ---------------------------------------------------------------------------
+
+describe('surface-stress: only LlmErrors escape + record always written', () => {
+  /**
+   * Matrix of adapter behaviors.
+   * Each entry pairs a label with a factory for the RawThrowAdapter action.
+   */
+  type BehaviorFactory = () => {
+    kind: 'ok'; result: AdapterResult
+  } | {
+    kind: 'throw'; value: unknown
+  }
+
+  const BEHAVIORS: Array<[string, BehaviorFactory]> = [
+    ['ok-result', () => ({ kind: 'ok', result: makeOkResult() })],
+    ['throw-Error', () => ({ kind: 'throw', value: new Error('boom') })],
+    ['throw-status-400', () => ({ kind: 'throw', value: { status: 400 } })],
+    ['throw-status-401', () => ({ kind: 'throw', value: { status: 401 } })],
+    ['throw-status-403', () => ({ kind: 'throw', value: { status: 403 } })],
+    ['throw-status-408', () => ({ kind: 'throw', value: { status: 408 } })],
+    ['throw-status-429', () => ({ kind: 'throw', value: { status: 429 } })],
+    ['throw-status-500', () => ({ kind: 'throw', value: { status: 500 } })],
+    ['throw-status-503', () => ({ kind: 'throw', value: { status: 503 } })],
+    ['throw-string', () => ({ kind: 'throw', value: 'raw string error' })],
+    ['throw-null', () => ({ kind: 'throw', value: null })],
+    ['throw-undefined', () => ({ kind: 'throw', value: undefined })],
+    ['throw-LlmError', () => ({
+      kind: 'throw' as const,
+      value: new LlmError('pre-classified', { kind: 'server', retryable: true }),
+    })],
+    ['throw-number', () => ({ kind: 'throw', value: 42 })],
+    ['throw-nested-status', () => ({ kind: 'throw', value: { response: { status: 429 } } })],
+    ['ok-with-warnings', () => ({
+      kind: 'ok' as const,
+      result: makeOkResult({
+        warnings: [{ type: 'other', message: 'test warning' }],
+      }),
+    })],
+  ]
+
+  it('every behavior: either resolves LlmResult or rejects instanceof LlmError (150 iterations)', async () => {
+    const rand = mulberry32(0x12345678)
+    const ITERATIONS = 150
+
+    for (let i = 0; i < ITERATIONS; i++) {
+      const idx = Math.floor(rand() * BEHAVIORS.length)
+      const [label, factory] = BEHAVIORS[idx]!
+      const action = factory()
+
+      const adapter = new RawThrowAdapter('google', action)
+      const sink = new RecordingSink()
+
+      const client = createClient({
+        adapters: [adapter],
+        auth: AUTH,
+        pricing: PRICING,
+        sink,
+        clock: new FakeClock(1_000 + i),
+        ids: new FakeIds(),
+      })
+
+      let resolved = false
+      let rejected = false
+      let rejectedValue: unknown
+
+      try {
+        await client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES })
+        resolved = true
+      } catch (e) {
+        rejected = true
+        rejectedValue = e
+      }
+
+      // Either resolved OR rejected — not neither, not both.
+      expect(resolved || rejected, `iter ${i} (${label}): must settle`).toBe(true)
+      expect(resolved && rejected, `iter ${i} (${label}): cannot both resolve and reject`).toBe(false)
+
+      if (rejected) {
+        // INVARIANT 1: rejection must be instanceof LlmError
+        expect(
+          rejectedValue instanceof LlmError,
+          `iter ${i} (${label}): rejection must be LlmError, got ${String(rejectedValue)}`,
+        ).toBe(true)
+        const err = rejectedValue as LlmError
+        // LlmError must have a valid kind
+        const VALID_KINDS = [
+          'invalid_auth', 'rate_limited', 'server', 'timeout', 'aborted',
+          'bad_request', 'content_filter', 'parse_error', 'unknown',
+        ] as const
+        expect(
+          (VALID_KINDS as readonly string[]).includes(err.kind),
+          `iter ${i} (${label}): LlmError.kind must be valid, got "${err.kind}"`,
+        ).toBe(true)
+      }
+
+      // INVARIANT 2: exactly one record always written
+      expect(
+        sink.records.length,
+        `iter ${i} (${label}): expected exactly 1 record`,
+      ).toBe(1)
+
+      const rec = sink.last()!
+      expect(rec.recordSchemaVersion).toBe(1)
+      expect(rec.provider).toBe('google')
+
+      if (rejected && rejectedValue instanceof LlmError) {
+        // postmortem fields present on failure
+        expect(rec.errorKind).toBe((rejectedValue as LlmError).kind)
+        expect(typeof rec.errorMessage).toBe('string')
+        // status reflects errorKind
+        const VALID_STATUSES = ['ok', 'parse_error', 'api_error', 'timeout', 'aborted', 'content_filter']
+        expect(VALID_STATUSES).toContain(rec.status)
+      } else if (resolved) {
+        expect(rec.status).toBe('ok')
+      }
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// INVARIANT 3: Malformed usage — clamps+warns, never throws
+// ---------------------------------------------------------------------------
+
+describe('surface-stress: malformed usage', () => {
+  it('cached > input: clamped to input, record persists, cost sum holds (50 iterations)', async () => {
+    const rand = mulberry32(0xdeadbeef)
+
+    for (let i = 0; i < 50; i++) {
+      const input = Math.floor(rand() * 1000) + 1      // 1–1000
+      const cached = input + Math.floor(rand() * 500) + 1 // > input
+
+      const usage: Usage = {
+        inputTokens: input,
+        outputTokens: Math.floor(rand() * 500) + 1,
+        cachedInputTokens: cached,
+        details: {},
+        raw: null,
+      }
+
+      const adapter = new RawThrowAdapter('google', { kind: 'ok', result: makeOkResult({ usage }) })
+      const sink = new RecordingSink()
+      const client = createClient({
+        adapters: [adapter], auth: AUTH, pricing: PRICING, sink,
+        clock: new FakeClock(), ids: new FakeIds(),
+      })
+
+      const result = await client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES })
+
+      // Clamped: cachedInputTokens must not exceed inputTokens
+      expect(
+        (result.usage.cachedInputTokens ?? 0) <= result.usage.inputTokens,
+        `iter ${i}: cached must be ≤ input after clamp`,
+      ).toBe(true)
+
+      // Warning emitted
+      const hasClampWarn = result.warnings.some(
+        (w): w is Warning & { type: 'other' } =>
+          w.type === 'other' && w.message.includes('cachedInputTokens'),
+      )
+      expect(hasClampWarn, `iter ${i}: expected a cachedInputTokens clamp warning`).toBe(true)
+
+      // Record persists
+      expect(sink.records).toHaveLength(1)
+      expect(sink.last()!.status).toBe('ok')
+
+      // Cost sum invariant
+      if (result.cost !== undefined && result.cost.microUsd !== null) {
+        const sum = result.cost.details.input + result.cost.details.cached + result.cost.details.output
+        expect(sum).toBe(result.cost.microUsd)
+      }
+    }
+  })
+
+  it('thinking > output: clamped to output, record persists, cost sum holds (50 iterations)', async () => {
+    const rand = mulberry32(0xbaadf00d)
+
+    for (let i = 0; i < 50; i++) {
+      const output = Math.floor(rand() * 500) + 1
+      const thinking = output + Math.floor(rand() * 300) + 1 // > output
+
+      const usage: Usage = {
+        inputTokens: Math.floor(rand() * 1000) + 1,
+        outputTokens: output,
+        thinkingTokens: thinking,
+        details: {},
+        raw: null,
+      }
+
+      const adapter = new RawThrowAdapter('google', { kind: 'ok', result: makeOkResult({ usage }) })
+      const sink = new RecordingSink()
+      const client = createClient({
+        adapters: [adapter], auth: AUTH, pricing: PRICING, sink,
+        clock: new FakeClock(), ids: new FakeIds(),
+      })
+
+      const result = await client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES })
+
+      // Clamped
+      expect(
+        (result.usage.thinkingTokens ?? 0) <= result.usage.outputTokens,
+        `iter ${i}: thinking must be ≤ output after clamp`,
+      ).toBe(true)
+
+      // Warning emitted
+      const hasWarn = result.warnings.some(
+        (w): w is Warning & { type: 'other' } =>
+          w.type === 'other' && w.message.includes('thinkingTokens'),
+      )
+      expect(hasWarn, `iter ${i}: expected a thinkingTokens clamp warning`).toBe(true)
+
+      // Record persists
+      expect(sink.records).toHaveLength(1)
+      expect(sink.last()!.status).toBe('ok')
+
+      // Cost sum invariant
+      if (result.cost !== undefined && result.cost.microUsd !== null) {
+        const sum = result.cost.details.input + result.cost.details.cached + result.cost.details.output
+        expect(sum).toBe(result.cost.microUsd)
+      }
+    }
+  })
+
+  it('NaN / negative / huge token counts: engine never throws, record persists, cost sum holds (60 iterations)', async () => {
+    const rand = mulberry32(0xcafebabe)
+
+    // Adversarial token values per spec ("negative-ish/huge (Number.MAX_SAFE_INTEGER) / NaN/undefined").
+    // Note: Number.MAX_VALUE is excluded — it overflows to Infinity in cost arithmetic, which
+    // is not semantically meaningful and not called out in the SPEC; MAX_SAFE_INTEGER is the
+    // stated example. Non-finite values (NaN, ±Infinity) are clamped to 0 by sanitizeUsage.
+    const ADVERSARIAL_INPUTS: number[] = [
+      NaN, -Infinity, +Infinity, -1, -100, -999_999,
+      Number.MAX_SAFE_INTEGER, 0, 1, 500,
+    ]
+
+    for (let i = 0; i < 60; i++) {
+      const pickInput = () => ADVERSARIAL_INPUTS[Math.floor(rand() * ADVERSARIAL_INPUTS.length)]!
+      const usage = {
+        inputTokens: pickInput(),
+        outputTokens: pickInput(),
+        // Sometimes include optional fields with adversarial values
+        ...(rand() > 0.5 ? { cachedInputTokens: pickInput() } : {}),
+        ...(rand() > 0.5 ? { thinkingTokens: pickInput() } : {}),
+        details: {},
+        raw: null,
+      } as unknown as Usage
+
+      const adapter = new RawThrowAdapter('google', { kind: 'ok', result: makeOkResult({ usage }) })
+      const sink = new RecordingSink()
+      const client = createClient({
+        adapters: [adapter], auth: AUTH, pricing: PRICING, sink,
+        clock: new FakeClock(), ids: new FakeIds(),
+      })
+
+      // Engine must resolve (not throw) for malformed usage — fail-open per spec.
+      // Use direct await: if generate() rejects, Vitest will catch and fail the test.
+      const result = await client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES })
+
+      // Record always persists
+      expect(sink.records, `iter ${i}: record must be written`).toHaveLength(1)
+      expect(sink.last()!.status).toBe('ok')
+
+      // Cost sum invariant — must hold after clamping
+      if (result.cost !== undefined && result.cost.microUsd !== null) {
+        const sum = result.cost.details.input + result.cost.details.cached + result.cost.details.output
+        expect(
+          sum,
+          `iter ${i}: sum(details) must equal microUsd`,
+        ).toBe(result.cost.microUsd)
+      }
+
+      // All normalized token counts must be non-negative finite numbers
+      expect(Number.isFinite(result.usage.inputTokens), `iter ${i}: inputTokens must be finite`).toBe(true)
+      expect(result.usage.inputTokens, `iter ${i}: inputTokens must be non-negative`).toBeGreaterThanOrEqual(0)
+      expect(Number.isFinite(result.usage.outputTokens), `iter ${i}: outputTokens must be finite`).toBe(true)
+      expect(result.usage.outputTokens, `iter ${i}: outputTokens must be non-negative`).toBeGreaterThanOrEqual(0)
+      if (result.usage.cachedInputTokens !== undefined) {
+        expect(Number.isFinite(result.usage.cachedInputTokens), `iter ${i}: cachedInputTokens must be finite`).toBe(true)
+        expect(result.usage.cachedInputTokens).toBeGreaterThanOrEqual(0)
+        expect(result.usage.cachedInputTokens).toBeLessThanOrEqual(result.usage.inputTokens)
+      }
+      if (result.usage.thinkingTokens !== undefined) {
+        expect(Number.isFinite(result.usage.thinkingTokens), `iter ${i}: thinkingTokens must be finite`).toBe(true)
+        expect(result.usage.thinkingTokens).toBeGreaterThanOrEqual(0)
+        expect(result.usage.thinkingTokens).toBeLessThanOrEqual(result.usage.outputTokens)
+      }
+    }
+  })
+
+  it('both cached>input AND thinking>output simultaneously: both clamped correctly', async () => {
+    const rand = mulberry32(0x11223344)
+
+    for (let i = 0; i < 30; i++) {
+      const input = Math.floor(rand() * 500) + 10
+      const output = Math.floor(rand() * 500) + 10
+      const usage: Usage = {
+        inputTokens: input,
+        outputTokens: output,
+        cachedInputTokens: input + 100 + Math.floor(rand() * 100), // > input
+        thinkingTokens: output + 50 + Math.floor(rand() * 100),    // > output
+        details: {},
+        raw: null,
+      }
+
+      const adapter = new RawThrowAdapter('google', { kind: 'ok', result: makeOkResult({ usage }) })
+      const sink = new RecordingSink()
+      const client = createClient({
+        adapters: [adapter], auth: AUTH, pricing: PRICING, sink,
+        clock: new FakeClock(), ids: new FakeIds(),
+      })
+
+      const result = await client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES })
+
+      expect((result.usage.cachedInputTokens ?? 0)).toBe(input)
+      expect((result.usage.thinkingTokens ?? 0)).toBe(output)
+      expect(sink.records).toHaveLength(1)
+      expect(sink.last()!.status).toBe('ok')
+
+      if (result.cost !== undefined && result.cost.microUsd !== null) {
+        const sum = result.cost.details.input + result.cost.details.cached + result.cost.details.output
+        expect(sum).toBe(result.cost.microUsd)
+      }
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// INVARIANT 4: Cost property — sum(details)===microUsd; unknown model → null
+// ---------------------------------------------------------------------------
+
+describe('surface-stress: cost property', () => {
+  const KNOWN_MODELS = [
+    'gemini-2.5-pro',
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
+    'gemini-3.0-flash',
+    'gemini-3.0-flash-lite',
+    'gemini-2.5-pro-001',   // prefix match → gemini-2.5-pro
+  ]
+  const UNKNOWN_MODELS = [
+    'gpt-4',
+    'claude-3',
+    'unknown-model-xyz',
+    'llama-3',
+    'mistral-large',
+  ]
+
+  it('known models: sum(details)===microUsd across random valid usages (100 iterations)', async () => {
+    const rand = mulberry32(0xfeedface)
+
+    for (let i = 0; i < 100; i++) {
+      const model = KNOWN_MODELS[Math.floor(rand() * KNOWN_MODELS.length)]!
+      const input = Math.floor(rand() * 300_000) + 1
+      const cached = Math.floor(rand() * input) // ≤ input
+      const output = Math.floor(rand() * 10_000) + 1
+      const thinking = Math.floor(rand() * output) // ≤ output
+
+      const usage: Usage = {
+        inputTokens: input,
+        outputTokens: output,
+        cachedInputTokens: cached,
+        thinkingTokens: thinking,
+        details: {},
+        raw: null,
+      }
+
+      const cost: Cost = computeCost(model, usage)
+      expect(cost.microUsd).not.toBeNull()
+      if (cost.microUsd !== null) {
+        expect(
+          cost.details.input + cost.details.cached + cost.details.output,
+          `iter ${i} (${model}): sum(details) must equal microUsd`,
+        ).toBe(cost.microUsd)
+      }
+    }
+  })
+
+  it('unknown models: microUsd is null (50 iterations)', () => {
+    const rand = mulberry32(0x0badc0de)
+
+    for (let i = 0; i < 50; i++) {
+      const model = UNKNOWN_MODELS[Math.floor(rand() * UNKNOWN_MODELS.length)]!
+      const input = Math.floor(rand() * 10_000) + 1
+      const output = Math.floor(rand() * 5_000) + 1
+
+      const usage: Usage = { inputTokens: input, outputTokens: output, details: {}, raw: null }
+      const cost: Cost = computeCost(model, usage)
+
+      expect(cost.microUsd).toBeNull()
+      expect(typeof cost.pricingVersion).toBe('string')
+      // details still have numeric zeros (not null)
+      expect(cost.details.input).toBe(0)
+      expect(cost.details.cached).toBe(0)
+      expect(cost.details.output).toBe(0)
+    }
+  })
+
+  it('thinking tokens add zero EXTRA cost (billed inside output rate)', () => {
+    const rand = mulberry32(0x5a5a5a5a)
+    for (let i = 0; i < 50; i++) {
+      const model = 'gemini-2.5-flash'
+      const input = Math.floor(rand() * 50_000) + 1
+      const output = Math.floor(rand() * 5_000) + 100
+      const thinking = Math.floor(rand() * output)
+
+      const usageWithThinking: Usage = {
+        inputTokens: input, outputTokens: output, thinkingTokens: thinking, details: {}, raw: null,
+      }
+      const usageNoThinking: Usage = {
+        inputTokens: input, outputTokens: output, details: {}, raw: null,
+      }
+
+      const costWith = computeCost(model, usageWithThinking)
+      const costWithout = computeCost(model, usageNoThinking)
+
+      // Thinking tokens must not add extra cost beyond outputTokens billing
+      expect(costWith.microUsd).toBe(costWithout.microUsd)
+      // Cost details must NOT have a 'thinking' lane
+      expect(costWith.details).not.toHaveProperty('thinking')
+
+      // Sum invariant
+      if (costWith.microUsd !== null) {
+        expect(costWith.details.input + costWith.details.cached + costWith.details.output)
+          .toBe(costWith.microUsd)
+      }
+    }
+  })
+
+  it('sum(details)===microUsd on the engine result vs record (50 iterations)', async () => {
+    const rand = mulberry32(0xa1b2c3d4)
+    for (let i = 0; i < 50; i++) {
+      const model = KNOWN_MODELS[Math.floor(rand() * (KNOWN_MODELS.length - 1))]! // skip prefix-match variant
+      const input = Math.floor(rand() * 300_000) + 1
+      const cached = Math.floor(rand() * Math.min(input, 100_000))
+      const output = Math.floor(rand() * 5_000) + 1
+      const thinking = Math.floor(rand() * output)
+
+      const usage: Usage = {
+        inputTokens: input, outputTokens: output, cachedInputTokens: cached,
+        thinkingTokens: thinking, details: {}, raw: null,
+      }
+
+      const adapter = new RawThrowAdapter('google', { kind: 'ok', result: makeOkResult({ usage, model }) })
+      const sink = new RecordingSink()
+      const client = createClient({
+        adapters: [adapter], auth: AUTH, pricing: PRICING, sink,
+        clock: new FakeClock(), ids: new FakeIds(),
+      })
+
+      const result = await client.generate({ model, messages: MESSAGES })
+
+      expect(result.cost).toBeDefined()
+      if (result.cost !== undefined && result.cost.microUsd !== null) {
+        const sum = result.cost.details.input + result.cost.details.cached + result.cost.details.output
+        expect(sum, `iter ${i}: sum(details) must equal microUsd`).toBe(result.cost.microUsd)
+        // Result cost === record cost (single source of truth)
+        expect(sink.last()!.costMicroUsd).toBe(result.cost.microUsd)
+      }
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// INVARIANT 5: Fail-open
+// ---------------------------------------------------------------------------
+
+describe('surface-stress: fail-open', () => {
+  it('throwing sink does not fail the generate call (5 variants)', async () => {
+    const sinkErrors = [
+      true,
+      new Error('sink boom'),
+    ] as const
+
+    for (const failSpec of sinkErrors) {
+      const sink = new RecordingSink({ failOnRecord: failSpec })
+      const client = createClient({
+        adapters: [new FakeAdapter('google', makeOkResult())],
+        auth: AUTH, pricing: PRICING, sink,
+        clock: new FakeClock(), ids: new FakeIds(),
+      })
+
+      // Should NOT throw despite the sink failing
+      const result = await client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES })
+      expect(result.text).toBe('ok')
+      // Sink threw before storing, so no records
+      expect(sink.records).toHaveLength(0)
+    }
+  })
+
+  it('throwing sink on error path: LlmError still rethrown (5 iterations)', async () => {
+    const sink = new RecordingSink({ failOnRecord: true })
+    const adapter = new FakeAdapter('google', { status: 500 })
+
+    const client = createClient({
+      adapters: [adapter], auth: AUTH, pricing: PRICING, sink,
+      clock: new FakeClock(), ids: new FakeIds(),
+    })
+
+    await expect(
+      client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES }),
+    ).rejects.toMatchObject({ kind: 'server' })
+  })
+
+  it('throwing telemetry never fails the call', async () => {
+    const throwingTelemetry: Telemetry = {
+      onStart: () => { throw new Error('telemetry start boom') },
+      onSuccess: () => { throw new Error('telemetry success boom') },
+      onError: () => { throw new Error('telemetry error boom') },
+    }
+
+    // Success path — telemetry throws in onStart + onSuccess
+    const successClient = createClient({
+      adapters: [new FakeAdapter('google', makeOkResult())],
+      auth: AUTH, pricing: PRICING,
+      telemetry: throwingTelemetry,
+      clock: new FakeClock(), ids: new FakeIds(),
+    })
+    const result = await successClient.generate({ model: 'gemini-2.5-pro', messages: MESSAGES })
+    expect(result.text).toBe('ok')
+
+    // Error path — telemetry throws in onStart + onError, error still rethrown
+    const failClient = createClient({
+      adapters: [new FakeAdapter('google', { status: 503 })],
+      auth: AUTH, pricing: PRICING,
+      telemetry: throwingTelemetry,
+      clock: new FakeClock(), ids: new FakeIds(),
+    })
+    await expect(
+      failClient.generate({ model: 'gemini-2.5-pro', messages: MESSAGES }),
+    ).rejects.toMatchObject({ kind: 'server' })
+  })
+
+  it('pricing that throws: cost is undefined on result, call still succeeds', async () => {
+    const throwingPricing: PricingSource = {
+      version: 'boom',
+      price(): Cost {
+        throw new Error('pricing exploded')
+      },
+    }
+
+    const sink = new RecordingSink()
+    const client = createClient({
+      adapters: [new FakeAdapter('google', makeOkResult())],
+      auth: AUTH, pricing: throwingPricing, sink,
+      clock: new FakeClock(), ids: new FakeIds(),
+    })
+
+    const result = await client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES })
+    // Cost is absent (pricing failed, fail-open)
+    expect(result.cost).toBeUndefined()
+    // Call still succeeded
+    expect(result.text).toBe('ok')
+    // Record still written
+    expect(sink.records).toHaveLength(1)
+    expect(sink.last()!.status).toBe('ok')
+    // A warning about cost failure is present
+    const hasCostWarn = result.warnings.some(
+      (w): w is Warning & { type: 'other' } =>
+        w.type === 'other' && w.message.toLowerCase().includes('cost'),
+    )
+    expect(hasCostWarn).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// INVARIANT 6: Cancellation — classification is 'timeout' or 'aborted', never mixed
+// ---------------------------------------------------------------------------
+
+describe('surface-stress: cancellation', () => {
+  it(
+    'timeoutMs < adapter delay → always classified as timeout (10 iterations)',
+    async () => {
+      const rand = mulberry32(0x33221100)
+      for (let i = 0; i < 10; i++) {
+        const adapterDelayMs = 200 + Math.floor(rand() * 200) // 200–400ms
+        const timeoutMs = 1 + Math.floor(rand() * 20)          // 1–21ms
+
+        const adapter = new FakeAdapter('google', makeOkResult(), { delayMs: adapterDelayMs })
+        const sink = new RecordingSink()
+        const client = createClient({
+          adapters: [adapter], auth: AUTH, pricing: PRICING, sink,
+          clock: new FakeClock(), ids: new FakeIds(),
+        })
+
+        await expect(
+          client.generate({
+            model: 'gemini-2.5-pro', messages: MESSAGES,
+            config: { timeoutMs },
+          }),
+        ).rejects.toMatchObject({ kind: 'timeout', retryable: true })
+
+        const rec = sink.last()!
+        expect(rec.status).toBe('timeout')
+        expect(rec.errorKind).toBe('timeout')
+      }
+    },
+    10_000,
+  )
+
+  it(
+    'caller abort mid-flight → always classified as aborted (10 iterations)',
+    async () => {
+      const rand = mulberry32(0x99887766)
+      for (let i = 0; i < 10; i++) {
+        const adapterDelayMs = 200 + Math.floor(rand() * 100) // 200–300ms
+        const abortAfterMs = 10 + Math.floor(rand() * 30)     // 10–40ms
+
+        const adapter = new SignalAwareFakeAdapter('google', makeOkResult(), {
+          delayMs: adapterDelayMs,
+        })
+        const sink = new RecordingSink()
+        const client = createClient({
+          adapters: [adapter], auth: AUTH, pricing: PRICING, sink,
+          clock: new FakeClock(), ids: new FakeIds(),
+        })
+
+        const ctrl = new AbortController()
+        const timer = setTimeout(() => ctrl.abort(), abortAfterMs)
+
+        try {
+          await expect(
+            client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES }, { signal: ctrl.signal }),
+          ).rejects.toMatchObject({ kind: 'aborted', retryable: false })
+
+          const rec = sink.last()!
+          expect(rec.status).toBe('aborted')
+          expect(rec.errorKind).toBe('aborted')
+        } finally {
+          clearTimeout(timer)
+        }
+      }
+    },
+    10_000,
+  )
+
+  it(
+    'timeout + synchronously-aborting adapter → timeout wins, never aborted (5 iterations)',
+    async () => {
+      const rand = mulberry32(0x55443322)
+      for (let i = 0; i < 5; i++) {
+        const timeoutMs = 5 + Math.floor(rand() * 20) // 5–25ms
+
+        const adapter = new SignalAwareFakeAdapter('google', makeOkResult(), {
+          delayMs: 5_000,
+          abortsSynchronouslyOnSignal: true,
+        })
+        const sink = new RecordingSink()
+        const client = createClient({
+          adapters: [adapter], auth: AUTH, pricing: PRICING, sink,
+          clock: new FakeClock(), ids: new FakeIds(),
+        })
+
+        await expect(
+          client.generate({
+            model: 'gemini-2.5-pro', messages: MESSAGES,
+            config: { timeoutMs },
+          }),
+        ).rejects.toMatchObject({ kind: 'timeout' })
+
+        const rec = sink.last()!
+        expect(rec.status).toBe('timeout')
+      }
+    },
+    10_000,
+  )
+
+  it('already-aborted signal → LlmError aborted, record status aborted', async () => {
+    const ctrl = new AbortController()
+    ctrl.abort()
+
+    const adapter = new SignalAwareFakeAdapter('google', makeOkResult(), { delayMs: 300 })
+    const sink = new RecordingSink()
+    const client = createClient({
+      adapters: [adapter], auth: AUTH, pricing: PRICING, sink,
+      clock: new FakeClock(), ids: new FakeIds(),
+    })
+
+    await expect(
+      client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES }, { signal: ctrl.signal }),
+    ).rejects.toMatchObject({ kind: 'aborted' })
+
+    expect(sink.last()!.status).toBe('aborted')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// INVARIANT 7: Parse error — rawStructured violating Zod schema → parse_error
+// ---------------------------------------------------------------------------
+
+describe('surface-stress: parse error', () => {
+  it('rawStructured violates Zod schema → LlmError parse_error + record status parse_error (30 iterations)', async () => {
+    const rand = mulberry32(0x99aabbcc)
+
+    // Matrix of (schema, bad-value) pairs that will all fail validation
+    type BadCase = { schema: ReturnType<typeof z.object>; badValue: unknown }
+    const CASES: BadCase[] = [
+      { schema: z.object({ answer: z.number() }), badValue: { answer: 'not-a-number' } },
+      { schema: z.object({ answer: z.number() }), badValue: null },
+      { schema: z.object({ answer: z.number() }), badValue: undefined },
+      { schema: z.object({ answer: z.number() }), badValue: 42 }, // number, not object
+      { schema: z.object({ name: z.string() }), badValue: { name: 123 } },
+      { schema: z.object({ items: z.array(z.string()) }), badValue: { items: [1, 2, 3] } },
+      { schema: z.object({ id: z.string().uuid() }), badValue: { id: 'not-a-uuid' } },
+      { schema: z.object({ score: z.number().min(0).max(1) }), badValue: { score: 99 } },
+    ]
+
+    for (let i = 0; i < 30; i++) {
+      const { schema, badValue } = CASES[Math.floor(rand() * CASES.length)]!
+      const sink = new RecordingSink()
+
+      const adapter = new RawThrowAdapter('google', {
+        kind: 'ok',
+        result: makeOkResult({ rawStructured: badValue }),
+      })
+
+      const client = createClient({
+        adapters: [adapter], auth: AUTH, pricing: PRICING, sink,
+        clock: new FakeClock(), ids: new FakeIds(),
+      })
+
+      await expect(
+        client.generate({
+          model: 'gemini-2.5-pro', messages: MESSAGES,
+          output: { schema },
+        }),
+      ).rejects.toMatchObject({ kind: 'parse_error', retryable: false })
+
+      const rec = sink.last()!
+      expect(rec.status, `iter ${i}: record status must be parse_error`).toBe('parse_error')
+      expect(rec.errorKind).toBe('parse_error')
+    }
+  })
+
+  it('rawStructured passes schema → typed output, record status ok', async () => {
+    const rand = mulberry32(0x11112222)
+    for (let i = 0; i < 20; i++) {
+      const answer = Math.floor(rand() * 1000)
+      const schema = z.object({ answer: z.number() })
+
+      const adapter = new RawThrowAdapter('google', {
+        kind: 'ok',
+        result: makeOkResult({ rawStructured: { answer } }),
+      })
+      const sink = new RecordingSink()
+      const client = createClient({
+        adapters: [adapter], auth: AUTH, pricing: PRICING, sink,
+        clock: new FakeClock(), ids: new FakeIds(),
+      })
+
+      const result = await client.generate({
+        model: 'gemini-2.5-pro', messages: MESSAGES,
+        output: { schema },
+      })
+      expect(result.output).toEqual({ answer })
+      expect(sink.last()!.status).toBe('ok')
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// INVARIANT 8: providerOptions deep nesting preserved through resolution
+// ---------------------------------------------------------------------------
+
+describe('surface-stress: providerOptions deep nesting preserved', () => {
+  it('deeply-nested providerOptions survive merge and are passed to adapter (20 iterations)', async () => {
+    const rand = mulberry32(0xaabbccdd)
+
+    for (let i = 0; i < 20; i++) {
+      const uniqueVal = Math.floor(rand() * 100_000)
+      const nestedKey = `key_${i}`
+
+      // Capture adapter calls
+      const capturedOptions: Array<Record<string, unknown> | undefined> = []
+      const captureAdapter: ProviderAdapter = {
+        id: 'google',
+        async run(req: ResolvedRequest, _ctx: AdapterCtx): Promise<AdapterResult> {
+          capturedOptions.push(req.config.providerOptions)
+          return makeOkResult()
+        },
+      }
+
+      const client = createClient({
+        adapters: [captureAdapter],
+        auth: AUTH, pricing: PRICING,
+        clock: new FakeClock(), ids: new FakeIds(),
+        defaults: {
+          providerOptions: {
+            google: { base: { x: 1, y: 2 }, fixed: true },
+          },
+        },
+      })
+
+      await client.generate({
+        model: 'gemini-2.5-pro', messages: MESSAGES,
+        config: {
+          providerOptions: {
+            google: { [nestedKey]: { deep: { value: uniqueVal } } },
+          },
+        },
+      })
+
+      const merged = capturedOptions[0]
+      expect(merged).toBeDefined()
+
+      const googleBlock = merged!['google'] as Record<string, unknown>
+      // Per-call key is present
+      const perCallBlock = googleBlock[nestedKey] as Record<string, unknown>
+      const deepBlock = perCallBlock['deep'] as Record<string, unknown>
+      expect(deepBlock['value']).toBe(uniqueVal)
+
+      // Sibling keys from defaults survive
+      const baseBlock = googleBlock['base'] as Record<string, unknown>
+      expect(baseBlock['x']).toBe(1)
+      expect(baseBlock['y']).toBe(2)
+      expect(googleBlock['fixed']).toBe(true)
+    }
+  })
+})

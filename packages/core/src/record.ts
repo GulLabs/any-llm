@@ -260,33 +260,86 @@ function sanitizeUsage(usage: Usage): SanitizeUsageResult {
   const warnings: Warning[] = []
   let needsRebuild = false
 
-  let cachedInputTokens = usage.cachedInputTokens
-  let thinkingTokens = usage.thinkingTokens
+  // ------------------------------------------------------------------
+  // Step A: Clamp non-finite or negative CORE token counts to 0.
+  //
+  // Defensive against malformed adapter output (NaN, Infinity, negative).
+  // Policy (fail-open): clamp + warn, never throw.  The GROSS subset checks
+  // below use the clamped values so that downstream cost math never sees NaN.
+  // ------------------------------------------------------------------
+  let inputTokens = usage.inputTokens
+  let outputTokens = usage.outputTokens
 
-  if (cachedInputTokens !== undefined && cachedInputTokens > usage.inputTokens) {
+  // `isFinite` coerces its argument to number; covers both NaN and ±Infinity.
+  // We intentionally check the runtime value even though TypeScript says `number`
+  // because malformed adapter output can sneak in undefined/NaN via a cast.
+  if (!isFinite(inputTokens) || inputTokens < 0) {
     warnings.push({
       type: 'other',
-      message:
-        `cachedInputTokens (${cachedInputTokens}) exceeds inputTokens (${usage.inputTokens}); ` +
-        `clamped to ${usage.inputTokens}`,
+      message: `inputTokens (${String(inputTokens)}) is non-finite or negative; clamped to 0`,
     })
-    cachedInputTokens = usage.inputTokens
+    inputTokens = 0
     needsRebuild = true
   }
 
-  if (thinkingTokens !== undefined && thinkingTokens > usage.outputTokens) {
+  if (!isFinite(outputTokens) || outputTokens < 0) {
+    warnings.push({
+      type: 'other',
+      message: `outputTokens (${String(outputTokens)}) is non-finite or negative; clamped to 0`,
+    })
+    outputTokens = 0
+    needsRebuild = true
+  }
+
+  let cachedInputTokens = usage.cachedInputTokens
+  let thinkingTokens = usage.thinkingTokens
+
+  // Clamp non-finite or negative SUBSET token counts to 0 before GROSS check.
+  if (cachedInputTokens !== undefined && (!isFinite(cachedInputTokens) || cachedInputTokens < 0)) {
+    warnings.push({
+      type: 'other',
+      message: `cachedInputTokens (${String(cachedInputTokens)}) is non-finite or negative; clamped to 0`,
+    })
+    cachedInputTokens = 0
+    needsRebuild = true
+  }
+
+  if (thinkingTokens !== undefined && (!isFinite(thinkingTokens) || thinkingTokens < 0)) {
+    warnings.push({
+      type: 'other',
+      message: `thinkingTokens (${String(thinkingTokens)}) is non-finite or negative; clamped to 0`,
+    })
+    thinkingTokens = 0
+    needsRebuild = true
+  }
+
+  // ------------------------------------------------------------------
+  // Step B: GROSS subset invariant checks (uses clamped values from Step A).
+  // ------------------------------------------------------------------
+  if (cachedInputTokens !== undefined && cachedInputTokens > inputTokens) {
     warnings.push({
       type: 'other',
       message:
-        `thinkingTokens (${thinkingTokens}) exceeds outputTokens (${usage.outputTokens}); ` +
-        `clamped to ${usage.outputTokens}`,
+        `cachedInputTokens (${cachedInputTokens}) exceeds inputTokens (${inputTokens}); ` +
+        `clamped to ${inputTokens}`,
     })
-    thinkingTokens = usage.outputTokens
+    cachedInputTokens = inputTokens
+    needsRebuild = true
+  }
+
+  if (thinkingTokens !== undefined && thinkingTokens > outputTokens) {
+    warnings.push({
+      type: 'other',
+      message:
+        `thinkingTokens (${thinkingTokens}) exceeds outputTokens (${outputTokens}); ` +
+        `clamped to ${outputTokens}`,
+    })
+    thinkingTokens = outputTokens
     needsRebuild = true
   }
 
   if (usage.totalTokens !== undefined) {
-    const expected = usage.inputTokens + usage.outputTokens
+    const expected = inputTokens + outputTokens
     if (usage.totalTokens < expected) {
       warnings.push({
         type: 'other',
@@ -301,10 +354,10 @@ function sanitizeUsage(usage: Usage): SanitizeUsageResult {
     return { usage, clampWarnings: warnings }
   }
 
-  // Rebuild Usage with clamped subset values — exactOptionalPropertyTypes-safe.
+  // Rebuild Usage with clamped values — exactOptionalPropertyTypes-safe.
   const clampedUsage: Usage = {
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
+    inputTokens,
+    outputTokens,
     details: usage.details,
     raw: usage.raw,
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
