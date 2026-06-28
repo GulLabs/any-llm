@@ -208,12 +208,47 @@ function interpolate(template: string, vars: Record<string, string>): string {
 }
 
 /**
+ * Returns `true` when `v` is a plain object (`{}` literal or `Object.create(null)`),
+ * excluding Arrays, Dates, and other built-in object types.
+ *
+ * Used to decide whether two values should be recursively merged or whether
+ * the right-hand side should win outright (last-write-wins for scalars and arrays).
+ */
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === 'object' && !Array.isArray(v)
+}
+
+/**
+ * Recursively merges two plain objects, left-to-right.
+ *
+ * - Nested plain objects: merged recursively.
+ * - Arrays and scalar values: last-write-wins (the `override` value replaces `base`).
+ */
+function deepMergePlain(
+  base: Record<string, unknown>,
+  override: Record<string, unknown>,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...base }
+  for (const key of Object.keys(override)) {
+    const bv = base[key]
+    const ov = override[key]
+    if (isPlainObject(bv) && isPlainObject(ov)) {
+      result[key] = deepMergePlain(bv, ov)
+    } else {
+      result[key] = ov
+    }
+  }
+  return result
+}
+
+/**
  * Deep-merges {@link GenConfig} objects left-to-right (later entries win).
  *
  * Scalar fields (`temperature`, `topP`, etc.) use last-write-wins.
- * Object fields (`reasoning`, `providerOptions`) are shallowly merged so a
+ * Object fields (`reasoning`, `providerOptions`) are recursively merged so a
  * per-call override can set individual sub-keys without replacing the entire
- * object.
+ * object (and without dropping sibling keys inside nested provider blocks).
+ * Arrays and non-object values within those objects are last-write-wins.
  */
 function deepMergeConfig(...configs: Array<GenConfig | undefined>): GenConfig {
   const acc: Record<string, unknown> = {}
@@ -223,10 +258,12 @@ function deepMergeConfig(...configs: Array<GenConfig | undefined>): GenConfig {
     for (const key of keys) {
       const val = cfg[key]
       if (val === undefined) continue
-      if (key === 'reasoning' && typeof val === 'object' && val !== null) {
-        acc[key] = { ...(acc[key] as object | undefined ?? {}), ...val }
-      } else if (key === 'providerOptions' && typeof val === 'object' && val !== null) {
-        acc[key] = { ...(acc[key] as Record<string, unknown> | undefined ?? {}), ...val }
+      if (key === 'reasoning' && isPlainObject(val)) {
+        const current = acc[key]
+        acc[key] = deepMergePlain(isPlainObject(current) ? current : {}, val)
+      } else if (key === 'providerOptions' && isPlainObject(val)) {
+        const current = acc[key]
+        acc[key] = deepMergePlain(isPlainObject(current) ? current : {}, val)
       } else {
         acc[key] = val
       }
@@ -378,6 +415,8 @@ export function createClient(config: ClientConfig): Client {
     let normalizedResult: { usage: Usage; warnings: Warning[] } | undefined
     let cost: Cost | undefined
     let timer: ReturnType<typeof setTimeout> | undefined
+    // Cleanup thunk for the caller-abort listener — called on every exit path.
+    let callerAbortCleanup: (() => void) | undefined
 
     try {
       // Step 5: Resolve adapter (may throw LlmError 'bad_request')
@@ -387,30 +426,98 @@ export function createClient(config: ClientConfig): Client {
       // Step 6: Auth
       const authMaterial = await auth.credentials(provider)
 
-      // Build combined AbortSignal (caller + timeout).
-      const signalParts: AbortSignal[] = []
-      if (callerSignal !== undefined) signalParts.push(callerSignal)
+      // ── Cancellation setup ─────────────────────────────────────────────────
+      // adapter.run() is raced against two independent rejection promises:
+      //
+      //   (a) Caller-abort  — rejects LlmError('aborted') when callerSignal fires,
+      //       ensuring caller cancellation always terminates the call even if the
+      //       adapter ignores ctx.signal.  Already-aborted signals are handled
+      //       synchronously via a pre-rejected promise.
+      //
+      //   (b) Timeout       — rejects LlmError('timeout') when the timer fires.
+      //
+      // Determinism guarantee (Finding 2):
+      //   The timeout promise rejects BEFORE its AbortController is fired.
+      //   This means even a signal-aware adapter that throws AbortError
+      //   synchronously on the abort signal cannot win the race with kind:'aborted'
+      //   when the real cause was a timeout.
+      //
+      // Cleanup: clearTimeout + callerAbortCleanup are called on EVERY exit path
+      // (success and error) to prevent timer and event-listener leaks.
+      //
+      // The combined signal is still forwarded to the adapter so cooperative
+      // adapters can stop early (best-effort).
 
-      let timeoutRejectFn: ((err: LlmError) => void) | undefined
-      let timeoutPromise: Promise<never> | undefined
+      const raceParts: Array<Promise<never>> = []
 
-      if (resolvedConfig.timeoutMs !== undefined) {
-        const timeoutController = new AbortController()
-        signalParts.push(timeoutController.signal)
-        const ms = resolvedConfig.timeoutMs
-        timeoutPromise = new Promise<never>((_, reject) => {
-          timeoutRejectFn = reject
-          timer = setTimeout(() => {
-            timeoutController.abort()
-            reject(
-              new LlmError(`Request timed out after ${ms}ms`, {
-                kind: 'timeout',
-                retryable: true,
+      // (a) Caller-abort race promise.
+      if (callerSignal !== undefined) {
+        if (callerSignal.aborted) {
+          // Already aborted — pre-rejected promise settles the race immediately.
+          raceParts.push(
+            Promise.reject<never>(
+              new LlmError('Request aborted by caller', {
+                kind: 'aborted',
+                retryable: false,
+                ...(callerSignal.reason !== undefined
+                  ? { cause: callerSignal.reason as unknown }
+                  : {}),
+              }),
+            ),
+          )
+        } else {
+          // Not yet aborted — create a promise that rejects when the signal fires.
+          let abortRejectFn!: (err: LlmError) => void
+          const abortPromise = new Promise<never>((_, reject) => {
+            abortRejectFn = reject
+          })
+          const abortHandler = () => {
+            abortRejectFn(
+              new LlmError('Request aborted by caller', {
+                kind: 'aborted',
+                retryable: false,
+                ...(callerSignal.reason !== undefined
+                  ? { cause: callerSignal.reason as unknown }
+                  : {}),
               }),
             )
-          }, ms)
-        })
+          }
+          callerSignal.addEventListener('abort', abortHandler, { once: true })
+          callerAbortCleanup = () =>
+            callerSignal.removeEventListener('abort', abortHandler)
+          raceParts.push(abortPromise)
+        }
       }
+
+      // (b) Timeout race promise.
+      let timeoutController: AbortController | undefined
+      if (resolvedConfig.timeoutMs !== undefined) {
+        timeoutController = new AbortController()
+        const ms = resolvedConfig.timeoutMs
+        let timeoutRejectFn!: (err: LlmError) => void
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutRejectFn = reject
+        })
+        timer = setTimeout(() => {
+          // REJECT FIRST — schedules the 'timeout' LlmError into the microtask
+          // queue before the abort signal fires.  This guarantees 'timeout' wins
+          // Promise.race even when the adapter rejects synchronously on abort.
+          timeoutRejectFn(
+            new LlmError(`Request timed out after ${ms}ms`, {
+              kind: 'timeout',
+              retryable: true,
+            }),
+          )
+          // Abort AFTER scheduling the rejection — cooperative adapters stop early.
+          timeoutController!.abort()
+        }, ms)
+        raceParts.push(timeoutPromise)
+      }
+
+      // Build combined signal for cooperative adapters (caller + timeout merged).
+      const signalParts: AbortSignal[] = []
+      if (callerSignal !== undefined) signalParts.push(callerSignal)
+      if (timeoutController !== undefined) signalParts.push(timeoutController.signal)
 
       const combinedSignal: AbortSignal | undefined =
         signalParts.length === 0
@@ -419,7 +526,7 @@ export function createClient(config: ClientConfig): Client {
             ? signalParts[0]
             : mergeSignals(signalParts)
 
-      // Step 6b: Build ResolvedRequest
+      // Step 6b: Build ResolvedRequest and AdapterCtx.
       const resolved: ResolvedRequest = {
         model: request.model,
         messages: request.messages,
@@ -437,21 +544,20 @@ export function createClient(config: ClientConfig): Client {
         ...(combinedSignal !== undefined ? { signal: combinedSignal } : {}),
       }
 
-      // Step 7: adapter.run — raced against timeout promise when present.
+      // Step 7: Run adapter — raced against all cancellation promises.
       const runPromise = adapter.run(resolved, ctx)
       const adapterResult =
-        timeoutPromise !== undefined
-          ? await Promise.race([runPromise, timeoutPromise])
+        raceParts.length > 0
+          ? await Promise.race([runPromise, ...raceParts])
           : await runPromise
 
-      // Clear timeout timer on success path.
+      // Clean up on success path.
       if (timer !== undefined) {
         clearTimeout(timer)
         timer = undefined
       }
-      // Suppress unused-variable warning; timeoutRejectFn is only used by the
-      // timer callback and Promise.race handles cancellation.
-      void timeoutRejectFn
+      callerAbortCleanup?.()
+      callerAbortCleanup = undefined
 
       // Step 7b: Normalize usage ONCE.
       normalizedResult = normalizeUsage(adapterResult.usage)
@@ -569,11 +675,13 @@ export function createClient(config: ClientConfig): Client {
       return result
 
     } catch (rawErr) {
-      // Always clear the timer on any exit path.
+      // Always clear the timer and remove the caller-abort listener on any exit path.
       if (timer !== undefined) {
         clearTimeout(timer)
         timer = undefined
       }
+      callerAbortCleanup?.()
+      callerAbortCleanup = undefined
 
       // Classify error (LlmError passes through unchanged).
       const err = classifyError(rawErr)

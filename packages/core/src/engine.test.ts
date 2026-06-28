@@ -26,6 +26,7 @@ import {
   FakeClock,
   FakeIds,
   RecordingSink,
+  SignalAwareFakeAdapter,
   fakeAuth,
 } from '@anyllm/testing'
 
@@ -781,5 +782,248 @@ describe('engine — reasoning text', () => {
 
     expect(result.reasoningText).toBe('I thought about it...')
     expect(sink.last()!.reasoningText).toBe('I thought about it...')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 11. Caller-abort (Finding 1): abort always terminates call, adapter observed
+// ---------------------------------------------------------------------------
+
+describe('engine — caller abort (Finding 1)', () => {
+  it(
+    'callerSignal.abort() mid-flight => LlmError aborted, record status aborted, adapter observed',
+    async () => {
+      const adapter = new SignalAwareFakeAdapter(
+        'google',
+        makeSuccessResult(),
+        { delayMs: 300 },
+      )
+      const sink = new RecordingSink()
+
+      const client = createClient({
+        adapters: [adapter],
+        auth: AUTH,
+        pricing: PRICING,
+        sink,
+        clock: new FakeClock(),
+        ids: new FakeIds(),
+      })
+
+      const ctrl = new AbortController()
+      // Abort after 20ms — well before the adapter's 300ms delay.
+      setTimeout(() => ctrl.abort(), 20)
+
+      await expect(
+        client.generate({
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+        }, { signal: ctrl.signal }),
+      ).rejects.toMatchObject({ kind: 'aborted', retryable: false })
+
+      // Record must reflect the abort.
+      const rec = sink.last()
+      expect(rec).toBeDefined()
+      expect(rec!.status).toBe('aborted')
+      expect(rec!.errorKind).toBe('aborted')
+
+      // Adapter observed the abort signal.
+      expect(adapter.abortObserved).toBe(true)
+    },
+    2_000,
+  )
+
+  it('already-aborted signal => LlmError aborted synchronously', async () => {
+    const adapter = new SignalAwareFakeAdapter(
+      'google',
+      makeSuccessResult(),
+      { delayMs: 300 },
+    )
+    const sink = new RecordingSink()
+
+    const client = createClient({
+      adapters: [adapter],
+      auth: AUTH,
+      pricing: PRICING,
+      sink,
+      clock: new FakeClock(),
+      ids: new FakeIds(),
+    })
+
+    const ctrl = new AbortController()
+    ctrl.abort() // abort BEFORE the call
+
+    await expect(
+      client.generate({
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      }, { signal: ctrl.signal }),
+    ).rejects.toMatchObject({ kind: 'aborted' })
+
+    const rec = sink.last()
+    expect(rec).toBeDefined()
+    expect(rec!.status).toBe('aborted')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 12. Timeout determinism (Finding 2): timeout wins even with synchronously-aborting adapter
+// ---------------------------------------------------------------------------
+
+describe('engine — timeout determinism (Finding 2)', () => {
+  it(
+    'timeout + synchronously-aborting adapter => classified timeout (not aborted)',
+    async () => {
+      // This adapter rejects with AbortError synchronously when the signal fires.
+      // Without the "reject-first" fix, this would race and could produce 'aborted'.
+      const adapter = new SignalAwareFakeAdapter(
+        'google',
+        makeSuccessResult(),
+        { delayMs: 5_000, abortsSynchronouslyOnSignal: true },
+      )
+      const sink = new RecordingSink()
+
+      const client = createClient({
+        adapters: [adapter],
+        auth: AUTH,
+        pricing: PRICING,
+        sink,
+        clock: new FakeClock(),
+        ids: new FakeIds(),
+      })
+
+      await expect(
+        client.generate({
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+          config: { timeoutMs: 10 },
+        }),
+      ).rejects.toMatchObject({ kind: 'timeout', retryable: true })
+
+      const rec = sink.last()
+      expect(rec).toBeDefined()
+      expect(rec!.status).toBe('timeout')
+      expect(rec!.errorKind).toBe('timeout')
+    },
+    2_000,
+  )
+
+  it('timeout with non-cooperative adapter => timeout', async () => {
+    // FakeAdapter ignores ctx.signal — should still time out.
+    const slow = new FakeAdapter('google', makeSuccessResult(), { delayMs: 500 })
+    const sink = new RecordingSink()
+
+    const client = createClient({
+      adapters: [slow],
+      auth: AUTH,
+      pricing: PRICING,
+      sink,
+      clock: new FakeClock(),
+      ids: new FakeIds(),
+    })
+
+    await expect(
+      client.generate({
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+        config: { timeoutMs: 10 },
+      }),
+    ).rejects.toMatchObject({ kind: 'timeout', retryable: true })
+
+    const rec = sink.last()
+    expect(rec).toBeDefined()
+    expect(rec!.status).toBe('timeout')
+  }, 2_000)
+})
+
+// ---------------------------------------------------------------------------
+// 13. providerOptions deep-merge (Finding 3)
+// ---------------------------------------------------------------------------
+
+describe('engine — providerOptions deep-merge (Finding 3)', () => {
+  it(
+    'sibling keys survive per-call override; array values are replaced wholesale',
+    async () => {
+      const capturedConfigs: Array<Parameters<typeof capturingAdapter.run>[0]> = []
+      const capturingAdapter = new FakeAdapter('google', makeSuccessResult())
+      const origRun = capturingAdapter.run.bind(capturingAdapter)
+      vi.spyOn(capturingAdapter, 'run').mockImplementation(async (req, ctx) => {
+        capturedConfigs.push(req)
+        return origRun(req, ctx)
+      })
+
+      const client = createClient({
+        adapters: [capturingAdapter],
+        auth: AUTH,
+        pricing: PRICING,
+        clock: new FakeClock(),
+        ids: new FakeIds(),
+        defaults: {
+          providerOptions: {
+            google: { a: { x: 1, y: 2 }, keep: true },
+          },
+        },
+      })
+
+      // Per-call override touches google.a.x only.
+      await client.generate({
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+        config: {
+          providerOptions: {
+            google: { a: { x: 99 }, arr: [10, 20] },
+          },
+        },
+      })
+
+      const merged = capturedConfigs[0]?.config.providerOptions
+      expect(merged).toBeDefined()
+
+      // x is overridden.
+      const google = merged!['google'] as Record<string, unknown>
+      const aBlock = google['a'] as Record<string, unknown>
+      expect(aBlock['x']).toBe(99)
+
+      // y (sibling of x) survives the per-call override.
+      expect(aBlock['y']).toBe(2)
+
+      // keep (sibling of a) survives.
+      expect(google['keep']).toBe(true)
+
+      // arr is a new key from the per-call override.
+      expect(google['arr']).toEqual([10, 20])
+    },
+  )
+
+  it('array value in providerOptions is replaced wholesale (not merged)', async () => {
+    const capturedConfigs: Array<Parameters<typeof capturingAdapter.run>[0]> = []
+    const capturingAdapter = new FakeAdapter('google', makeSuccessResult())
+    const origRun = capturingAdapter.run.bind(capturingAdapter)
+    vi.spyOn(capturingAdapter, 'run').mockImplementation(async (req, ctx) => {
+      capturedConfigs.push(req)
+      return origRun(req, ctx)
+    })
+
+    const client = createClient({
+      adapters: [capturingAdapter],
+      auth: AUTH,
+      pricing: PRICING,
+      clock: new FakeClock(),
+      ids: new FakeIds(),
+      defaults: {
+        providerOptions: { google: { tags: ['a', 'b', 'c'] } },
+      },
+    })
+
+    await client.generate({
+      model: 'gemini-2.5-pro',
+      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      config: {
+        providerOptions: { google: { tags: ['x'] } },
+      },
+    })
+
+    const google = capturedConfigs[0]?.config.providerOptions?.['google'] as Record<string, unknown>
+    // Array is last-write-wins, not merged.
+    expect(google['tags']).toEqual(['x'])
   })
 })
