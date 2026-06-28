@@ -10,10 +10,12 @@ section. Review on return; flag anything to revisit.
 ---
 
 ## Parked questions for Atif (Q)
-- **Q1 — npm name.** "any-llm" collides with mozilla-ai/any-llm. Using `@gullabs/*` scope as a
-  working placeholder locally. Pick a real name before any publish. (Non-blocking for build.)
-- **Q2 — Git remote.** Defaulting to **local commits only, no remote, no push** (pushing is
-  outward-facing; you OSS later). Tell me the remote when you want it pushed.
+- **Q1 — RESOLVED.** OSS GitHub org = **`gullabs`**; npm scope = **`@gullabs`** (both confirmed free).
+  Packages renamed `@gullabs/{core,google,drizzle,testing}` v0.1.0, publish-ready. This resolves the
+  mozilla-ai/any-llm npm collision (GitHub repo can stay `any-llm`).
+- **Q2 — Git remote (ACTION ON YOU).** Org isn't created yet — GitHub org creation isn't available via
+  API/`gh`; create it at github.com/account/organizations/new (Free plan). Then I push `any-llm` to
+  `gullabs/any-llm` and we can publish. Still local-only until you create the org + say push.
 - **Q3 — First host to adopt.** Defaulting to standalone package + fake sink first; you said
   "decide later." Likely redline (its `llm_calls` exists) or OpenMontage (clean) for the first real wiring.
 - **Q4 — Open §16 items** (cost reconciliation job, live contract tests cadence, secrets rotation,
@@ -68,6 +70,12 @@ section. Review on return; flag anything to revisit.
 - Totals so far: 178 tests green; root typecheck clean; topological build emits valid .d.ts.
 
 ## Decisions (cont.)
+- **D16 — OSS org `gullabs` + scope `@gullabs`; v0.1.0; publish-ready.** Your 5 existing orgs are all
+  product companies, not OSS homes; a dedicated neutral org is the right call for any-llm + craftsman +
+  agent-skills. Picked `gullabs` (you chose it; github + npm both free). Packages renamed, hardened
+  (publishConfig/repository/sideeffects/keywords), `npm pack` verified. Version 0.1.0 (honest for a lib
+  not yet wired into a real host — not 1.0.0 which signals stability promises). Note: agent-skills repo
+  has NO license — fix when you move it into the org.
 - **D15 — Pricing rates need a verification pass (Q5).** M3 cost MATH is correct & tested, but several
   rate VALUES carry `// VERIFY` (gemini-2.5-flash/-lite, 2.5-pro >200k tier, gemini-3.x). gemini-2.5-pro
   base rates were confirmed vs Google's page. I'll web-verify the rest before M7/publish; costs are an
