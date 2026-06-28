@@ -48,5 +48,12 @@ export type {
 export type { LlmCallRecord, BuildRecordInput } from './record.js'
 export { buildRecord, errorKindToStatus } from './record.js'
 
+// Pricing snapshot
+export { GEMINI_PRICING, pricingVersion } from './pricing.js'
+export type { ModelRates } from './pricing.js'
+
+// Cost computation
+export { computeCost, geminiPricingSource } from './cost.js'
+
 /** Library version — kept in sync with `package.json`. */
 export const VERSION = '0.0.0'
