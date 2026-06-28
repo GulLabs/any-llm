@@ -1,0 +1,297 @@
+/**
+ * Call-site tests for @anyllm/core.
+ *
+ * Tests defineCallSite + client.runStructured: template rendering, config
+ * resolution, schema validation, callSiteId propagation.
+ *
+ * @module
+ */
+
+import { describe, it, expect } from 'vitest'
+import { z } from 'zod'
+import {
+  createClient,
+  defineCallSite,
+  geminiPricingSource,
+} from './index.js'
+import type { AdapterResult, Usage } from './index.js'
+import {
+  FakeAdapter,
+  FakeClock,
+  FakeIds,
+  RecordingSink,
+  fakeAuth,
+} from '@anyllm/testing'
+
+// ---------------------------------------------------------------------------
+// Shared fixtures
+// ---------------------------------------------------------------------------
+
+const GOOD_USAGE: Usage = {
+  inputTokens: 50,
+  outputTokens: 10,
+  details: {},
+  raw: null,
+}
+
+function successResult(overrides?: Partial<AdapterResult>): AdapterResult {
+  return {
+    text: 'result text',
+    usage: GOOD_USAGE,
+    model: 'gemini-2.5-flash',
+    warnings: [],
+    ...overrides,
+  }
+}
+
+const AUTH = fakeAuth({ apiKey: 'test-key' })
+const PRICING = geminiPricingSource()
+
+function makeClient(adapter: FakeAdapter, sink?: RecordingSink) {
+  return createClient({
+    adapters: [adapter],
+    auth: AUTH,
+    pricing: PRICING,
+    sink: sink ?? new RecordingSink(),
+    clock: new FakeClock(),
+    ids: new FakeIds(),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// defineCallSite
+// ---------------------------------------------------------------------------
+
+describe('defineCallSite', () => {
+  it('returns the options object unchanged', () => {
+    const opts = {
+      id: 'my-site',
+      model: 'gemini-2.5-flash',
+      userTemplate: 'Hello {{name}}',
+    }
+    expect(defineCallSite(opts)).toBe(opts)
+  })
+
+  it('is typed: schema inference flows to the call site', () => {
+    const schema = z.object({ count: z.number() })
+    const cs = defineCallSite({ id: 'x', model: 'gemini-2.5-flash', schema })
+    // TypeScript assertion: cs.schema should be the exact schema type
+    expect(cs.schema).toBe(schema)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Template rendering
+// ---------------------------------------------------------------------------
+
+describe('runStructured — template rendering', () => {
+  it('renders {{var}} placeholders in userTemplate', async () => {
+    const adapter = new FakeAdapter('google', successResult())
+    const client = makeClient(adapter)
+
+    const cs = defineCallSite({
+      id: 'greet',
+      model: 'gemini-2.5-flash',
+      userTemplate: 'Hello, {{name}}! You are {{age}} years old.',
+    })
+
+    await client.runStructured(cs, { name: 'Alice', age: '30' })
+
+    const req = adapter.calls[0]!
+    const part = req.messages[0]?.parts[0] as { kind: string; text: string }
+    expect(part.text).toBe('Hello, Alice! You are 30 years old.')
+  })
+
+  it('renders {{var}} in system template', async () => {
+    const adapter = new FakeAdapter('google', successResult())
+    const client = makeClient(adapter)
+
+    const cs = defineCallSite({
+      id: 'sys',
+      model: 'gemini-2.5-flash',
+      system: 'You are a bot for {{company}}.',
+      userTemplate: 'Hello',
+    })
+
+    await client.runStructured(cs, { company: 'Acme Corp' })
+
+    const req = adapter.calls[0]!
+    expect(req.system).toBe('You are a bot for Acme Corp.')
+  })
+
+  it('leaves missing vars as {{placeholder}} literal', async () => {
+    const adapter = new FakeAdapter('google', successResult())
+    const client = makeClient(adapter)
+
+    const cs = defineCallSite({
+      id: 'missing',
+      model: 'gemini-2.5-flash',
+      userTemplate: 'Greet {{name}} and {{unknown}}',
+    })
+
+    // Only provide 'name', not 'unknown'
+    await client.runStructured(cs, { name: 'Bob' })
+
+    const req = adapter.calls[0]!
+    const part = req.messages[0]?.parts[0] as { kind: string; text: string }
+    expect(part.text).toBe('Greet Bob and {{unknown}}')
+  })
+
+  it('non-recursive: var value containing {{x}} is NOT expanded', async () => {
+    const adapter = new FakeAdapter('google', successResult())
+    const client = makeClient(adapter)
+
+    const cs = defineCallSite({
+      id: 'inject',
+      model: 'gemini-2.5-flash',
+      userTemplate: 'Input: {{data}}',
+    })
+
+    // Anti-injection: the value '{{secret}}' must appear literally, not be expanded
+    await client.runStructured(cs, { data: '{{secret}}' })
+
+    const req = adapter.calls[0]!
+    const part = req.messages[0]?.parts[0] as { kind: string; text: string }
+    expect(part.text).toBe('Input: {{secret}}')
+  })
+
+  it('sends empty string for userTemplate when no template provided', async () => {
+    const adapter = new FakeAdapter('google', successResult())
+    const client = makeClient(adapter)
+
+    const cs = defineCallSite({ id: 'empty', model: 'gemini-2.5-flash' })
+    await client.runStructured(cs)
+
+    const req = adapter.calls[0]!
+    const part = req.messages[0]?.parts[0] as { kind: string; text: string }
+    expect(part.text).toBe('')
+  })
+
+  it('no vars argument → undefined vars leaves all placeholders', async () => {
+    const adapter = new FakeAdapter('google', successResult())
+    const client = makeClient(adapter)
+
+    const cs = defineCallSite({
+      id: 'novars',
+      model: 'gemini-2.5-flash',
+      userTemplate: 'Hello {{name}}',
+    })
+
+    await client.runStructured(cs) // no vars
+
+    const req = adapter.calls[0]!
+    const part = req.messages[0]?.parts[0] as { kind: string; text: string }
+    expect(part.text).toBe('Hello {{name}}')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Call-site config resolution
+// ---------------------------------------------------------------------------
+
+describe('runStructured — config resolution', () => {
+  it('libDefaults → callSite.config → opts.config (per-call wins)', async () => {
+    const adapter = new FakeAdapter('google', successResult())
+    const client = createClient({
+      adapters: [adapter],
+      auth: AUTH,
+      pricing: PRICING,
+      clock: new FakeClock(),
+      ids: new FakeIds(),
+      defaults: { temperature: 0.1, topP: 0.9 },
+    })
+
+    const cs = defineCallSite({
+      id: 'cfg',
+      model: 'gemini-2.5-flash',
+      config: { temperature: 0.5 },
+    })
+
+    // Per-call overrides callSite
+    await client.runStructured(cs, {}, { config: { temperature: 0.8 } })
+
+    const req = adapter.calls[0]!
+    // per-call temperature wins
+    expect(req.config.temperature).toBe(0.8)
+    // topP inherited from libDefaults (callSite didn't set it, per-call didn't either)
+    expect(req.config.topP).toBe(0.9)
+  })
+
+  it('callSiteId is written to record', async () => {
+    const sink = new RecordingSink()
+    const adapter = new FakeAdapter('google', successResult())
+    const client = makeClient(adapter, sink)
+
+    const cs = defineCallSite({
+      id: 'my-special-site',
+      model: 'gemini-2.5-flash',
+      userTemplate: 'Hi',
+    })
+
+    await client.runStructured(cs)
+
+    expect(sink.last()!.callSiteId).toBe('my-special-site')
+  })
+
+  it('metadata from opts is passed to record', async () => {
+    const sink = new RecordingSink()
+    const adapter = new FakeAdapter('google', successResult())
+    const client = makeClient(adapter, sink)
+
+    const cs = defineCallSite({ id: 'meta', model: 'gemini-2.5-flash' })
+
+    await client.runStructured(cs, {}, {
+      metadata: { tenantId: 'org-1', runId: 'run-42' },
+    })
+
+    expect(sink.last()!.metadata).toEqual({ tenantId: 'org-1', runId: 'run-42' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Schema validation via runStructured
+// ---------------------------------------------------------------------------
+
+describe('runStructured — schema validation', () => {
+  it('valid rawStructured → typed output', async () => {
+    const schema = z.object({ label: z.string(), score: z.number() })
+    const adapter = new FakeAdapter(
+      'google',
+      successResult({ rawStructured: { label: 'spam', score: 0.95 } }),
+    )
+    const client = makeClient(adapter)
+
+    const cs = defineCallSite({
+      id: 'classify',
+      model: 'gemini-2.5-flash',
+      schema,
+    })
+
+    const result = await client.runStructured(cs)
+    expect(result.output).toEqual({ label: 'spam', score: 0.95 })
+  })
+
+  it('invalid rawStructured → LlmError parse_error', async () => {
+    const schema = z.object({ label: z.string() })
+    const adapter = new FakeAdapter(
+      'google',
+      successResult({ rawStructured: { label: 123 } }),
+    )
+    const sink = new RecordingSink()
+    const client = makeClient(adapter, sink)
+
+    const cs = defineCallSite({
+      id: 'classify-bad',
+      model: 'gemini-2.5-flash',
+      schema,
+    })
+
+    await expect(client.runStructured(cs)).rejects.toMatchObject({
+      kind: 'parse_error',
+      retryable: false,
+    })
+
+    // postmortem record written
+    expect(sink.last()!.status).toBe('parse_error')
+  })
+})

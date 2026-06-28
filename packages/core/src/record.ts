@@ -209,6 +209,25 @@ function errorKindToStatus(kind: LlmErrorKind): LlmCallRecord['status'] {
 export { errorKindToStatus }
 
 // ---------------------------------------------------------------------------
+// Public usage normalizer (thin wrapper around sanitizeUsage for the engine)
+// ---------------------------------------------------------------------------
+
+/**
+ * Validates and normalises GROSS/subset token invariants.
+ *
+ * Re-exports the internal {@link sanitizeUsage} logic with a stable public name
+ * so the engine can normalise usage exactly once (SPEC step 7) and share the
+ * same `Usage` value for the result, cost, and record — no silent divergence.
+ *
+ * @param usage - Raw usage from the adapter.
+ * @returns The clamped `usage` and any `warnings` about violations.
+ */
+export function normalizeUsage(usage: Usage): { usage: Usage; warnings: Warning[] } {
+  const { usage: normalized, clampWarnings } = sanitizeUsage(usage)
+  return { usage: normalized, warnings: clampWarnings }
+}
+
+// ---------------------------------------------------------------------------
 // Usage invariant sanitizer
 // ---------------------------------------------------------------------------
 

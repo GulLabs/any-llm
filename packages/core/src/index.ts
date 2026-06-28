@@ -46,7 +46,7 @@ export type {
 
 // Record
 export type { LlmCallRecord, BuildRecordInput } from './record.js'
-export { buildRecord, errorKindToStatus } from './record.js'
+export { buildRecord, errorKindToStatus, normalizeUsage } from './record.js'
 
 // Pricing snapshot
 export { GEMINI_PRICING, pricingVersion } from './pricing.js'
@@ -54,6 +54,19 @@ export type { ModelRates } from './pricing.js'
 
 // Cost computation
 export { computeCost, geminiPricingSource } from './cost.js'
+
+// Engine
+export type {
+  ClientConfig,
+  GenerateOptions,
+  RunStructuredOptions,
+  Client,
+} from './engine.js'
+export { createClient } from './engine.js'
+
+// Call site
+export type { CallSite } from './callsite.js'
+export { defineCallSite } from './callsite.js'
 
 /** Library version — kept in sync with `package.json`. */
 export const VERSION = '0.0.0'

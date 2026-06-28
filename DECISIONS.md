@@ -58,7 +58,22 @@ section. Review on return; flag anything to revisit.
 - **D2 — Stack: pnpm workspace monorepo, TypeScript strict, vitest, tsup (ESM+CJS+d.ts), Node ≥20.**
 - **D1 — Tests never hit real Gemini.** Mock `@google/genai`; stress the surface with fakes/fuzz.
 
-## Build status
-- Design: SPEC.md written (lean v1). Awaiting codex sign-off (D10).
-- Git: initialized, branch `main`, local only.
-- Implementation: not started (pending sign-off).
+## Build status (live)
+- **M0 scaffold** ✅ committed `bedf438`
+- **M1 core** (types/errors/ports/record) ✅ `072c4fd` — 102 tests
+- **M2 testing fakes** ✅ `15c23e7`
+- **M3 cost+pricing** ✅ `89415cf` — 13 tests incl codex double-count case
+- **M1+M2 adversarial-review** → `needs-attention` (4 findings) → all fixed `84adec9`
+- Next: **M4 engine+callsite**, then M5 google adapter, M6 drizzle+stress, M7 docs.
+- Totals so far: 178 tests green; root typecheck clean; topological build emits valid .d.ts.
+
+## Decisions (cont.)
+- **D15 — Pricing rates need a verification pass (Q5).** M3 cost MATH is correct & tested, but several
+  rate VALUES carry `// VERIFY` (gemini-2.5-flash/-lite, 2.5-pro >200k tier, gemini-3.x). gemini-2.5-pro
+  base rates were confirmed vs Google's page. I'll web-verify the rest before M7/publish; costs are an
+  updatable snapshot (`pricingVersion`), so wrong values are low-risk to correct. **Q5 for you: confirm
+  the model set you actually use so I verify those first.**
+- **D14 — Codex review handling.** `adversarial-review --background` via plain Bash streamed & a job
+  stalled ~13min in final composition once; switched to launching it via Bash `run_in_background:true`
+  (the real detach) + polling, and I cap waits to avoid orphans (cancel + bundle if stalled). Reviews
+  are pipelined: build next milestone while the prior review runs; fixes bundled into the next review's base.
