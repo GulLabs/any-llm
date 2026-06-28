@@ -1,0 +1,389 @@
+/**
+ * Unit tests for record.ts — buildRecord and errorKindToStatus.
+ */
+
+import { describe, it, expect } from 'vitest'
+import { buildRecord, errorKindToStatus } from './record.js'
+import { LlmError } from './errors.js'
+import type { BuildRecordInput } from './record.js'
+import type { Usage, Cost, GenConfig } from './types.js'
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeUsage(overrides: Partial<Usage> = {}): Usage {
+  return {
+    inputTokens: 100,
+    outputTokens: 50,
+    details: {},
+    raw: { promptTokenCount: 100, candidatesTokenCount: 50 },
+    ...overrides,
+  }
+}
+
+function makeCost(overrides: Partial<Cost> = {}): Cost {
+  return {
+    microUsd: 1500,
+    pricingVersion: 'gemini-2026-06-27',
+    confidence: 'exact',
+    details: { input: 1000, cached: 0, output: 500 },
+    ...overrides,
+  }
+}
+
+function makeConfig(overrides: Partial<GenConfig> = {}): GenConfig {
+  return {
+    temperature: 0.7,
+    serviceTier: 'flex',
+    ...overrides,
+  }
+}
+
+function makeBaseInput(overrides: Partial<BuildRecordInput> = {}): BuildRecordInput {
+  return {
+    callId: 'call-001',
+    attemptId: 'attempt-001',
+    provider: 'google',
+    model: 'gemini-2.5-pro',
+    usage: makeUsage(),
+    latencyMs: 1234,
+    status: 'ok',
+    generationConfig: makeConfig(),
+    metadata: { tenantId: 'tenant-abc' },
+    createdAt: '2026-06-27T12:00:00.000Z',
+    ...overrides,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// buildRecord — success path
+// ---------------------------------------------------------------------------
+
+describe('buildRecord — success path', () => {
+  it('sets recordSchemaVersion to 1', () => {
+    const r = buildRecord(makeBaseInput())
+    expect(r.recordSchemaVersion).toBe(1)
+  })
+
+  it('maps identity fields', () => {
+    const r = buildRecord(
+      makeBaseInput({ callId: 'c-1', attemptId: 'a-1', callSiteId: 'site-x' }),
+    )
+    expect(r.callId).toBe('c-1')
+    expect(r.attemptId).toBe('a-1')
+    expect(r.callSiteId).toBe('site-x')
+  })
+
+  it('callSiteId absent when not provided', () => {
+    const r = buildRecord(makeBaseInput())
+    expect('callSiteId' in r).toBe(false)
+  })
+
+  it('maps routing fields', () => {
+    const r = buildRecord(
+      makeBaseInput({
+        provider: 'google',
+        model: 'gemini-2.5-pro',
+        modelVersion: 'gemini-2.5-pro-001',
+        responseId: 'resp-xyz',
+        serviceTier: 'flex',
+      }),
+    )
+    expect(r.provider).toBe('google')
+    expect(r.model).toBe('gemini-2.5-pro')
+    expect(r.modelVersion).toBe('gemini-2.5-pro-001')
+    expect(r.responseId).toBe('resp-xyz')
+    expect(r.serviceTier).toBe('flex')
+  })
+
+  it('optional routing fields absent when not provided', () => {
+    const r = buildRecord(makeBaseInput())
+    expect('modelVersion' in r).toBe(false)
+    expect('responseId' in r).toBe(false)
+    expect('serviceTier' in r).toBe(false)
+  })
+
+  it('maps status and finishReason', () => {
+    const r = buildRecord(makeBaseInput({ status: 'ok', finishReason: 'stop' }))
+    expect(r.status).toBe('ok')
+    expect(r.finishReason).toBe('stop')
+  })
+
+  it('finishReason absent when not provided', () => {
+    const r = buildRecord(makeBaseInput())
+    expect('finishReason' in r).toBe(false)
+  })
+
+  it('maps latencyMs', () => {
+    const r = buildRecord(makeBaseInput({ latencyMs: 9876 }))
+    expect(r.latencyMs).toBe(9876)
+  })
+
+  it('maps usage hot fields', () => {
+    const r = buildRecord(
+      makeBaseInput({
+        usage: makeUsage({
+          inputTokens: 250_000,
+          outputTokens: 5_000,
+          cachedInputTokens: 100_000,
+          thinkingTokens: 2_000,
+          totalTokens: 255_000,
+        }),
+      }),
+    )
+    expect(r.inputTokens).toBe(250_000)
+    expect(r.outputTokens).toBe(5_000)
+    expect(r.cachedInputTokens).toBe(100_000)
+    expect(r.thinkingTokens).toBe(2_000)
+    expect(r.totalTokens).toBe(255_000)
+  })
+
+  it('optional usage fields absent when not in Usage', () => {
+    const r = buildRecord(makeBaseInput({ usage: makeUsage() }))
+    expect('cachedInputTokens' in r).toBe(false)
+    expect('thinkingTokens' in r).toBe(false)
+    expect('totalTokens' in r).toBe(false)
+  })
+
+  it('maps cost fields', () => {
+    const cost = makeCost({ microUsd: 2000, pricingVersion: 'gemini-2026-06-27' })
+    const r = buildRecord(makeBaseInput({ cost }))
+    expect(r.costMicroUsd).toBe(2000)
+    expect(r.pricingVersion).toBe('gemini-2026-06-27')
+  })
+
+  it('cost fields absent when cost not provided', () => {
+    const r = buildRecord(makeBaseInput())
+    expect('costMicroUsd' in r).toBe(false)
+    expect('pricingVersion' in r).toBe(false)
+  })
+
+  it('maps null microUsd when model is unpriced', () => {
+    const cost = makeCost({ microUsd: null })
+    const r = buildRecord(makeBaseInput({ cost }))
+    expect(r.costMicroUsd).toBeNull()
+  })
+
+  it('maps tokenDetails from usage.details', () => {
+    const r = buildRecord(
+      makeBaseInput({
+        usage: makeUsage({ details: { customTokenType: 42 } }),
+      }),
+    )
+    expect(r.tokenDetails).toEqual({ customTokenType: 42 })
+  })
+
+  it('maps rawUsage from usage.raw', () => {
+    const raw = { promptTokenCount: 100, candidatesTokenCount: 50, thoughtsTokenCount: 20 }
+    const r = buildRecord(makeBaseInput({ usage: makeUsage({ raw }) }))
+    expect(r.rawUsage).toEqual(raw)
+  })
+
+  it('maps providerMetadata when provided', () => {
+    const meta = { safetyRatings: [{ category: 'HARM_CATEGORY_HATE_SPEECH', probability: 'NEGLIGIBLE' }] }
+    const r = buildRecord(makeBaseInput({ providerMetadata: meta }))
+    expect(r.providerMetadata).toEqual(meta)
+  })
+
+  it('providerMetadata absent when not provided', () => {
+    const r = buildRecord(makeBaseInput())
+    expect('providerMetadata' in r).toBe(false)
+  })
+
+  it('maps warnings as JSONB', () => {
+    const warnings = [
+      { type: 'unsupported-setting' as const, setting: 'topK', details: 'not supported' },
+    ]
+    const r = buildRecord(makeBaseInput({ warnings }))
+    expect(r.warnings).toEqual(warnings)
+  })
+
+  it('warnings absent when array is empty', () => {
+    const r = buildRecord(makeBaseInput({ warnings: [] }))
+    expect('warnings' in r).toBe(false)
+  })
+
+  it('warnings absent when not provided', () => {
+    const r = buildRecord(makeBaseInput())
+    expect('warnings' in r).toBe(false)
+  })
+
+  it('maps generationConfig as JSONB', () => {
+    const config: GenConfig = { temperature: 0.5, serviceTier: 'flex' }
+    const r = buildRecord(makeBaseInput({ generationConfig: config }))
+    expect(r.generationConfig).toEqual(config)
+  })
+
+  it('maps metadata', () => {
+    const metadata = { tenantId: 'tenant-123', runId: 'run-456' }
+    const r = buildRecord(makeBaseInput({ metadata }))
+    expect(r.metadata).toEqual(metadata)
+  })
+
+  it('maps createdAt', () => {
+    const r = buildRecord(makeBaseInput({ createdAt: '2026-06-27T00:00:00.000Z' }))
+    expect(r.createdAt).toBe('2026-06-27T00:00:00.000Z')
+  })
+
+  it('no errorKind/errorMessage on success', () => {
+    const r = buildRecord(makeBaseInput({ status: 'ok' }))
+    expect('errorKind' in r).toBe(false)
+    expect('errorMessage' in r).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// buildRecord — reasoning capture
+// ---------------------------------------------------------------------------
+
+describe('buildRecord — reasoning capture', () => {
+  it('maps reasoningText when provided', () => {
+    const r = buildRecord(makeBaseInput({ reasoningText: 'Let me think step by step...' }))
+    expect(r.reasoningText).toBe('Let me think step by step...')
+  })
+
+  it('reasoningText absent when not provided', () => {
+    const r = buildRecord(makeBaseInput())
+    expect('reasoningText' in r).toBe(false)
+  })
+
+  it('responseId preserved', () => {
+    const r = buildRecord(makeBaseInput({ responseId: 'resp-abc-123' }))
+    expect(r.responseId).toBe('resp-abc-123')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// buildRecord — error path
+// ---------------------------------------------------------------------------
+
+describe('buildRecord — error path', () => {
+  it('sets errorKind and errorMessage on failure', () => {
+    const error = new LlmError('Service temporarily unavailable', {
+      kind: 'server',
+      retryable: true,
+      httpStatus: 503,
+    })
+    const r = buildRecord(
+      makeBaseInput({ status: 'api_error', error }),
+    )
+    expect(r.errorKind).toBe('server')
+    expect(r.errorMessage).toBe('Service temporarily unavailable')
+  })
+
+  it('derives status from error.kind — parse_error', () => {
+    const error = new LlmError('schema mismatch', { kind: 'parse_error', retryable: false })
+    const r = buildRecord(makeBaseInput({ status: 'ok', error }))
+    expect(r.status).toBe('parse_error')
+  })
+
+  it('derives status from error.kind — timeout', () => {
+    const error = new LlmError('timed out', { kind: 'timeout', retryable: true })
+    const r = buildRecord(makeBaseInput({ status: 'ok', error }))
+    expect(r.status).toBe('timeout')
+  })
+
+  it('derives status from error.kind — aborted', () => {
+    const error = new LlmError('aborted', { kind: 'aborted', retryable: false })
+    const r = buildRecord(makeBaseInput({ status: 'ok', error }))
+    expect(r.status).toBe('aborted')
+  })
+
+  it('derives status from error.kind — content_filter', () => {
+    const error = new LlmError('content filtered', { kind: 'content_filter', retryable: false })
+    const r = buildRecord(makeBaseInput({ status: 'ok', error }))
+    expect(r.status).toBe('content_filter')
+  })
+
+  it('collapses invalid_auth → api_error', () => {
+    const error = new LlmError('invalid key', { kind: 'invalid_auth', retryable: false })
+    const r = buildRecord(makeBaseInput({ error }))
+    expect(r.status).toBe('api_error')
+  })
+
+  it('collapses rate_limited → api_error', () => {
+    const error = new LlmError('rate limit', { kind: 'rate_limited', retryable: true })
+    const r = buildRecord(makeBaseInput({ error }))
+    expect(r.status).toBe('api_error')
+  })
+
+  it('collapses bad_request → api_error', () => {
+    const error = new LlmError('bad req', { kind: 'bad_request', retryable: false })
+    const r = buildRecord(makeBaseInput({ error }))
+    expect(r.status).toBe('api_error')
+  })
+
+  it('collapses unknown → api_error', () => {
+    const error = new LlmError('unknown', { kind: 'unknown', retryable: false })
+    const r = buildRecord(makeBaseInput({ error }))
+    expect(r.status).toBe('api_error')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// errorKindToStatus
+// ---------------------------------------------------------------------------
+
+describe('errorKindToStatus', () => {
+  it('parse_error → parse_error', () => {
+    expect(errorKindToStatus('parse_error')).toBe('parse_error')
+  })
+  it('timeout → timeout', () => {
+    expect(errorKindToStatus('timeout')).toBe('timeout')
+  })
+  it('aborted → aborted', () => {
+    expect(errorKindToStatus('aborted')).toBe('aborted')
+  })
+  it('content_filter → content_filter', () => {
+    expect(errorKindToStatus('content_filter')).toBe('content_filter')
+  })
+  it('invalid_auth → api_error', () => {
+    expect(errorKindToStatus('invalid_auth')).toBe('api_error')
+  })
+  it('rate_limited → api_error', () => {
+    expect(errorKindToStatus('rate_limited')).toBe('api_error')
+  })
+  it('server → api_error', () => {
+    expect(errorKindToStatus('server')).toBe('api_error')
+  })
+  it('bad_request → api_error', () => {
+    expect(errorKindToStatus('bad_request')).toBe('api_error')
+  })
+  it('unknown → api_error', () => {
+    expect(errorKindToStatus('unknown')).toBe('api_error')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Usage gross/subset values — SPEC invariant stress
+// ---------------------------------------------------------------------------
+
+describe('buildRecord — gross/subset usage invariant', () => {
+  it('preserves GROSS token counts exactly (250k/100k/5k/2k scenario)', () => {
+    // This is the canonical high-risk test from SPEC §Testing.
+    // input=250k (gross), cached=100k (subset), output=5k (gross), thinking=2k (subset)
+    const usage = makeUsage({
+      inputTokens: 250_000,
+      outputTokens: 5_000,
+      cachedInputTokens: 100_000,
+      thinkingTokens: 2_000,
+      totalTokens: 255_000,
+    })
+    const cost = makeCost({
+      microUsd: 1_750_000,  // example: 150k*input + 100k*cached + 5k*output
+      details: { input: 1_500_000, cached: 200_000, output: 50_000 },
+    })
+    const r = buildRecord(makeBaseInput({ usage, cost }))
+
+    // GROSS values preserved verbatim.
+    expect(r.inputTokens).toBe(250_000)
+    expect(r.outputTokens).toBe(5_000)
+    // Subset values preserved verbatim (no subtraction).
+    expect(r.cachedInputTokens).toBe(100_000)
+    expect(r.thinkingTokens).toBe(2_000)
+    expect(r.totalTokens).toBe(255_000)
+    // Cost frozen correctly.
+    expect(r.costMicroUsd).toBe(1_750_000)
+  })
+})
