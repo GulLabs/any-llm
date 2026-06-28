@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@anyllm/core": ["../core/src/index.ts"],
+      "@anyllm/google": ["../google/src/index.ts"],
+      "@anyllm/drizzle": ["../drizzle/src/index.ts"],
+      "@anyllm/testing": ["../testing/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@anyllm/core": ["packages/core/src/index.ts"],
+      "@anyllm/google": ["packages/google/src/index.ts"],
+      "@anyllm/drizzle": ["packages/drizzle/src/index.ts"],
+      "@anyllm/testing": ["packages/testing/src/index.ts"]
+    }
+  },
+  "include": ["packages/*/src/**/*.ts"]
+}
