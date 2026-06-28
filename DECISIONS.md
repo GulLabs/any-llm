@@ -20,6 +20,20 @@ section. Review on return; flag anything to revisit.
   multi-region) deferred OUT of v1 per "build the slice." Revisit when a host needs them.
 
 ## Core decisions (D)
+- **D13 — Codex design sign-off (gpt-5.4) returned `blocking-issues`; all addressed in SPEC.**
+  Fixes: (1) "capture thinking" made explicit — thinking-token usage always + thought-summary
+  `reasoningText` when `includeThoughts` (added to result/adapter/record); (2) `Cost.details` =
+  `{input,cached,output}`, MUST sum to `microUsd`, no separate thinking lane; (3) record `status`
+  aligned to failure modes (+content_filter, +aborted; +`aborted` LlmErrorKind); (4) `responseId`
+  persisted. Milestones reordered: **testing fakes pulled to M2** (needed by all later tests).
+  Codex verified Gemini pricing math vs Google's live pricing page. Did NOT re-run sign-off — fixes
+  are exactly as prescribed; M1 commit's `/codex:adversarial-review` will re-validate.
+- **D12 — "Capture thinking" = usage + thought text.** v1 stores thinking token counts always and
+  the provider thought-summary TEXT when `includeThoughts` is requested (`reasoningText`). Chose to
+  capture text (not just counts) because you listed "capture thinking" separately from "record usage."
+- **D11 — Commit-gate policy.** Every commit containing library LOGIC gets `/codex:adversarial-review`
+  before moving on. Pure scaffold/config/docs commits (e.g. M0) are exempt — reviewing boilerplate
+  wastes the gate. Reversible: say the word and I'll gate every commit. (M0 `bedf438` not gated.)
 - **D10 — Delegate milestone breakdown + design sign-off to codex (gpt-5.4).** Utilizes your codex
   usage; gives an external senior-architect pass on SPEC before any code. Reversible.
 - **D9 — Model routing for subagents (token economy + codex utilization):**

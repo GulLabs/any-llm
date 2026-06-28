@@ -8,7 +8,9 @@
 ## v1 goals (the entire scope)
 1. Call **Gemini** with the **Flex** service tier.
 2. **Record token usage** (input / output / cached / **thinking**).
-3. Capture **thinking** + **postmortems** (per-call diagnostics on success and failure).
+3. Capture **thinking** — thinking *token usage* always; the provider-returned *thought-summary
+   text* when `reasoning.includeThoughts` is set — plus **postmortems** (per-call diagnostics on
+   success and failure).
 4. **Track cost** (public Gemini pricing → micro-USD, frozen per record).
 
 Everything else from DESIGN.md is OUT of v1 (no other providers, no streaming, no tools, no
@@ -79,6 +81,7 @@ export interface ReasoningIntent {
 export interface LlmResult<T> {
   output?: T                         // present iff request had output.schema and validation passed
   text?: string
+  reasoningText?: string             // provider thought-summary, present iff includeThoughts requested
   usage: Usage
   cost?: Cost                        // null model-unpriced; tokens still captured
   model: string
@@ -111,14 +114,16 @@ export interface Cost {
   microUsd: number | null
   pricingVersion: string
   confidence: 'exact' | 'estimated'  // 'estimated' if any priced field had to be inferred
-  details: Record<string, number>    // microUsd per type: input, cached, output, thinking
+  details: { input: number; cached: number; output: number }  // microUsd; MUST sum to microUsd.
+  // NOTE: thinking tokens are inside outputTokens and billed at the output rate — NO separate
+  // 'thinking' cost lane (that would break sum(details) === microUsd). thinkingTokens is usage-only.
 }
 ```
 
 ### Errors (`errors.ts`)
 ```ts
 export type LlmErrorKind =
-  | 'invalid_auth' | 'rate_limited' | 'server' | 'timeout'
+  | 'invalid_auth' | 'rate_limited' | 'server' | 'timeout' | 'aborted'
   | 'bad_request' | 'content_filter' | 'parse_error' | 'unknown'
 export class LlmError extends Error {
   kind: LlmErrorKind
@@ -152,6 +157,7 @@ export interface AdapterCtx { auth: AuthMaterial; signal?: AbortSignal; logger: 
 export interface AdapterResult {
   rawStructured?: unknown                           // engine will Zod-validate this
   text?: string
+  reasoningText?: string                            // thought summary if includeThoughts requested
   usage: Usage
   model: string
   modelVersion?: string
@@ -231,9 +237,10 @@ export interface LlmCallRecord {
   recordSchemaVersion: 1
   callId: string; attemptId: string
   callSiteId?: string
-  provider: string; model: string; modelVersion?: string
+  provider: string; model: string; modelVersion?: string; responseId?: string
   serviceTier?: string
-  status: 'ok' | 'parse_error' | 'api_error' | 'timeout'
+  // status aligns with LlmErrorKind so postmortems don't collapse distinct failures:
+  status: 'ok' | 'parse_error' | 'api_error' | 'timeout' | 'aborted' | 'content_filter'
   finishReason?: FinishReason
   latencyMs: number
   // usage (typed hot fields)
@@ -245,6 +252,8 @@ export interface LlmCallRecord {
   tokenDetails: JsonValue; rawUsage: JsonValue; providerMetadata?: JsonValue
   warnings?: JsonValue
   generationConfig: JsonValue          // what we actually sent (transport keys stripped)
+  // thinking capture (goal 3): summary text when includeThoughts was requested
+  reasoningText?: string               // truncated to a cap; null when not requested/returned
   // postmortem
   errorKind?: LlmErrorKind; errorMessage?: string   // truncated; diagnostics on failure
   metadata: JsonValue                  // host anchors
@@ -276,6 +285,12 @@ Core imports no ORM; a host with a different store implements `UsageSink` direct
   `@google/genai` client returning scripted responses incl. usageMetadata with thoughtsTokenCount).
 - **Unit:** cost math (GROSS/net, >200k tier, cached discount, unknown-model→null); error
   classification; config resolution/merge; usage normalization; record building; Zod validate→parse_error.
+- **The highest-risk test (codex-mandated, no network):** drive the engine with a fake adapter
+  result of `inputTokens=250_000, cachedInputTokens=100_000, outputTokens=5_000, thinkingTokens=2_000`
+  and assert in ONE test: gross/subset invariant preserved; `>200k` tier chosen on gross input;
+  only 150_000 input billed at input rate; 100_000 at cached rate; 5_000 output billed once;
+  thinkingTokens persisted but adds ZERO cost; `sum(cost.details)===cost.microUsd`; and the persisted
+  record's cost === returned `LlmResult.cost` exactly.
 - **Adapter contract tests:** drive `geminiAdapter` against `fakeGemini` scripted scenarios:
   flex tier set, thinking captured, structured output, each error kind, warnings emitted.
 - **Engine integration (fakes):** end-to-end `generate()` → one record in `RecordingSink` with correct
@@ -288,7 +303,16 @@ Core imports no ORM; a host with a different store implements `UsageSink` direct
 
 ---
 
-## Build milestones (deliverables) — see TaskList; refined via engineering-skills
-M0 scaffold · M1 core types+errors · M2 cost+pricing · M3 engine+callsite · M4 google adapter ·
-M5 drizzle sink · M6 testing+surface stress · M7 docs+example. Each milestone: code + tests +
+## Build milestones (deliverables) — order validated by codex sign-off (testing pulled forward)
+M0 scaffold · **M1** core types+errors+record · **M2** testing fakes (FakeClock/Ids/RecordingSink/
+fakeGemini) · **M3** cost+pricing · **M4** engine+callsite · **M5** google adapter · **M6** drizzle
+sink + surface-stress/fuzz · **M7** docs+example. Each code milestone: code + tests +
 `/codex:adversarial-review` sign-off before the next.
+
+### Codex sign-off (gpt-5.4, 2026-06-27) — addressed
+Blocking issues fixed in this spec: (1) thinking *capture* now explicit — usage always + thought
+text when `includeThoughts` (`reasoningText` on result/adapter/record); (2) `Cost.details` is
+`{input,cached,output}` and MUST sum to `microUsd` (thinking billed inside output, no separate lane);
+(3) record `status` aligned to failure modes (+`content_filter`,`aborted`); (4) `responseId` persisted.
+Pricing math verified against Google's live Gemini pricing page. Highest-risk bug to test:
+double-counting cached/thinking tokens (see the explicit 250k/100k/5k/2k assertion in §Testing).
