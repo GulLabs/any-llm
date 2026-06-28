@@ -182,6 +182,118 @@ export function classifyHttpStatus(
 }
 
 // ---------------------------------------------------------------------------
+// Plain-object error helpers (provider SDKs throw non-Error objects)
+// ---------------------------------------------------------------------------
+
+/**
+ * Safely reads a numeric own-property from a `Record<string, unknown>` view of
+ * an object.  Returns `undefined` if the property is absent or non-numeric.
+ */
+function numericProp(obj: Record<string, unknown>, key: string): number | undefined {
+  const v = obj[key]
+  return typeof v === 'number' ? v : undefined
+}
+
+/**
+ * Safely reads a numeric property one level deep (e.g. `obj.response.status`).
+ * Returns `undefined` if either level is absent or non-numeric.
+ */
+function nestedNumericProp(
+  obj: Record<string, unknown>,
+  key1: string,
+  key2: string,
+): number | undefined {
+  const nested = obj[key1]
+  if (nested !== null && typeof nested === 'object') {
+    return numericProp(nested as Record<string, unknown>, key2)
+  }
+  return undefined
+}
+
+/**
+ * Extracts a suggested retry delay (milliseconds) from a plain-object error.
+ *
+ * Probe order:
+ * 1. `obj.retryAfterMs` — already in milliseconds.
+ * 2. `obj.retryAfter` as a positive number — treated as **seconds** → ms.
+ * 3. `obj.headers['retry-after']` or `obj.headers['x-ratelimit-reset']` as a
+ *    seconds string — converted to ms.  Supports both `Headers.get()` and
+ *    plain string-valued objects.
+ */
+function extractRetryAfterMs(obj: Record<string, unknown>): number | undefined {
+  // Direct retryAfterMs (already milliseconds).
+  const directMs = numericProp(obj, 'retryAfterMs')
+  if (directMs !== undefined) return directMs
+
+  // retryAfter as a positive number (seconds → ms).
+  const ra = obj['retryAfter']
+  if (typeof ra === 'number' && ra > 0) return ra * 1000
+
+  // Headers object — support both Headers-like (.get()) and plain objects.
+  const headers = obj['headers']
+  if (headers !== null && typeof headers === 'object') {
+    const hObj = headers as Record<string, unknown>
+    for (const key of ['retry-after', 'x-ratelimit-reset'] as const) {
+      let raw: unknown
+      if (typeof hObj['get'] === 'function') {
+        // Standard `Headers` interface.
+        raw = (hObj as { get(k: string): string | null }).get(key)
+      } else {
+        raw = hObj[key]
+      }
+      if (typeof raw === 'string') {
+        const parsed = parseInt(raw, 10)
+        if (!isNaN(parsed) && parsed > 0) return parsed * 1000
+      }
+    }
+  }
+
+  return undefined
+}
+
+/**
+ * Extracts an HTTP status code from a plain-object error.
+ *
+ * Checked locations (first match wins):
+ * - `obj.status`           (number)
+ * - `obj.code`             (number — some SDKs use this)
+ * - `obj.response.status`  (nested)
+ * - `obj.error.status`     (nested)
+ * - `obj.error.code`       (nested)
+ */
+function extractHttpStatus(obj: Record<string, unknown>): number | undefined {
+  return (
+    numericProp(obj, 'status') ??
+    numericProp(obj, 'code') ??
+    nestedNumericProp(obj, 'response', 'status') ??
+    nestedNumericProp(obj, 'error', 'status') ??
+    nestedNumericProp(obj, 'error', 'code')
+  )
+}
+
+/**
+ * Builds an `LlmError` from a plain-object error that carries a numeric HTTP
+ * status code.  Routes the status through `classifyHttpStatus` and injects any
+ * available retry-after delay.
+ */
+function classifyObjectError(
+  obj: Record<string, unknown>,
+  httpStatus: number,
+  cause: unknown,
+  messageOverride?: string,
+): LlmError {
+  const retryAfterMs = extractRetryAfterMs(obj)
+  const cls = classifyHttpStatus(httpStatus, retryAfterMs)
+  return new LlmError(messageOverride ?? `HTTP ${httpStatus}`, {
+    kind: cls.kind,
+    retryable: cls.retryable,
+    httpStatus,
+    ...(cls.retryAfterMs !== undefined ? { retryAfterMs: cls.retryAfterMs } : {}),
+    cause,
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Generic error classifier
 // ---------------------------------------------------------------------------
 
@@ -193,18 +305,22 @@ export function classifyHttpStatus(
  * 2. `Error.name === 'AbortError'` → `'aborted'` (not retryable).
  * 3. `Error.name === 'TimeoutError'` or message contains `'timeout'` /
  *    `'timed out'` (case-insensitive) → `'timeout'` (retryable).
- * 4. Anything else → `'unknown'` (not retryable).
+ * 4. Any object (including `Error` subclasses) with a recognisable numeric
+ *    `status`, `code`, or nested `response.status` / `error.status` /
+ *    `error.code` → routed through {@link classifyHttpStatus}.  A
+ *    `retryAfterMs` / `retryAfter` / header value is extracted when present.
+ * 5. Anything else → `'unknown'` (not retryable).
  *
  * The original error is always attached as `cause`.
  *
  * @param e - Any thrown value (the engine catches `unknown`).
  */
 export function classifyError(e: unknown): LlmError {
-  // Already classified — pass through unchanged.
+  // 1. Already classified — pass through unchanged.
   if (e instanceof LlmError) return e
 
   if (e instanceof Error) {
-    // AbortSignal cancellation.
+    // 2. AbortSignal cancellation.
     if (e.name === 'AbortError') {
       return new LlmError(e.message || 'Request aborted', {
         kind: 'aborted',
@@ -213,12 +329,9 @@ export function classifyError(e: unknown): LlmError {
       })
     }
 
-    // Timeout — named TimeoutError (Node.js fetch / AbortSignal.timeout) or
-    // message heuristic for SDK-level timeout errors.
-    if (
-      e.name === 'TimeoutError' ||
-      /timeout|timed?\s+out/i.test(e.message)
-    ) {
+    // 3. Timeout — named TimeoutError (Node.js fetch / AbortSignal.timeout) or
+    //    message heuristic for SDK-level timeout errors.
+    if (e.name === 'TimeoutError' || /timeout|timed?\s+out/i.test(e.message)) {
       return new LlmError(e.message || 'Request timed out', {
         kind: 'timeout',
         retryable: true,
@@ -226,7 +339,14 @@ export function classifyError(e: unknown): LlmError {
       })
     }
 
-    // Fallthrough — unknown error.
+    // 4a. Error subclass with HTTP status metadata (e.g. provider SDK errors).
+    const eAsObj = e as unknown as Record<string, unknown>
+    const errHttpStatus = extractHttpStatus(eAsObj)
+    if (errHttpStatus !== undefined) {
+      return classifyObjectError(eAsObj, errHttpStatus, e, e.message || undefined)
+    }
+
+    // Fallthrough — unknown Error.
     return new LlmError(e.message || 'Unknown error', {
       kind: 'unknown',
       retryable: false,
@@ -234,7 +354,17 @@ export function classifyError(e: unknown): LlmError {
     })
   }
 
-  // Non-Error thrown value (string, plain object, etc.).
+  // 4b. Plain-object throw (the primary provider SDK pattern: `throw { status: 429 }`).
+  if (e !== null && typeof e === 'object') {
+    const obj = e as Record<string, unknown>
+    const httpStatus = extractHttpStatus(obj)
+    if (httpStatus !== undefined) {
+      return classifyObjectError(obj, httpStatus, e)
+    }
+  }
+
+  // 5. Non-Error, non-object thrown value (string, number, null, etc.)
+  //    or an object without any recognisable status key.
   const message = typeof e === 'string' ? e : 'Unknown error'
   return new LlmError(message, {
     kind: 'unknown',

@@ -20,6 +20,7 @@ export { RecordingSink } from './recording-sink.js'
 export type { RecordingSinkOptions } from './recording-sink.js'
 export {
   fakeGeminiResponse,
+  fakeGeminiBlocked,
   makeFakeGemini,
 } from './fake-gemini.js'
 export type {
@@ -29,6 +30,7 @@ export type {
   GeminiUsageMetadataLike,
   GeminiResponseLike,
   FakeGeminiResponseOpts,
+  FakeGeminiBlockedOpts,
   GeminiScript,
   FakeGeminiModels,
   FakeGeminiClient,

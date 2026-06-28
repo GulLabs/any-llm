@@ -209,6 +209,94 @@ function errorKindToStatus(kind: LlmErrorKind): LlmCallRecord['status'] {
 export { errorKindToStatus }
 
 // ---------------------------------------------------------------------------
+// Usage invariant sanitizer
+// ---------------------------------------------------------------------------
+
+/**
+ * The result of {@link sanitizeUsage}.
+ */
+interface SanitizeUsageResult {
+  /** Usage with subset token counts clamped to their parent GROSS fields. */
+  usage: Usage
+  /** Warnings emitted for each violation that was corrected. */
+  clampWarnings: Warning[]
+}
+
+/**
+ * Validates GROSS/subset token invariants and clamps any violations.
+ *
+ * Per the SPEC:
+ * - `cachedInputTokens` **must** be ≤ `inputTokens` (it is a subset of gross input).
+ * - `thinkingTokens` **must** be ≤ `outputTokens` (it is a subset of gross output).
+ *
+ * **Policy (fail-open):** when a subset exceeds its parent we clamp it to the
+ * parent value and emit a `Warning` so the anomaly is visible in the persisted
+ * record.  We never throw — this runs inside the record-building path where
+ * side-effect failures must not abort the call.
+ *
+ * `totalTokens` is sanity-checked (warn if below `input + output`) but is not
+ * clamped because it is provider-reported and informational only.
+ */
+function sanitizeUsage(usage: Usage): SanitizeUsageResult {
+  const warnings: Warning[] = []
+  let needsRebuild = false
+
+  let cachedInputTokens = usage.cachedInputTokens
+  let thinkingTokens = usage.thinkingTokens
+
+  if (cachedInputTokens !== undefined && cachedInputTokens > usage.inputTokens) {
+    warnings.push({
+      type: 'other',
+      message:
+        `cachedInputTokens (${cachedInputTokens}) exceeds inputTokens (${usage.inputTokens}); ` +
+        `clamped to ${usage.inputTokens}`,
+    })
+    cachedInputTokens = usage.inputTokens
+    needsRebuild = true
+  }
+
+  if (thinkingTokens !== undefined && thinkingTokens > usage.outputTokens) {
+    warnings.push({
+      type: 'other',
+      message:
+        `thinkingTokens (${thinkingTokens}) exceeds outputTokens (${usage.outputTokens}); ` +
+        `clamped to ${usage.outputTokens}`,
+    })
+    thinkingTokens = usage.outputTokens
+    needsRebuild = true
+  }
+
+  if (usage.totalTokens !== undefined) {
+    const expected = usage.inputTokens + usage.outputTokens
+    if (usage.totalTokens < expected) {
+      warnings.push({
+        type: 'other',
+        message:
+          `totalTokens (${usage.totalTokens}) is less than ` +
+          `inputTokens + outputTokens (${expected}); recorded as-is`,
+      })
+    }
+  }
+
+  if (!needsRebuild) {
+    return { usage, clampWarnings: warnings }
+  }
+
+  // Rebuild Usage with clamped subset values — exactOptionalPropertyTypes-safe.
+  const clampedUsage: Usage = {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    details: usage.details,
+    raw: usage.raw,
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(thinkingTokens !== undefined ? { thinkingTokens } : {}),
+    ...(usage.totalTokens !== undefined ? { totalTokens: usage.totalTokens } : {}),
+  }
+
+  return { usage: clampedUsage, clampWarnings: warnings }
+}
+
+// ---------------------------------------------------------------------------
 // buildRecord
 // ---------------------------------------------------------------------------
 
@@ -217,6 +305,11 @@ export { errorKindToStatus }
  *
  * **Pure function — no I/O.**  The caller is responsible for supplying all
  * fields; the engine calls this after the adapter returns (or throws).
+ *
+ * Token-usage invariants (`cachedInputTokens ≤ inputTokens`,
+ * `thinkingTokens ≤ outputTokens`) are enforced by clamping any violations
+ * and appending a `Warning` to the record rather than throwing.  This is the
+ * SPEC fail-open policy: persistence is always attempted.
  *
  * Rationale for co-locating mapping logic here: the engine and the drizzle
  * sink are decoupled.  The sink only calls `usageSink.record(r)` — it never
@@ -233,6 +326,15 @@ export function buildRecord(input: BuildRecordInput): LlmCallRecord {
       ? errorKindToStatus(input.error.kind)
       : input.status
 
+  // Validate and clamp usage subset invariants (fail-open: clamp + warn).
+  const { usage, clampWarnings } = sanitizeUsage(input.usage)
+
+  // Merge caller warnings with any clamp warnings.
+  const allWarnings: Warning[] = [
+    ...(input.warnings ?? []),
+    ...clampWarnings,
+  ]
+
   // Cast GenConfig → JsonValue.
   // GenConfig only contains JSON-serialisable values (numbers, strings, booleans,
   // string arrays, and Record<string, JsonValue>), so this is safe.
@@ -240,7 +342,7 @@ export function buildRecord(input: BuildRecordInput): LlmCallRecord {
 
   // Cast Usage.details → JsonValue.
   // Record<string, number> is a valid JSON object when all values are numbers.
-  const tokenDetails = input.usage.details as unknown as JsonValue
+  const tokenDetails = usage.details as unknown as JsonValue
 
   // Build the record using conditional spreads for every optional property so
   // `exactOptionalPropertyTypes` is satisfied (we never assign `undefined`).
@@ -258,16 +360,16 @@ export function buildRecord(input: BuildRecordInput): LlmCallRecord {
     ...(input.finishReason !== undefined ? { finishReason: input.finishReason } : {}),
     latencyMs: input.latencyMs,
     // Usage hot fields — always present since Usage.inputTokens/outputTokens are required.
-    inputTokens: input.usage.inputTokens,
-    outputTokens: input.usage.outputTokens,
-    ...(input.usage.cachedInputTokens !== undefined
-      ? { cachedInputTokens: input.usage.cachedInputTokens }
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    ...(usage.cachedInputTokens !== undefined
+      ? { cachedInputTokens: usage.cachedInputTokens }
       : {}),
-    ...(input.usage.thinkingTokens !== undefined
-      ? { thinkingTokens: input.usage.thinkingTokens }
+    ...(usage.thinkingTokens !== undefined
+      ? { thinkingTokens: usage.thinkingTokens }
       : {}),
-    ...(input.usage.totalTokens !== undefined
-      ? { totalTokens: input.usage.totalTokens }
+    ...(usage.totalTokens !== undefined
+      ? { totalTokens: usage.totalTokens }
       : {}),
     // Cost fields — only when a Cost object is present.
     ...(input.cost !== undefined
@@ -275,12 +377,12 @@ export function buildRecord(input: BuildRecordInput): LlmCallRecord {
       : {}),
     // JSONB lanes.
     tokenDetails,
-    rawUsage: input.usage.raw,
+    rawUsage: usage.raw,
     ...(input.providerMetadata !== undefined
       ? { providerMetadata: input.providerMetadata }
       : {}),
-    ...(input.warnings !== undefined && input.warnings.length > 0
-      ? { warnings: input.warnings as unknown as JsonValue }
+    ...(allWarnings.length > 0
+      ? { warnings: allWarnings as unknown as JsonValue }
       : {}),
     generationConfig,
     // Reasoning capture.

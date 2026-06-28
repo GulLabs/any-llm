@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   fakeGeminiResponse,
+  fakeGeminiBlocked,
   makeFakeGemini,
   type GeminiResponseLike,
 } from './fake-gemini.js'
@@ -84,6 +85,64 @@ describe('fakeGeminiResponse', () => {
     const r = fakeGeminiResponse()
     expect(r).not.toHaveProperty('modelVersion')
     expect(r).not.toHaveProperty('responseId')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// fakeGeminiBlocked
+// ---------------------------------------------------------------------------
+
+describe('fakeGeminiBlocked', () => {
+  it('produces an empty candidates array and a promptFeedback with blockReason', () => {
+    const r = fakeGeminiBlocked()
+    expect(r.candidates).toEqual([])
+    expect(r.promptFeedback).toBeDefined()
+    expect(r.promptFeedback?.blockReason).toBe('SAFETY')
+  })
+
+  it('defaults blockReason to "SAFETY" when opts is omitted', () => {
+    const r = fakeGeminiBlocked()
+    expect(r.promptFeedback?.blockReason).toBe('SAFETY')
+  })
+
+  it('accepts a custom blockReason', () => {
+    const r = fakeGeminiBlocked({ blockReason: 'PROHIBITED_CONTENT' })
+    expect(r.promptFeedback?.blockReason).toBe('PROHIBITED_CONTENT')
+  })
+
+  it('omits usageMetadata (blocked before generation)', () => {
+    const r = fakeGeminiBlocked()
+    expect(r.usageMetadata).toBeUndefined()
+  })
+
+  it('has no text content in candidates', () => {
+    const r = fakeGeminiBlocked()
+    expect(r.candidates?.length).toBe(0)
+  })
+
+  it('includes safetyRatings in promptFeedback when provided', () => {
+    const ratings = [{ category: 'HARM_CATEGORY_DANGEROUS_CONTENT', probability: 'HIGH' }]
+    const r = fakeGeminiBlocked({ safetyRatings: ratings })
+    expect(r.promptFeedback?.safetyRatings).toEqual(ratings)
+  })
+
+  it('omits safetyRatings from promptFeedback when not provided', () => {
+    const r = fakeGeminiBlocked()
+    expect(r.promptFeedback).not.toHaveProperty('safetyRatings')
+  })
+
+  it('is structurally assignable to GeminiResponseLike', () => {
+    // Compile-time + runtime check: if this assignment compiles and runs, the type is correct.
+    const r: GeminiResponseLike = fakeGeminiBlocked({ blockReason: 'SAFETY' })
+    expect(r).toBeDefined()
+  })
+
+  it('can be scripted into makeFakeGemini', async () => {
+    const client = makeFakeGemini(fakeGeminiBlocked())
+    const resp = await client.models.generateContent({})
+    expect(resp.candidates).toEqual([])
+    expect(resp.promptFeedback?.blockReason).toBe('SAFETY')
+    expect(client.calls).toHaveLength(1)
   })
 })
 

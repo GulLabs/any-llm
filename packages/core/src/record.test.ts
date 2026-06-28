@@ -387,3 +387,91 @@ describe('buildRecord — gross/subset usage invariant', () => {
     expect(r.costMicroUsd).toBe(1_750_000)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Usage invariant clamping — Finding 2
+// ---------------------------------------------------------------------------
+
+describe('buildRecord — usage invariant clamping (fail-open)', () => {
+  it('clamps cachedInputTokens > inputTokens and emits an other warning', () => {
+    const usage = makeUsage({
+      inputTokens: 100,
+      cachedInputTokens: 200,  // violates: cached > input
+    })
+    const r = buildRecord(makeBaseInput({ usage }))
+
+    // Clamped to parent (inputTokens).
+    expect(r.cachedInputTokens).toBe(100)
+
+    // A warning must be present describing the clamp.
+    const warnings = r.warnings as Array<{ type: string; message: string }>
+    expect(warnings).toBeDefined()
+    expect(Array.isArray(warnings)).toBe(true)
+    expect(warnings.some(
+      w => w.type === 'other' && /cachedInputTokens/.test(w.message),
+    )).toBe(true)
+  })
+
+  it('clamps thinkingTokens > outputTokens and emits an other warning', () => {
+    const usage = makeUsage({
+      outputTokens: 50,
+      thinkingTokens: 100,  // violates: thinking > output
+    })
+    const r = buildRecord(makeBaseInput({ usage }))
+
+    // Clamped to parent (outputTokens).
+    expect(r.thinkingTokens).toBe(50)
+
+    const warnings = r.warnings as Array<{ type: string; message: string }>
+    expect(warnings).toBeDefined()
+    expect(warnings.some(
+      w => w.type === 'other' && /thinkingTokens/.test(w.message),
+    )).toBe(true)
+  })
+
+  it('does not modify valid usage — cached<=input and thinking<=output', () => {
+    const usage = makeUsage({
+      inputTokens: 100,
+      outputTokens: 50,
+      cachedInputTokens: 80,
+      thinkingTokens: 30,
+    })
+    const r = buildRecord(makeBaseInput({ usage }))
+
+    expect(r.cachedInputTokens).toBe(80)
+    expect(r.thinkingTokens).toBe(30)
+    // No clamp warnings produced for valid usage; warnings field absent (no other warnings either).
+    expect('warnings' in r).toBe(false)
+  })
+
+  it('merges clamp warnings with any pre-existing caller warnings', () => {
+    const usage = makeUsage({
+      inputTokens: 100,
+      cachedInputTokens: 150,  // violates
+    })
+    const callerWarning = { type: 'unsupported-setting' as const, setting: 'topK' }
+    const r = buildRecord(makeBaseInput({ usage, warnings: [callerWarning] }))
+
+    const warnings = r.warnings as Array<{ type: string }>
+    expect(warnings).toBeDefined()
+    // Both the caller warning and the clamp warning are present.
+    expect(warnings.some(w => w.type === 'unsupported-setting')).toBe(true)
+    expect(warnings.some(w => w.type === 'other')).toBe(true)
+  })
+
+  it('clamps both cachedInputTokens and thinkingTokens when both violate', () => {
+    const usage = makeUsage({
+      inputTokens: 10,
+      outputTokens: 20,
+      cachedInputTokens: 50,   // > inputTokens
+      thinkingTokens: 40,      // > outputTokens
+    })
+    const r = buildRecord(makeBaseInput({ usage }))
+
+    expect(r.cachedInputTokens).toBe(10)
+    expect(r.thinkingTokens).toBe(20)
+
+    const warnings = r.warnings as Array<{ type: string; message: string }>
+    expect(warnings.length).toBeGreaterThanOrEqual(2)
+  })
+})

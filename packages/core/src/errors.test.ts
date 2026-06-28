@@ -165,6 +165,85 @@ describe('classifyError', () => {
     expect(result.kind).toBe('unknown')
     expect(result.retryable).toBe(false)
   })
+
+  // ---------------------------------------------------------------------------
+  // Plain-object provider errors
+  // ---------------------------------------------------------------------------
+
+  it('classifies {status:429, retryAfterMs:5000} as rate_limited + retryable + retryAfterMs', () => {
+    const result = classifyError({ status: 429, retryAfterMs: 5000 })
+    expect(result.kind).toBe('rate_limited')
+    expect(result.retryable).toBe(true)
+    expect(result.httpStatus).toBe(429)
+    expect(result.retryAfterMs).toBe(5000)
+    expect(result.cause).toEqual({ status: 429, retryAfterMs: 5000 })
+  })
+
+  it('classifies {status:401} as invalid_auth + non-retryable', () => {
+    const result = classifyError({ status: 401 })
+    expect(result.kind).toBe('invalid_auth')
+    expect(result.retryable).toBe(false)
+    expect(result.httpStatus).toBe(401)
+    expect(result.retryAfterMs).toBeUndefined()
+  })
+
+  it('classifies {code:503} (numeric code) as server + retryable', () => {
+    const result = classifyError({ code: 503 })
+    expect(result.kind).toBe('server')
+    expect(result.retryable).toBe(true)
+    expect(result.httpStatus).toBe(503)
+  })
+
+  it('classifies {response:{status:429}} (nested) as rate_limited + retryable', () => {
+    const result = classifyError({ response: { status: 429 } })
+    expect(result.kind).toBe('rate_limited')
+    expect(result.retryable).toBe(true)
+    expect(result.httpStatus).toBe(429)
+  })
+
+  it('classifies an unknown plain object (no numeric status/code) as unknown', () => {
+    const result = classifyError({ message: 'something failed', foo: 'bar' })
+    expect(result.kind).toBe('unknown')
+    expect(result.retryable).toBe(false)
+  })
+
+  it('extracts retryAfterMs from retryAfter (seconds → ms)', () => {
+    const result = classifyError({ status: 429, retryAfter: 30 })
+    expect(result.kind).toBe('rate_limited')
+    expect(result.retryAfterMs).toBe(30_000)
+  })
+
+  it('extracts retryAfterMs from headers retry-after string', () => {
+    const result = classifyError({ status: 429, headers: { 'retry-after': '60' } })
+    expect(result.kind).toBe('rate_limited')
+    expect(result.retryAfterMs).toBe(60_000)
+  })
+
+  it('extracts retryAfterMs from Headers.get() interface', () => {
+    const headers = {
+      get: (key: string) => key === 'retry-after' ? '10' : null,
+    }
+    const result = classifyError({ status: 429, headers })
+    expect(result.kind).toBe('rate_limited')
+    expect(result.retryAfterMs).toBe(10_000)
+  })
+
+  it('classifies Error subclass with .status property via HTTP routing', () => {
+    class SdkError extends Error {
+      status: number
+      constructor(msg: string, status: number) {
+        super(msg)
+        this.name = 'SdkError'
+        this.status = status
+      }
+    }
+    const err = new SdkError('Unauthorized', 403)
+    const result = classifyError(err)
+    expect(result.kind).toBe('invalid_auth')
+    expect(result.retryable).toBe(false)
+    expect(result.httpStatus).toBe(403)
+    expect(result.cause).toBe(err)
+  })
 })
 
 // ---------------------------------------------------------------------------

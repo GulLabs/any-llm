@@ -58,6 +58,10 @@ export interface GeminiUsageMetadataLike {
  * The structural shape of a Gemini `generateContent` response that the
  * adapter consumes.  Mirrors the subset of `GenerateContentResponse` we
  * actually read — nothing more, so M4 can swap in the real type trivially.
+ *
+ * When a request is blocked by Gemini's safety system, the real API returns a
+ * response with **no candidates** and a populated `promptFeedback` object.
+ * `candidates` may be absent or empty in that case.
  */
 export interface GeminiResponseLike {
   candidates?: GeminiCandidateLike[]
@@ -66,6 +70,20 @@ export interface GeminiResponseLike {
   modelVersion?: string
   /** Provider-assigned response ID. */
   responseId?: string
+  /**
+   * Safety-block metadata returned when the prompt (not the output) was
+   * rejected by Gemini's safety filters.  Present on safety-blocked responses;
+   * absent on normal responses.
+   *
+   * When `blockReason` is set and `candidates` is empty or absent, the adapter
+   * should classify the result as `'content_filter'`.
+   */
+  promptFeedback?: {
+    /** E.g. `'SAFETY'`, `'OTHER'`, `'PROHIBITED_CONTENT'`. */
+    blockReason?: string
+    /** Raw safety rating breakdown (forward-compat; kept as `unknown[]`). */
+    safetyRatings?: unknown[]
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -158,6 +176,55 @@ export function fakeGeminiResponse(opts: FakeGeminiResponseOpts = {}): GeminiRes
     usageMetadata,
     ...(opts.modelVersion !== undefined ? { modelVersion: opts.modelVersion } : {}),
     ...(opts.responseId !== undefined ? { responseId: opts.responseId } : {}),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Builder: fakeGeminiBlocked
+// ---------------------------------------------------------------------------
+
+/**
+ * Options for {@link fakeGeminiBlocked}.
+ */
+export interface FakeGeminiBlockedOpts {
+  /**
+   * The block reason string (e.g. `'SAFETY'`, `'PROHIBITED_CONTENT'`).
+   * Defaults to `'SAFETY'` when omitted.
+   */
+  blockReason?: string
+  /**
+   * Optional safety rating details to include in `promptFeedback`.
+   * Passed through verbatim; the adapter treats this as opaque metadata.
+   */
+  safetyRatings?: unknown[]
+}
+
+/**
+ * Build a {@link GeminiResponseLike} that represents a safety-blocked response.
+ *
+ * Real `@google/genai` safety-blocked responses surface via `promptFeedback`
+ * (with `blockReason` set) and return **no candidates**.  The Gemini adapter
+ * (M5) must classify such responses as `'content_filter'`.
+ *
+ * Use this builder in adapter tests that exercise the `content_filter` error
+ * path.
+ *
+ * ```ts
+ * const client = makeFakeGemini(fakeGeminiBlocked({ blockReason: 'SAFETY' }))
+ * // adapter should throw LlmError { kind: 'content_filter' }
+ * ```
+ */
+export function fakeGeminiBlocked(opts: FakeGeminiBlockedOpts = {}): GeminiResponseLike {
+  const { blockReason = 'SAFETY', safetyRatings } = opts
+
+  const promptFeedback: NonNullable<GeminiResponseLike['promptFeedback']> = {
+    blockReason,
+    ...(safetyRatings !== undefined ? { safetyRatings } : {}),
+  }
+
+  return {
+    candidates: [],
+    promptFeedback,
   }
 }
 
