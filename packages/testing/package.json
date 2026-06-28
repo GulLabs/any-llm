@@ -1,8 +1,10 @@
 {
   "name": "@anyllm/testing",
   "version": "0.0.0",
+  "description": "Test fakes for any-llm — FakeClock, FakeIds, RecordingSink, makeFakeGemini, fakeAuth. No network in tests.",
   "type": "module",
   "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "https://github.com/atifgul/any-llm", "directory": "packages/testing" },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",

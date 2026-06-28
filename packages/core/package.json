@@ -1,8 +1,10 @@
 {
   "name": "@anyllm/core",
   "version": "0.0.0",
+  "description": "Provider-agnostic LLM engine: types, ports, cost computation, and the call pipeline. No provider dependencies.",
   "type": "module",
   "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "https://github.com/atifgul/any-llm", "directory": "packages/core" },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
