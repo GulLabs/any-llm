@@ -17,6 +17,7 @@ import type {
   Warning,
   FinishReason,
   JsonValue,
+  AuthMaterial,
 } from '@anyllm/core'
 import type { ZodTypeAny } from 'zod'
 import { buildGoogleClient } from './client.js'
@@ -127,9 +128,19 @@ function mapUsage(meta: GeminiUsageMetadataShape | undefined): Usage {
 export interface GeminiAdapterOptions {
   /**
    * Inject a pre-built client (real or fake).
-   * When omitted, buildGoogleClient is called with ctx.auth at call time.
+   * When omitted, `buildGoogleClient` is called with `ctx.auth` at call time,
+   * inside the classified try/catch so any construction failure is wrapped
+   * as a typed `LlmError`.
    */
   client?: GeminiClientLike
+  /**
+   * @internal Testing-only.
+   *
+   * Override the default `buildGoogleClient` factory.  Allows unit tests to
+   * simulate construction failures (e.g. bad credentials) without importing
+   * the real `@google/genai` SDK.  Never set this in production code.
+   */
+  _clientFactory?: (auth: AuthMaterial) => GeminiClientLike
 }
 
 // ---------------------------------------------------------------------------
@@ -311,11 +322,16 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
         config,
       }
 
-      const client: GeminiClientLike =
-        opts?.client !== undefined ? opts.client : buildGoogleClient(ctx.auth)
-
+      // ------------------------------------------------------------------
+      // 7b. Client construction + SDK call — both inside the classifier
+      //     so that ANY failure in run() (including a bad auth constructor)
+      //     is rethrown as a typed LlmError(provider:'google').
+      // ------------------------------------------------------------------
       let response: GeminiResponseShape
       try {
+        const buildClient = opts?._clientFactory ?? buildGoogleClient
+        const client: GeminiClientLike =
+          opts?.client !== undefined ? opts.client : buildClient(ctx.auth)
         response = await client.models.generateContent(params)
       } catch (rawErr) {
         // Classify SDK errors → LlmError

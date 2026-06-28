@@ -1,10 +1,21 @@
 import type { LlmCallRecord, UsageSink } from '@anyllm/core'
 import { llmCalls } from './schema.js'
 
+/**
+ * Minimal structural interface for a Drizzle (or Drizzle-compatible) database
+ * client that `drizzleUsageSink` depends on.
+ *
+ * The `onConflictDoNothing` call is pinned to a `{ target }` argument so that
+ * the dedupe is always anchored to the `attemptId` unique index rather than
+ * relying on a full-table inferred default.
+ *
+ * Using `unknown` for `target` keeps this interface mockable without importing
+ * drizzle-orm column types.
+ */
 export interface InsertableDb {
   insert(table: unknown): {
     values(v: Record<string, unknown>): {
-      onConflictDoNothing(): Promise<unknown>
+      onConflictDoNothing(opts: { target: unknown }): Promise<unknown>
     }
   }
 }
@@ -47,7 +58,9 @@ export function drizzleUsageSink(
         createdAt: new Date(r.createdAt),
       }
 
-      await db.insert(table).values(row).onConflictDoNothing()
+      // Pin the conflict target to the attemptId unique index so that deduplication
+      // is explicit and does not rely on any driver-level heuristics.
+      await db.insert(table).values(row).onConflictDoNothing({ target: table.attemptId })
     },
   }
 }

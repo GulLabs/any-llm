@@ -502,6 +502,30 @@ describe('zodToGeminiSchema', () => {
     expect(result?.required).not.toContain('bio')
   })
 
+  it('marks optional().nullable() fields as non-required (outer ZodNullable must not shadow ZodOptional)', () => {
+    // z.string().optional().nullable() → ZodNullable(ZodOptional(ZodString))
+    // The outer wrapper is ZodNullable; without recursive unwrapping the field
+    // was incorrectly added to required[].
+    const schema = z.object({ field: z.string().optional().nullable() })
+    const result = zodToGeminiSchema(schema)
+    // required is absent (empty) or does not include 'field'.
+    expect(result?.required ?? []).not.toContain('field')
+  })
+
+  it('marks nullable().optional() fields as non-required (outer ZodOptional)', () => {
+    // z.string().nullable().optional() → ZodOptional(ZodNullable(ZodString))
+    const schema = z.object({ field: z.string().nullable().optional() })
+    const result = zodToGeminiSchema(schema)
+    expect(result?.required ?? []).not.toContain('field')
+  })
+
+  it('marks default()-wrapped fields as non-required', () => {
+    // z.string().default('x') → ZodDefault(ZodString)
+    const schema = z.object({ field: z.string().default('fallback') })
+    const result = zodToGeminiSchema(schema)
+    expect(result?.required ?? []).not.toContain('field')
+  })
+
   it('converts z.nullable(z.string()) to {type:"string",nullable:true}', () => {
     expect(zodToGeminiSchema(z.string().nullable())).toEqual({
       type: 'string',
@@ -654,6 +678,18 @@ describe('error classification', () => {
       const err = await adapter.run(makeResolvedReq(), FAKE_CTX).catch((e: unknown) => e)
       expect((err as LlmError).provider).toBe('google')
     }
+  })
+
+  it('client construction failure → LlmError not raw Error (fix: constructor inside try/catch)', async () => {
+    // Simulate buildGoogleClient throwing (e.g. bad credentials, missing SDK)
+    // by injecting a _clientFactory that throws a raw Error.
+    const adapter = geminiAdapter({
+      _clientFactory: () => { throw new Error('auth init failed') },
+    })
+    const err = await adapter.run(makeResolvedReq(), FAKE_CTX).catch((e: unknown) => e)
+    // Must be a typed LlmError, not a raw Error.
+    expect(err).toBeInstanceOf(LlmError)
+    expect((err as LlmError).provider).toBe('google')
   })
 })
 

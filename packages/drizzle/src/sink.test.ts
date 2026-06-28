@@ -5,6 +5,7 @@ import type { JsonValue, LlmCallRecord } from '@anyllm/core'
 type InsertCall = {
   table: unknown
   values: Record<string, unknown>
+  conflictTarget: unknown
   conflictIgnored: boolean
 }
 
@@ -49,8 +50,8 @@ function makeDb(spy: InsertCall[]): InsertableDb {
       return {
         values(values: Record<string, unknown>) {
           return {
-            async onConflictDoNothing() {
-              spy.push({ table, values, conflictIgnored: true })
+            async onConflictDoNothing({ target }: { target: unknown }) {
+              spy.push({ table, values, conflictTarget: target, conflictIgnored: true })
               return undefined
             },
           }
@@ -72,6 +73,8 @@ describe('drizzleUsageSink', () => {
     expect(calls).toHaveLength(1)
     expect(calls[0]?.table).toBe(llmCalls)
     expect(calls[0]?.conflictIgnored).toBe(true)
+    // Conflict target must be pinned to the attemptId column (unique index).
+    expect(calls[0]?.conflictTarget).toBe(llmCalls.attemptId)
     expect(calls[0]?.values).toEqual({
       recordSchemaVersion: 1,
       callId: 'call_1',

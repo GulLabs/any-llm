@@ -38,6 +38,7 @@ import type {
   Cost,
   Telemetry,
   Warning,
+  JsonValue,
 } from './index.js'
 import {
   FakeAdapter,
@@ -439,6 +440,172 @@ describe('surface-stress: malformed usage', () => {
         const sum = result.cost.details.input + result.cost.details.cached + result.cost.details.output
         expect(sum).toBe(result.cost.microUsd)
       }
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// INVARIANT 3b: Non-finite values INSIDE usage.details and usage.raw
+// ---------------------------------------------------------------------------
+
+describe('surface-stress: non-finite values in usage.details and usage.raw', () => {
+  /**
+   * Verify that the persisted record is fully JSON-safe and all values in
+   * tokenDetails are finite and non-negative when the adapter returns
+   * non-finite numbers inside usage.details.
+   */
+  it('non-finite values in usage.details are clamped to 0, record round-trips JSON safely', async () => {
+    const adversarialDetailsList: Array<Record<string, number>> = [
+      { input: NaN, output: Infinity, cached: -Infinity },
+      { input: 100, output: NaN, thinking: -1 },
+      { extra: Infinity, input: 0, output: 0 },
+      { a: NaN, b: -Infinity, c: +Infinity, d: 5 },
+    ]
+
+    for (const details of adversarialDetailsList) {
+      const usage: Usage = {
+        inputTokens: 100,
+        outputTokens: 20,
+        details,
+        raw: null,
+      }
+
+      const adapter = new RawThrowAdapter('google', { kind: 'ok', result: makeOkResult({ usage }) })
+      const sink = new RecordingSink()
+      const client = createClient({
+        adapters: [adapter], auth: AUTH, pricing: PRICING, sink,
+        clock: new FakeClock(), ids: new FakeIds(),
+      })
+
+      await client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES })
+
+      const rec = sink.last()!
+
+      // Full record must round-trip without data mutation.
+      const json = JSON.stringify(rec)
+      expect(json, 'JSON.stringify must not throw on the record').toBeTruthy()
+      const parsed = JSON.parse(json) as typeof rec
+      expect(parsed).toBeDefined()
+
+      // tokenDetails: every stored value must be a finite non-negative number.
+      const tokenDetails = rec.tokenDetails as Record<string, unknown>
+      for (const [key, val] of Object.entries(tokenDetails)) {
+        expect(
+          typeof val === 'number' && Number.isFinite(val),
+          `tokenDetails["${key}"] must be finite after sanitisation`,
+        ).toBe(true)
+        expect(
+          val as number,
+          `tokenDetails["${key}"] must be >= 0 after sanitisation`,
+        ).toBeGreaterThanOrEqual(0)
+      }
+    }
+  })
+
+  /**
+   * Verify that non-finite numbers nested inside usage.raw are replaced with
+   * null (not left as NaN/Infinity) so the stored rawUsage JSONB is valid.
+   */
+  it('non-finite numbers in usage.raw are replaced with null, record round-trips JSON safely', async () => {
+    const adversarialRaws: Array<JsonValue> = [
+      { promptTokenCount: NaN, candidatesTokenCount: Infinity } as unknown as JsonValue,
+      [NaN, Infinity, -Infinity, 1] as unknown as JsonValue,
+      { nested: { deep: NaN } } as unknown as JsonValue,
+      { a: 1, b: NaN, c: { d: -Infinity, e: 'ok' } } as unknown as JsonValue,
+    ]
+
+    for (const raw of adversarialRaws) {
+      const usage: Usage = {
+        inputTokens: 50,
+        outputTokens: 10,
+        details: { input: 50, output: 10 },
+        raw,
+      }
+
+      const adapter = new RawThrowAdapter('google', { kind: 'ok', result: makeOkResult({ usage }) })
+      const sink = new RecordingSink()
+      const client = createClient({
+        adapters: [adapter], auth: AUTH, pricing: PRICING, sink,
+        clock: new FakeClock(), ids: new FakeIds(),
+      })
+
+      await client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES })
+
+      const rec = sink.last()!
+
+      // Full record must round-trip cleanly.
+      const json = JSON.stringify(rec)
+      const parsed = JSON.parse(json) as Record<string, unknown>
+      expect(parsed).toBeDefined()
+
+      // rawUsage must round-trip identically — no silent NaN→null coercions
+      // during stringify because the values should already be null at rest.
+      const rawUsageJson = JSON.stringify(rec.rawUsage)
+      const rawUsageParsed = JSON.parse(rawUsageJson) as unknown
+      expect(JSON.stringify(rawUsageParsed)).toBe(rawUsageJson)
+
+      // Deeply verify no NaN survived into rawUsage.
+      function assertNoNaN(value: unknown, path: string): void {
+        if (value === null || typeof value === 'boolean' || typeof value === 'string') return
+        if (typeof value === 'number') {
+          expect(
+            Number.isFinite(value),
+            `rawUsage${path} must be finite (was ${String(value)})`,
+          ).toBe(true)
+          return
+        }
+        if (Array.isArray(value)) {
+          value.forEach((item, i) => { assertNoNaN(item, `${path}[${i}]`) })
+          return
+        }
+        if (typeof value === 'object') {
+          for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+            assertNoNaN(v, `${path}.${k}`)
+          }
+        }
+      }
+      assertNoNaN(rec.rawUsage, '')
+    }
+  })
+
+  /**
+   * Combined adversarial case: non-finite values in BOTH details and raw,
+   * along with malformed hot-field token counts.  Engine must not throw;
+   * the record must persist and be JSON-safe.
+   */
+  it('combined: non-finite in hot fields + details + raw — engine never throws, record is JSON-safe', async () => {
+    const rand = mulberry32(0xf1f2f3f4)
+
+    for (let i = 0; i < 20; i++) {
+      const usage: Usage = {
+        inputTokens: rand() > 0.5 ? NaN : Math.floor(rand() * 1000),
+        outputTokens: rand() > 0.5 ? Infinity : Math.floor(rand() * 500),
+        details: {
+          input: rand() > 0.5 ? NaN : 100,
+          output: rand() > 0.5 ? -Infinity : 20,
+          extra: rand() > 0.5 ? NaN : 5,
+        },
+        raw: rand() > 0.5
+          ? ({ x: NaN, y: { z: Infinity } } as unknown as JsonValue)
+          : null,
+      } as unknown as Usage
+
+      const adapter = new RawThrowAdapter('google', { kind: 'ok', result: makeOkResult({ usage }) })
+      const sink = new RecordingSink()
+      const client = createClient({
+        adapters: [adapter], auth: AUTH, pricing: PRICING, sink,
+        clock: new FakeClock(), ids: new FakeIds(),
+      })
+
+      // Must resolve (never throw) for malformed usage — fail-open per SPEC.
+      await client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES })
+
+      const rec = sink.last()!
+
+      // Record must be fully JSON-safe.
+      expect(() => JSON.stringify(rec), `iter ${i}: JSON.stringify must not throw`).not.toThrow()
+      const roundTripped = JSON.parse(JSON.stringify(rec)) as typeof rec
+      expect(roundTripped.recordSchemaVersion, `iter ${i}: round-trip sanity`).toBe(1)
     }
   })
 })

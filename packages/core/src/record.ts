@@ -228,6 +228,80 @@ export function normalizeUsage(usage: Usage): { usage: Usage; warnings: Warning[
 }
 
 // ---------------------------------------------------------------------------
+// Usage invariant sanitizer — helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Recursively replaces non-finite numbers (NaN, ±Infinity) in a `JsonValue`
+ * with `null` so every persisted blob is valid JSON.
+ *
+ * `JSON.stringify` already coerces non-finite numbers to `null`, but making
+ * the replacement explicit before storage means the in-memory `rawUsage` value
+ * is consistent with what is written to the database.
+ *
+ * @param value - Any JSON-compatible value.
+ * @returns `{ sanitized, hadNonFinite }` — a safe copy and a changed flag.
+ */
+function sanitizeRawJson(value: JsonValue): { sanitized: JsonValue; hadNonFinite: boolean } {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return { sanitized: null, hadNonFinite: true }
+    return { sanitized: value, hadNonFinite: false }
+  }
+  if (Array.isArray(value)) {
+    let hadNonFinite = false
+    const out: JsonValue[] = value.map((item) => {
+      const r = sanitizeRawJson(item)
+      if (r.hadNonFinite) hadNonFinite = true
+      return r.sanitized
+    })
+    return { sanitized: hadNonFinite ? out : value, hadNonFinite }
+  }
+  if (value !== null && typeof value === 'object') {
+    let hadNonFinite = false
+    const out: { [k: string]: JsonValue } = {}
+    for (const [k, v] of Object.entries(value)) {
+      const r = sanitizeRawJson(v)
+      if (r.hadNonFinite) hadNonFinite = true
+      out[k] = r.sanitized
+    }
+    return { sanitized: hadNonFinite ? out : value, hadNonFinite }
+  }
+  // null | boolean | string — always JSON-safe.
+  return { sanitized: value, hadNonFinite: false }
+}
+
+/**
+ * Sanitizes the open token-detail map (`Usage.details`).
+ *
+ * Each value is coerced to a finite non-negative number; non-finite or
+ * negative values are replaced with `0` and a warning is pushed.
+ *
+ * @param details - Raw details map from the adapter.
+ * @param warnings - Mutable array to append fix-up warnings into.
+ * @returns `{ sanitized, hadFix }` — the sanitized map and a changed flag.
+ */
+function sanitizeDetails(
+  details: Record<string, number>,
+  warnings: Warning[],
+): { sanitized: Record<string, number>; hadFix: boolean } {
+  let hadFix = false
+  const sanitized: Record<string, number> = {}
+  for (const [key, val] of Object.entries(details)) {
+    if (!Number.isFinite(val) || val < 0) {
+      warnings.push({
+        type: 'other',
+        message: `usage.details["${key}"] (${String(val)}) is non-finite or negative; clamped to 0`,
+      })
+      sanitized[key] = 0
+      hadFix = true
+    } else {
+      sanitized[key] = val
+    }
+  }
+  return { sanitized: hadFix ? sanitized : details, hadFix }
+}
+
+// ---------------------------------------------------------------------------
 // Usage invariant sanitizer
 // ---------------------------------------------------------------------------
 
@@ -350,6 +424,22 @@ function sanitizeUsage(usage: Usage): SanitizeUsageResult {
     }
   }
 
+  // ------------------------------------------------------------------
+  // Step C: Sanitize open details map and raw usage object.
+  //
+  // details (Record<string,number>): coerce non-finite / negative values to 0.
+  // raw (JsonValue): recursively replace non-finite numbers with null so
+  // the stored JSONB is always valid and round-trips without silent mutation.
+  // ------------------------------------------------------------------
+  const { sanitized: sanitizedDetails, hadFix: detailsFixed } =
+    sanitizeDetails(usage.details, warnings)
+  const { sanitized: sanitizedRaw, hadNonFinite: rawFixed } =
+    sanitizeRawJson(usage.raw)
+
+  if (detailsFixed || rawFixed) {
+    needsRebuild = true
+  }
+
   if (!needsRebuild) {
     return { usage, clampWarnings: warnings }
   }
@@ -358,8 +448,8 @@ function sanitizeUsage(usage: Usage): SanitizeUsageResult {
   const clampedUsage: Usage = {
     inputTokens,
     outputTokens,
-    details: usage.details,
-    raw: usage.raw,
+    details: sanitizedDetails,
+    raw: sanitizedRaw,
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
     ...(thinkingTokens !== undefined ? { thinkingTokens } : {}),
     ...(usage.totalTokens !== undefined ? { totalTokens: usage.totalTokens } : {}),

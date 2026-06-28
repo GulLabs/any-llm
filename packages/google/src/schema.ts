@@ -30,6 +30,30 @@ import type { GeminiSchema } from './client.js'
 // Re-export for consumers.
 export type { GeminiSchema }
 
+// ---------------------------------------------------------------------------
+// Optionality helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns `true` if the field's wrapper chain contains `ZodOptional` or
+ * `ZodDefault` — meaning the field is **not** required in the Gemini schema.
+ *
+ * Recursively unwraps `ZodNullable` so that combinations such as
+ * `z.string().optional().nullable()` and `z.string().nullable().optional()`
+ * are both correctly detected as optional.
+ *
+ * Design note: `ZodNullable` alone does NOT make a field optional (the field
+ * is still required, it just also accepts `null`).  Only `ZodOptional` or
+ * `ZodDefault` anywhere in the chain makes it non-required.
+ *
+ * @param schema - The Zod field type (direct value from `ZodObject.shape`).
+ */
+function isOptionalField(schema: ZodTypeAny): boolean {
+  if (schema instanceof ZodOptional || schema instanceof ZodDefault) return true
+  if (schema instanceof ZodNullable) return isOptionalField(schema.unwrap())
+  return false
+}
+
 /**
  * Convert a Zod schema to a Gemini Schema object.
  *
@@ -71,8 +95,9 @@ function convertSchema(schema: ZodTypeAny, nullable: boolean): GeminiSchema | un
       const fieldSchema = convertSchema(fieldType, false)
       if (fieldSchema === undefined) return undefined
       properties[key] = fieldSchema
-      // A field is required unless wrapped in ZodOptional or ZodDefault.
-      if (!(fieldType instanceof ZodOptional) && !(fieldType instanceof ZodDefault)) {
+      // A field is required unless it (or any wrapper in its chain) is
+      // ZodOptional or ZodDefault — detected by isOptionalField() above.
+      if (!isOptionalField(fieldType)) {
         required.push(key)
       }
     }
