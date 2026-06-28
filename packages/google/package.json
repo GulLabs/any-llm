@@ -17,5 +17,9 @@
   "scripts": { "build": "tsup" },
   "dependencies": { "@anyllm/core": "workspace:*" },
   "peerDependencies": { "@google/genai": "^1 || ^2" },
-  "devDependencies": { "@google/genai": "^1.45.0" }
+  "devDependencies": {
+    "@google/genai": "^1.45.0",
+    "@anyllm/testing": "workspace:*",
+    "zod": "^3.23.0"
+  }
 }

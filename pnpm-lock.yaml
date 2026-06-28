@@ -49,9 +49,15 @@ importers:
         specifier: workspace:*
         version: link:../core
     devDependencies:
+      '@anyllm/testing':
+        specifier: workspace:*
+        version: link:../testing
       '@google/genai':
         specifier: ^1.45.0
         version: 1.52.0
+      zod:
+        specifier: ^3.23.0
+        version: 3.25.76
 
   packages/testing:
     dependencies:
