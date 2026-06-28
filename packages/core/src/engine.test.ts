@@ -230,6 +230,7 @@ describe('engine — double-count integration', () => {
       const result = await client.generate({
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Test' }] }],
+        config: { serviceTier: 'standard' },
       })
 
       // GROSS invariants preserved
@@ -238,16 +239,15 @@ describe('engine — double-count integration', () => {
       expect(result.usage.outputTokens).toBe(5_000)
       expect(result.usage.thinkingTokens).toBe(2_000)
 
-      // gt200k tier chosen: input > 200k
-      // billableInput = 250_000 - 100_000 = 150_000 billed at 2_500_000 µUSD/M
-      // cachedCost = 100_000 * 630_000 / 1_000_000 = 63_000
-      // outputCost = 5_000 * 15_000_000 / 1_000_000 = 75_000
-      // inputCost = 150_000 * 2_500_000 / 1_000_000 = 375_000
+      // gt200k tier chosen: input > 200k. STANDARD service tier.
+      // billableInput = 250_000 - 100_000 = 150_000 @ 2_500_000 µUSD/M = 375_000
+      // cachedCost = 100_000 @ 250_000 µUSD/M = 25_000
+      // outputCost = 5_000 @ 15_000_000 µUSD/M = 75_000
       const cost = result.cost!
       expect(cost.details.input).toBe(375_000)
-      expect(cost.details.cached).toBe(63_000)
+      expect(cost.details.cached).toBe(25_000)
       expect(cost.details.output).toBe(75_000)
-      expect(cost.microUsd).toBe(513_000)
+      expect(cost.microUsd).toBe(475_000)
 
       // sum(details) === microUsd (guaranteed by construction)
       expect(cost.details.input + cost.details.cached + cost.details.output).toBe(
@@ -263,6 +263,15 @@ describe('engine — double-count integration', () => {
       expect(rec.costMicroUsd).toBe(cost.microUsd)
       expect(rec.thinkingTokens).toBe(2_000)
       expect(rec.cachedInputTokens).toBe(100_000)
+
+      // FLEX service tier = 50% of standard (the discount Atif's usage relies on).
+      const flex = await client.generate({
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Test' }] }],
+        config: { serviceTier: 'flex' },
+      })
+      expect(flex.cost!.microUsd).toBe(237_500) // exactly half of 475_000
+      expect(flex.cost!.details).toEqual({ input: 187_500, cached: 12_500, output: 37_500 })
     },
   )
 })

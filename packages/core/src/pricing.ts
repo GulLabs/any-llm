@@ -4,41 +4,54 @@
  * All rates are in **micro-USD per million tokens** (µUSD/M).
  * To get the cost for N tokens: `cost_µUSD = N * ratePerM / 1_000_000`.
  *
- * **Long-context tier:** Gemini Pro models charge a premium when the GROSS
- * input token count exceeds 200,000.  The tier is selected by `inputTokens`
- * (the total including cached tokens), not by billable input.
+ * **Service tiers.** Rates below are STANDARD-tier. Google's **Batch** tier is a
+ * flat 50% discount on standard, and **Flex** matches Batch pricing. The cost
+ * engine applies the {@link TIER_FACTOR} multiplier — this snapshot stores
+ * standard rates only.
  *
- * **Thinking tokens:** Thinking tokens are already accounted for inside
- * `outputTokens` (GROSS convention) and are billed at the standard output
- * rate — there is no separate thinking lane in this table.
+ * **Long-context tier.** Gemini Pro models charge a premium when the GROSS input
+ * token count exceeds 200,000. Selected by `inputTokens` (incl. cached), not by
+ * billable input.
  *
- * All entries marked `// VERIFY` reflect best-effort values derived from
- * Google's public pricing page and should be re-confirmed before use in
- * production billing systems.
+ * **Thinking tokens.** Already inside `outputTokens` (GROSS convention) and
+ * billed at the standard output rate — no separate thinking lane.
+ *
+ * **Modality caveat (v1 = text).** Gemini 2.5 Flash / Flash-Lite charge a higher
+ * INPUT rate for audio tokens than for text/image/video. v1 is text-only and uses
+ * the text/img/vid input rate. Per-modality input pricing is a deferred seam
+ * (see DESIGN.md) — revisit when audio input is supported.
+ *
+ * Verified against https://ai.google.dev/gemini-api/docs/pricing on 2026-06-28.
  *
  * @module
  */
 
 /** Identifies this pricing snapshot — bump the date when rates change. */
-export const pricingVersion = 'gemini-2026-06-27' as const
+export const pricingVersion = 'gemini-2026-06-28' as const
 
 /**
- * Per-model rate entry (all values in µUSD per million tokens).
+ * Service-tier price multipliers. Batch and Flex are a flat 50% of standard
+ * (per Google's pricing page: "Batch API — 50% cost reduction"; Flex matches Batch).
+ */
+export const TIER_FACTOR: Readonly<Record<string, number>> = Object.freeze({
+  standard: 1,
+  flex: 0.5,
+  batch: 0.5,
+})
+
+/**
+ * Per-model rate entry (all values in µUSD per million tokens, STANDARD tier).
  *
- * `tiered` models have two rate sets; the `gt200k` set applies when the GROSS
- * input token count is strictly greater than 200,000.
+ * `gt200k` (when present) applies when GROSS input tokens > 200,000.
  */
 export interface ModelRates {
-  /** µUSD per million input tokens (billable = gross − cached). */
+  /** µUSD per million input tokens (text/img/vid; billable = gross − cached). */
   inputPerM: number
   /** µUSD per million cache-read tokens. */
   cachedPerM: number
   /** µUSD per million output tokens (thinking is folded in). */
   outputPerM: number
-  /**
-   * Optional high-tier rates for long-context models (GROSS input > 200k).
-   * When present, the engine selects these rates instead of the base rates.
-   */
+  /** Optional high-tier rates for long-context (GROSS input > 200k). */
   gt200k?: {
     inputPerM: number
     cachedPerM: number
@@ -47,63 +60,63 @@ export interface ModelRates {
 }
 
 /**
- * Frozen Gemini pricing snapshot.
+ * Frozen Gemini pricing snapshot (STANDARD tier; per-1M in µUSD).
  *
- * Keys are model-string prefixes / exact identifiers as used in routing.
- * The cost engine performs an exact-match lookup first, then falls back to
- * prefix matching (longest prefix wins).
+ * Keys are model-string prefixes / exact identifiers used in routing. The cost
+ * engine matches exact first, then longest-prefix.
  *
- * Sources:
- * - https://ai.google.dev/pricing  (accessed 2026-06-27)
- * - https://cloud.google.com/vertex-ai/generative-ai/pricing
+ * Source: https://ai.google.dev/gemini-api/docs/pricing (2026-06-28).
  */
 export const GEMINI_PRICING: Readonly<Record<string, ModelRates>> = Object.freeze({
-  // ── Gemini 2.5 Pro ────────────────────────────────────────────────────────
-  // Tiered pricing: base rate ≤ 200k GROSS input tokens; premium above 200k.
-  // Source: https://ai.google.dev/pricing#2_5pro
+  // ── Gemini 2.5 Pro ──  $1.25/$10 (≤200k), $2.50/$15 (>200k); cached $0.125/$0.25
   'gemini-2.5-pro': {
-    inputPerM: 1_250_000,   // $1.25 / M  → 1 250 000 µUSD / M
-    cachedPerM: 310_000,    // $0.31 / M  → 310 000 µUSD / M
-    outputPerM: 10_000_000, // $10.00 / M → 10 000 000 µUSD / M
+    inputPerM: 1_250_000,
+    cachedPerM: 125_000,
+    outputPerM: 10_000_000,
     gt200k: {
-      inputPerM: 2_500_000,   // $2.50 / M  → 2 500 000 µUSD / M  // VERIFY
-      cachedPerM: 630_000,    // $0.63 / M  → 630 000 µUSD / M    // VERIFY
-      outputPerM: 15_000_000, // $15.00 / M → 15 000 000 µUSD / M // VERIFY
+      inputPerM: 2_500_000,
+      cachedPerM: 250_000,
+      outputPerM: 15_000_000,
     },
   },
 
-  // ── Gemini 2.5 Flash ──────────────────────────────────────────────────────
-  // Flat pricing; thinking tokens billed at output rate (no separate lane).
-  // Source: https://ai.google.dev/pricing#2_5flash
+  // ── Gemini 2.5 Flash ──  input $0.30 (text), output $2.50, cached $0.03
   'gemini-2.5-flash': {
-    inputPerM: 300_000,    // $0.30 / M  → 300 000 µUSD / M  // VERIFY (non-thinking input)
-    cachedPerM: 75_000,    // $0.075 / M → 75 000 µUSD / M   // VERIFY
-    outputPerM: 2_500_000, // $2.50 / M  → 2 500 000 µUSD / M // VERIFY (blended; thinking billed here)
+    inputPerM: 300_000,
+    cachedPerM: 30_000,
+    outputPerM: 2_500_000,
   },
 
-  // ── Gemini 2.5 Flash-Lite ─────────────────────────────────────────────────
-  // Optimised for latency-sensitive / low-cost workloads; flat pricing.
-  // Source: https://ai.google.dev/pricing#2_5flash-lite
+  // ── Gemini 2.5 Flash-Lite ──  input $0.10 (text), output $0.40, cached $0.01
   'gemini-2.5-flash-lite': {
-    inputPerM: 100_000,   // $0.10 / M  → 100 000 µUSD / M // VERIFY
-    cachedPerM: 25_000,   // $0.025 / M → 25 000 µUSD / M  // VERIFY
-    outputPerM: 400_000,  // $0.40 / M  → 400 000 µUSD / M // VERIFY
+    inputPerM: 100_000,
+    cachedPerM: 10_000,
+    outputPerM: 400_000,
   },
 
-  // ── Gemini 3.x Flash (placeholder — verify before use) ───────────────────
-  // Gemini 3.0 Flash rates are not publicly confirmed as of 2026-06-27.
-  // These values are extrapolated from the 2.5-Flash trajectory; MUST be
-  // verified against the official pricing page before billing.
-  'gemini-3.0-flash': {
-    inputPerM: 250_000,   // $0.25 / M  → 250 000 µUSD / M // VERIFY — estimated
-    cachedPerM: 62_500,   // $0.0625 / M → 62 500 µUSD / M  // VERIFY — estimated
-    outputPerM: 2_000_000, // $2.00 / M  → 2 000 000 µUSD / M // VERIFY — estimated
+  // ── Gemini 3.5 Flash ──  input $1.50, output $9.00, cached $0.15
+  'gemini-3.5-flash': {
+    inputPerM: 1_500_000,
+    cachedPerM: 150_000,
+    outputPerM: 9_000_000,
   },
 
-  // ── Gemini 3.x Flash-Lite (placeholder — verify before use) ──────────────
-  'gemini-3.0-flash-lite': {
-    inputPerM: 80_000,    // $0.08 / M  → 80 000 µUSD / M  // VERIFY — estimated
-    cachedPerM: 20_000,   // $0.02 / M  → 20 000 µUSD / M  // VERIFY — estimated
-    outputPerM: 300_000,  // $0.30 / M  → 300 000 µUSD / M // VERIFY — estimated
+  // ── Gemini 3.1 Flash-Lite ──  input $0.25 (text), output $1.50, cached $0.025
+  'gemini-3.1-flash-lite': {
+    inputPerM: 250_000,
+    cachedPerM: 25_000,
+    outputPerM: 1_500_000,
+  },
+
+  // ── Gemini 3.1 Pro (preview) ──  $2.00/$12 (≤200k), $4.00/$18 (>200k); cached $0.20/$0.40
+  'gemini-3.1-pro-preview': {
+    inputPerM: 2_000_000,
+    cachedPerM: 200_000,
+    outputPerM: 12_000_000,
+    gt200k: {
+      inputPerM: 4_000_000,
+      cachedPerM: 400_000,
+      outputPerM: 18_000_000,
+    },
   },
 })

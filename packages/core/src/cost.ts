@@ -32,6 +32,7 @@ import type { Cost, Usage } from './types.js'
 import type { PricingSource } from './ports.js'
 import {
   GEMINI_PRICING,
+  TIER_FACTOR,
   pricingVersion,
   type ModelRates,
 } from './pricing.js'
@@ -108,11 +109,12 @@ function selectRates(
  *
  * @param model - Model identifier string used for routing (e.g. `"gemini-2.5-pro"`).
  * @param usage - GROSS token usage for the call.
- * @param _tier - Service tier (`'flex'` | `'standard'`).  Reserved for future
- *   tier-differentiated pricing; currently unused in the v1 snapshot.
+ * @param tier - Service tier (`'flex'` | `'standard'` | `'batch'`). `flex`/`batch`
+ *   apply a 50% discount on every rate (per Google pricing); unknown tiers are
+ *   treated as `standard`. Defaults to `'standard'` when omitted.
  * @returns A frozen {@link Cost} value.
  */
-export function computeCost(model: string, usage: Usage, _tier?: string): Cost {
+export function computeCost(model: string, usage: Usage, tier?: string): Cost {
   const rates = lookupRates(model)
 
   // Unknown model — return null cost; tokens still captured for backfill.
@@ -125,11 +127,14 @@ export function computeCost(model: string, usage: Usage, _tier?: string): Cost {
     }
   }
 
-  // Select rate tier based on GROSS input token count.
-  const { inputPerM, cachedPerM, outputPerM } = selectRates(
-    rates,
-    usage.inputTokens,
-  )
+  // Select rate tier based on GROSS input token count (long-context premium).
+  const base = selectRates(rates, usage.inputTokens)
+
+  // Apply the service-tier multiplier (flex/batch = 0.5 × standard).
+  const factor = TIER_FACTOR[tier ?? 'standard'] ?? 1
+  const inputPerM = base.inputPerM * factor
+  const cachedPerM = base.cachedPerM * factor
+  const outputPerM = base.outputPerM * factor
 
   const cached = usage.cachedInputTokens ?? 0
 
