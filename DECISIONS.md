@@ -74,8 +74,10 @@ section. Review on return; flag anything to revisit.
   product companies, not OSS homes; a dedicated neutral org is the right call for any-llm + craftsman +
   agent-skills. Picked `gullabs` (you chose it; github + npm both free). Packages renamed, hardened
   (publishConfig/repository/sideeffects/keywords), `npm pack` verified. Version 0.1.0 (honest for a lib
-  not yet wired into a real host — not 1.0.0 which signals stability promises). Note: agent-skills repo
-  has NO license — fix when you move it into the org.
+  not yet wired into a real host — not 1.0.0 which signals stability promises).
+  **CONSTRAINT (2026-06-28): agent-skills must NOT be published or moved to any public org — leave it
+  untouched.** (Retract my earlier suggestion to license/move it.) Org repo created: github.com/GulLabs/any-llm
+  (PRIVATE), CI green, topics + squash-only merges + auto-delete-branch + issues configured.
 - **D15 — Pricing rates need a verification pass (Q5).** M3 cost MATH is correct & tested, but several
   rate VALUES carry `// VERIFY` (gemini-2.5-flash/-lite, 2.5-pro >200k tier, gemini-3.x). gemini-2.5-pro
   base rates were confirmed vs Google's page. I'll web-verify the rest before M7/publish; costs are an
