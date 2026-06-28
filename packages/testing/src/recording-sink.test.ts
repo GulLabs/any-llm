@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { RecordingSink } from './recording-sink.js'
-import type { LlmCallRecord } from '@anyllm/core'
+import type { LlmCallRecord } from '@gullabs/core'
 
 function makeRecord(overrides: Partial<LlmCallRecord> = {}): LlmCallRecord {
   return {
@@ -89,7 +89,7 @@ describe('RecordingSink', () => {
   })
 
   it('satisfies the UsageSink interface structurally', () => {
-    const sink: import('@anyllm/core').UsageSink = new RecordingSink()
+    const sink: import('@gullabs/core').UsageSink = new RecordingSink()
     expect(typeof sink.record).toBe('function')
   })
 })

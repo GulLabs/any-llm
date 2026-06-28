@@ -15,9 +15,9 @@
     "example": "tsx examples/basic.ts"
   },
   "devDependencies": {
-    "@anyllm/core": "workspace:*",
-    "@anyllm/google": "workspace:*",
-    "@anyllm/testing": "workspace:*",
+    "@gullabs/core": "workspace:*",
+    "@gullabs/google": "workspace:*",
+    "@gullabs/testing": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0",
     "tsup": "^8.3.0",

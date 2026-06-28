@@ -1,10 +1,14 @@
 {
-  "name": "@anyllm/google",
-  "version": "0.0.0",
+  "name": "@gullabs/google",
+  "version": "0.1.0",
   "description": "Gemini provider adapter for any-llm — Flex tier, thinking capture, structured output, error classification.",
   "type": "module",
   "license": "Apache-2.0",
-  "repository": { "type": "git", "url": "https://github.com/atifgul/any-llm", "directory": "packages/google" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gullabs/any-llm.git",
+    "directory": "packages/google"
+  },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -15,13 +19,41 @@
       "require": "./dist/index.cjs"
     }
   },
-  "files": ["dist"],
-  "scripts": { "build": "tsup" },
-  "dependencies": { "@anyllm/core": "workspace:*" },
-  "peerDependencies": { "@google/genai": "^1 || ^2" },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup"
+  },
+  "dependencies": {
+    "@gullabs/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "@google/genai": "^1 || ^2"
+  },
   "devDependencies": {
     "@google/genai": "^1.45.0",
-    "@anyllm/testing": "workspace:*",
+    "@gullabs/testing": "workspace:*",
     "zod": "^3.23.0"
-  }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "sideEffects": false,
+  "keywords": [
+    "llm",
+    "gemini",
+    "google-genai",
+    "ai",
+    "tokens",
+    "cost",
+    "usage",
+    "observability",
+    "typescript"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://github.com/gullabs/any-llm/tree/main/packages/google#readme",
+  "bugs": "https://github.com/gullabs/any-llm/issues"
 }

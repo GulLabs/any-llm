@@ -5,10 +5,10 @@ An in-process TypeScript library that standardises LLM calls with first-class ob
 ## Install
 
 ```
-pnpm add @anyllm/core @anyllm/google
+pnpm add @gullabs/core @gullabs/google
 # optional companions:
-pnpm add @anyllm/drizzle    # Drizzle ORM sink for Postgres
-pnpm add @anyllm/testing    # test fakes (dev only)
+pnpm add @gullabs/drizzle    # Drizzle ORM sink for Postgres
+pnpm add @gullabs/testing    # test fakes (dev only)
 ```
 
 > Provider SDKs are peer-dependencies. For Gemini: `pnpm add @google/genai`
@@ -19,9 +19,9 @@ The four v1 goals in ~25 lines:
 
 ```ts
 import { z } from 'zod'
-import { createClient, geminiPricingSource, defineCallSite } from '@anyllm/core'
-import { geminiAdapter } from '@anyllm/google'
-import { drizzleUsageSink, llmCalls } from '@anyllm/drizzle'
+import { createClient, geminiPricingSource, defineCallSite } from '@gullabs/core'
+import { geminiAdapter } from '@gullabs/google'
+import { drizzleUsageSink, llmCalls } from '@gullabs/drizzle'
 
 // 1. Wire up the client
 const client = createClient({
@@ -67,10 +67,10 @@ See [`examples/basic.ts`](./examples/basic.ts) for a **fully runnable** version 
 
 | Package | Description |
 |---|---|
-| [`@anyllm/core`](./packages/core) | Types, ports, engine (`createClient`, `generate`, `runStructured`), cost computation, record builder. No provider dependencies. |
-| [`@anyllm/google`](./packages/google) | Gemini adapter over `@google/genai`. Maps Flex tier, thinking config, structured output, and error classification. |
-| [`@anyllm/drizzle`](./packages/drizzle) | Reference Postgres schema (`llm_calls` table) and `drizzleUsageSink` — a `UsageSink` port implementation for Drizzle ORM. |
-| [`@anyllm/testing`](./packages/testing) | Test fakes: `FakeClock`, `FakeIds`, `RecordingSink`, `makeFakeGemini`, `fakeGeminiResponse`, `fakeAuth`. No network in tests. |
+| [`@gullabs/core`](./packages/core) | Types, ports, engine (`createClient`, `generate`, `runStructured`), cost computation, record builder. No provider dependencies. |
+| [`@gullabs/google`](./packages/google) | Gemini adapter over `@google/genai`. Maps Flex tier, thinking config, structured output, and error classification. |
+| [`@gullabs/drizzle`](./packages/drizzle) | Reference Postgres schema (`llm_calls` table) and `drizzleUsageSink` — a `UsageSink` port implementation for Drizzle ORM. |
+| [`@gullabs/testing`](./packages/testing) | Test fakes: `FakeClock`, `FakeIds`, `RecordingSink`, `makeFakeGemini`, `fakeGeminiResponse`, `fakeAuth`. No network in tests. |
 
 ## What v1 does NOT do yet
 

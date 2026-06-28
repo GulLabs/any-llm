@@ -1,7 +1,7 @@
 /**
  * fake-gemini — a structural stub of the @google/genai client surface.
  *
- * The Gemini adapter (M4/@anyllm/google) depends on `@google/genai` as a
+ * The Gemini adapter (M4/@gullabs/google) depends on `@google/genai` as a
  * peer-dependency.  Tests must never touch the real network, so this module
  * provides a fully structural (no import of @google/genai) fake that scripts
  * responses, captures calls, and can inject errors.

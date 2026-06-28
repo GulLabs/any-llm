@@ -1,5 +1,5 @@
 /**
- * Adapter-level surface-stress tests for @anyllm/google.
+ * Adapter-level surface-stress tests for @gullabs/google.
  *
  * Hammers the geminiAdapter with adversarial inputs via makeFakeGemini.
  * NO real network — all calls go through FakeGeminiClient.
@@ -22,12 +22,12 @@ import {
   LlmError,
   createClient,
   geminiPricingSource,
-} from '@anyllm/core'
+} from '@gullabs/core'
 import type {
   ResolvedRequest,
   AdapterCtx,
   FinishReason,
-} from '@anyllm/core'
+} from '@gullabs/core'
 import {
   fakeGeminiResponse,
   fakeGeminiBlocked,
@@ -36,11 +36,11 @@ import {
   FakeIds,
   RecordingSink,
   fakeAuth,
-} from '@anyllm/testing'
+} from '@gullabs/testing'
 import type {
   GeminiResponseLike,
   GeminiUsageMetadataLike,
-} from '@anyllm/testing'
+} from '@gullabs/testing'
 import { geminiAdapter } from './adapter.js'
 
 // ---------------------------------------------------------------------------

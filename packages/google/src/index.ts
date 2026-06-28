@@ -1,10 +1,10 @@
 /**
- * @anyllm/google — Gemini provider adapter over @google/genai.
+ * @gullabs/google — Gemini provider adapter over @google/genai.
  *
  * @example
  * ```ts
- * import { geminiAdapter } from '@anyllm/google'
- * import { createClient, geminiPricingSource } from '@anyllm/core'
+ * import { geminiAdapter } from '@gullabs/google'
+ * import { createClient, geminiPricingSource } from '@gullabs/core'
  *
  * const client = createClient({
  *   adapters: [geminiAdapter()],

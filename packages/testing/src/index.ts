@@ -1,5 +1,5 @@
 /**
- * @anyllm/testing — reusable test fakes for the any-llm library.
+ * @gullabs/testing — reusable test fakes for the any-llm library.
  *
  * ```ts
  * import {
@@ -8,7 +8,7 @@
  *   RecordingSink,
  *   fakeGeminiResponse,
  *   makeFakeGemini,
- * } from '@anyllm/testing'
+ * } from '@gullabs/testing'
  * ```
  *
  * @module

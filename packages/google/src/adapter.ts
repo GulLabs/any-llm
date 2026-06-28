@@ -1,5 +1,5 @@
 /**
- * geminiAdapter — @anyllm/google Gemini provider adapter.
+ * geminiAdapter — @gullabs/google Gemini provider adapter.
  *
  * Pure request⇄response mapping over @google/genai (via GeminiClientLike).
  * Never persists, never computes cost, never loops.
@@ -7,7 +7,7 @@
  * @module
  */
 
-import { LlmError, classifyError } from '@anyllm/core'
+import { LlmError, classifyError } from '@gullabs/core'
 import type {
   ProviderAdapter,
   ResolvedRequest,
@@ -18,7 +18,7 @@ import type {
   FinishReason,
   JsonValue,
   AuthMaterial,
-} from '@anyllm/core'
+} from '@gullabs/core'
 import type { ZodTypeAny } from 'zod'
 import { buildGoogleClient } from './client.js'
 import type {

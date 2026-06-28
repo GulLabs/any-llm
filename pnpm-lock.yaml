@@ -8,13 +8,13 @@ importers:
 
   .:
     devDependencies:
-      '@anyllm/core':
+      '@gullabs/core':
         specifier: workspace:*
         version: link:packages/core
-      '@anyllm/google':
+      '@gullabs/google':
         specifier: workspace:*
         version: link:packages/google
-      '@anyllm/testing':
+      '@gullabs/testing':
         specifier: workspace:*
         version: link:packages/testing
       '@types/node':
@@ -47,7 +47,7 @@ importers:
 
   packages/drizzle:
     dependencies:
-      '@anyllm/core':
+      '@gullabs/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -57,11 +57,11 @@ importers:
 
   packages/google:
     dependencies:
-      '@anyllm/core':
+      '@gullabs/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
-      '@anyllm/testing':
+      '@gullabs/testing':
         specifier: workspace:*
         version: link:../testing
       '@google/genai':
@@ -73,7 +73,7 @@ importers:
 
   packages/testing:
     dependencies:
-      '@anyllm/core':
+      '@gullabs/core':
         specifier: workspace:*
         version: link:../core
 

@@ -1,5 +1,5 @@
 /**
- * Port interfaces for @anyllm/core.
+ * Port interfaces for @gullabs/core.
  *
  * These are the seams — every pluggable dependency the engine accepts is
  * expressed as an interface here.  Host applications implement whichever

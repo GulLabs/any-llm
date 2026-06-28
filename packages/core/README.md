@@ -1,4 +1,4 @@
-# @anyllm/core
+# @gullabs/core
 
 The provider-agnostic heart of any-llm. Contains all types, port interfaces, the engine pipeline, call-site definitions, cost computation, and the persisted record builder. Has no provider dependencies — only `zod` as a peer.
 
@@ -17,7 +17,7 @@ Port interfaces you implement: `ProviderAdapter`, `UsageSink`, `PricingSource`, 
 ## Quick example
 
 ```ts
-import { createClient, geminiPricingSource, defineCallSite } from '@anyllm/core'
+import { createClient, geminiPricingSource, defineCallSite } from '@gullabs/core'
 import { z } from 'zod'
 
 const client = createClient({

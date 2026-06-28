@@ -36,7 +36,7 @@ describe('FakeIds', () => {
   })
 
   it('satisfies the IdGenerator interface structurally', () => {
-    const ids: import('@anyllm/core').IdGenerator = new FakeIds()
+    const ids: import('@gullabs/core').IdGenerator = new FakeIds()
     expect(typeof ids.callId()).toBe('string')
     expect(typeof ids.attemptId()).toBe('string')
   })

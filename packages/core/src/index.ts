@@ -1,7 +1,7 @@
 /**
- * @anyllm/core — public surface re-exports.
+ * @gullabs/core — public surface re-exports.
  *
- * Import from `@anyllm/core` to access types, errors, port interfaces, and
+ * Import from `@gullabs/core` to access types, errors, port interfaces, and
  * the record builder.  Nothing else is exported; internal helpers are kept
  * module-private.
  *

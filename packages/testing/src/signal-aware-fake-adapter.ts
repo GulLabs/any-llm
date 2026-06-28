@@ -19,7 +19,7 @@ import type {
   ResolvedRequest,
   AdapterCtx,
   AdapterResult,
-} from '@anyllm/core'
+} from '@gullabs/core'
 
 // ---------------------------------------------------------------------------
 // SignalAwareFakeAdapter

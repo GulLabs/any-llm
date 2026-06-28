@@ -13,7 +13,7 @@ Initial v1 implementation. Scope: four goals, no more — see `SPEC.md`.
 
 ### Added
 
-**`@anyllm/core`**
+**`@gullabs/core`**
 - `createClient` engine: 12-step pipeline (config resolution → adapter → normalize → validate → cost → record → result)
 - `defineCallSite` — typed, reusable prompt template with `{{var}}` interpolation (anti-injection: values are not re-scanned)
 - `geminiPricingSource` — `PricingSource` implementation backed by the built-in Gemini pricing snapshot (`gemini-2026-06-27`)
@@ -26,7 +26,7 @@ Initial v1 implementation. Scope: four goals, no more — see `SPEC.md`.
 - Port interfaces: `ProviderAdapter`, `UsageSink`, `PricingSource`, `AuthProvider`, `Clock`, `IdGenerator`, `Logger`, `Telemetry`
 - Full TypeScript types: `LlmRequest`, `LlmResult`, `Usage`, `Cost`, `LlmCallRecord`, `GenConfig`, `ReasoningIntent`, and more
 
-**`@anyllm/google`**
+**`@gullabs/google`**
 - `geminiAdapter` — `ProviderAdapter` over `@google/genai` (API-key + Vertex auth via `buildGoogleClient`)
 - Gemini Flex service tier (`serviceTier: 'flex'` default)
 - Thinking capture: `thoughtsTokenCount` → `thinkingTokens` in usage; thought parts → `reasoningText`
@@ -34,11 +34,11 @@ Initial v1 implementation. Scope: four goals, no more — see `SPEC.md`.
 - Structured output: Zod schema → `responseSchema` + `responseMimeType: 'application/json'` via `zodToGeminiSchema`
 - Error classification: `401/403` → `invalid_auth`, `429` → `rate_limited` (+ `retryAfterMs`), `5xx` → `server`, safety → `content_filter`
 
-**`@anyllm/drizzle`**
+**`@gullabs/drizzle`**
 - `llmCalls` — reference Drizzle `pgTable` schema for `LlmCallRecord`; typed columns + `jsonb` forward-compat lanes
 - `drizzleUsageSink` — `UsageSink` implementation; idempotent on `attemptId` via `INSERT ... ON CONFLICT DO NOTHING`
 
-**`@anyllm/testing`**
+**`@gullabs/testing`**
 - `FakeClock` — deterministic `Clock` with `advance` / `set`
 - `FakeIds` — sequential `IdGenerator` (`call_1`, `attempt_1`, …)
 - `RecordingSink` — in-memory `UsageSink`; `failOnRecord` option for fail-open tests

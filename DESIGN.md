@@ -12,7 +12,7 @@ implementation, though it converges on a similar shape because the problem is th
 > **Naming note (OSS):** the working title "any-llm" collides head-on with the existing
 > `mozilla-ai/any-llm` project — a discoverability, SEO, and trademark-confusion risk. A distinct
 > product name + reserved npm org/scope + GitHub org MUST be chosen before any public code lands
-> (see §18 *OSS release policy*). The `@anyllm/*` scope is used throughout this doc as a
+> (see §18 *OSS release policy*). The `@gullabs/*` scope is used throughout this doc as a
 > **placeholder**; treat it as `@<scope>/*`.
 
 ---
@@ -76,7 +76,7 @@ provider-reality, observability/cost, OSS/packaging, config UX, security). Major
   rules pinned; `Usage.source` added; ledger row written on **every terminal stream outcome
   including abort** (§5, §10).
 - Reference Drizzle table no longer silently drops record fields; `assertSinkConformance` and
-  `runAdapterConformance` ship in `@anyllm/testing` (§11, §18).
+  `runAdapterConformance` ship in `@gullabs/testing` (§11, §18).
 
 **Security / privacy.**
 - `providerOptions` transport/auth keys (`apiKey`, `baseURL`, headers…) are **stripped before
@@ -88,7 +88,7 @@ provider-reality, observability/cost, OSS/packaging, config UX, security). Major
   args validated with an `argsValid` signal; explicit untrusted-output trust boundary (§7, §17).
 
 **OSS / packaging.**
-- Adapter contract extracted into a slow-moving **`@anyllm/protocol`** package so community
+- Adapter contract extracted into a slow-moving **`@gullabs/protocol`** package so community
   adapters don't re-release on every core minor. Provider SDKs + Zod are **peerDependencies**.
   ESM-first dual build, audience-split entrypoints, `@experimental` markers, Apache-2.0, runnable
   conformance kits, contribution model (§18).
@@ -154,8 +154,8 @@ compile in principle. Changes by theme:
 - Defined registry conflict resolution (host override wins; cross-adapter model collisions throw at
   `createClient` unless `adapterId` disambiguates) (§7).
 - `specVersion` "adapts when an adapter lags" is now defined: additive deltas handled by pure upcast
-  shims; non-synthesizable changes major `@anyllm/protocol` and force adapter re-release (§7).
-- `@anyllm/protocol` single-instance hazard addressed (single-major peer range + runtime singleton
+  shims; non-synthesizable changes major `@gullabs/protocol` and force adapter re-release (§7).
+- `@gullabs/protocol` single-instance hazard addressed (single-major peer range + runtime singleton
   guard), matching the Zod treatment (§18).
 
 **Config UX / multi-tenant.**
@@ -308,44 +308,44 @@ is what makes the "swap model from a UI" goal real rather than aspirational.
 
 ### Package layout
 ```
-@anyllm/protocol        # SLOW-MOVING contract: ProviderAdapter, ResolvedRequest, AdapterCtx,
+@gullabs/protocol        # SLOW-MOVING contract: ProviderAdapter, ResolvedRequest, AdapterCtx,
                         #   AdapterResult, ModelDescriptor, port interfaces, wire/spec versions.
                         #   Core + every adapter depend on THIS, not on each other's cadence.
-@anyllm/core            # engine, call-site registry, config resolution, reasoning/cache
-                        #   unification, error taxonomy. Depends on @anyllm/protocol.
-@anyllm/google          # ProviderAdapter over @google/genai (+ Gemini cache manager, Files API, Imagen)
-@anyllm/anthropic       # ProviderAdapter over @anthropic-ai/sdk
-@anyllm/openai          # ProviderAdapter over openai (Responses API target; Chat fallback)
-@anyllm/pricing         # pinned pricing snapshot + refresh script (data via tokenlens/LiteLLM-style)
-@anyllm/drizzle         # reference llm_calls schema + drizzleUsageSink(db, table)
-@anyllm/testing         # in-memory fakes + runnable conformance kits for every port
+@gullabs/core            # engine, call-site registry, config resolution, reasoning/cache
+                        #   unification, error taxonomy. Depends on @gullabs/protocol.
+@gullabs/google          # ProviderAdapter over @google/genai (+ Gemini cache manager, Files API, Imagen)
+@gullabs/anthropic       # ProviderAdapter over @anthropic-ai/sdk
+@gullabs/openai          # ProviderAdapter over openai (Responses API target; Chat fallback)
+@gullabs/pricing         # pinned pricing snapshot + refresh script (data via tokenlens/LiteLLM-style)
+@gullabs/drizzle         # reference llm_calls schema + drizzleUsageSink(db, table)
+@gullabs/testing         # in-memory fakes + runnable conformance kits for every port
 ```
 Core depends on **none** of the provider packages. Provider SDKs (`@google/genai`,
 `@anthropic-ai/sdk`, `openai`) and `zod` are **peerDependencies** (§18), never bundled deps, to
 avoid duplicate/version-skewed instances in the host tree. Image generation is a capability of the
-relevant provider packages (`@anyllm/google` exposes Imagen), not a separate concern.
+relevant provider packages (`@gullabs/google` exposes Imagen), not a separate concern.
 
 **Audience-split entrypoints** (so the app surface and the adapter/sink-author surface evolve
-independently): `@anyllm/core` (app), `@anyllm/core/adapter`, `@anyllm/core/sink`,
-`@anyllm/core/internal` (excluded from semver). See §18.
+independently): `@gullabs/core` (app), `@gullabs/core/adapter`, `@gullabs/core/sink`,
+`@gullabs/core/internal` (excluded from semver). See §18.
 
 ---
 
 ## 4. Core domain types
 
-`JsonValue` is defined once in `@anyllm/protocol` and exported:
+`JsonValue` is defined once in `@gullabs/protocol` and exported:
 ```ts
 type JsonValue = null | boolean | number | string | JsonValue[] | { [k: string]: JsonValue }
 ```
 
 ### Model identity (augmentable, still open)
 ```ts
-// Empty in core; provider packages augment it via `declare module '@anyllm/protocol'`.
+// Empty in core; provider packages augment it via `declare module '@gullabs/protocol'`.
 interface KnownModels {}
 type ModelId = keyof KnownModels | (string & {})   // literal autocomplete, but ANY string compiles
 type ModelCaps<M extends ModelId> = M extends keyof KnownModels ? KnownModels[M] : Record<string, unknown>
 // provider pkg example:
-// declare module '@anyllm/protocol' {
+// declare module '@gullabs/protocol' {
 //   interface KnownModels { 'gemini-3.1-flash-lite': { provider:'google'; reasoning:'level'; responseSchema:true; topK:true } }
 // }
 ```
@@ -778,17 +778,17 @@ Completions is a fallback adapter for models lacking Responses support (`descrip
 
 ## 7. The ports (interfaces the host/companions implement)
 
-The adapter contract and its three load-bearing types live in **`@anyllm/protocol`** (slow-moving,
+The adapter contract and its three load-bearing types live in **`@gullabs/protocol`** (slow-moving,
 so community adapters don't re-release on every core minor).
 
 ```ts
-// ── @anyllm/protocol ──
-// SpecVersion is the ADDITIVE-compatible revision of the port within a single `@anyllm/protocol`
+// ── @gullabs/protocol ──
+// SpecVersion is the ADDITIVE-compatible revision of the port within a single `@gullabs/protocol`
 // major. Bumping it (1 → 2) means "new OPTIONAL surface an adapter MAY implement"; an older adapter
 // (lower specVersion) is still valid and the engine fills the gap via a documented upcast shim
 // (see "Spec-version compatibility" below). A change that an old adapter CANNOT satisfy (a new
 // REQUIRED field on AdapterResult, a changed invariant) is NOT a specVersion bump — it MAJORS
-// `@anyllm/protocol`, and adapters must re-release. "Adapts when an adapter lags" is therefore
+// `@gullabs/protocol`, and adapters must re-release. "Adapts when an adapter lags" is therefore
 // only ever defined for additive specVersion deltas; the hard case is handled by the package major.
 type SpecVersion = number                         // numeric monotonic within a protocol major
 
@@ -864,12 +864,12 @@ holds the current `SpecVersion` it understands. At registration it compares each
   documented **upcast shim** that supplies defaults for surface added since the adapter's version
   (e.g. a field added at spec N is synthesized for an N-1 adapter — `usage.categorization` defaults
   to `'partial'`, a newly-added optional result field defaults to absent). Every shim is a pure
-  function `upcastResult_{from}_{to}` shipped in `@anyllm/protocol`; the chain of upcasts is applied
+  function `upcastResult_{from}_{to}` shipped in `@gullabs/protocol`; the chain of upcasts is applied
   in order. A `Warning{type:'fallback'}` records that a shim ran.
 - adapter `specVersion` **>** engine: the engine rejects registration with a clear error (upgrade
   core) — it must never silently ignore surface it doesn't understand.
 - A change an old adapter **cannot** synthesize (new REQUIRED field, changed invariant) is by
-  definition NOT an additive specVersion bump; it majors `@anyllm/protocol` (§18) and the adapter
+  definition NOT an additive specVersion bump; it majors `@gullabs/protocol` (§18) and the adapter
   must re-release. There is no silent "adapt" in that case — the protocol major + the peer-range is
   the mechanism, so the hand-wave is removed.
 
@@ -1036,14 +1036,14 @@ interface Middleware {
 }
 ```
 
-Every port has an in-memory fake in `@anyllm/testing`. The engine is constructed with a context
+Every port has an in-memory fake in `@gullabs/testing`. The engine is constructed with a context
 object holding the chosen implementations:
 
 ```ts
 const client = createClient({
   adapters: [google(), anthropic(), openai()],   // throws on duplicate adapter.id; builds provider→adapter map
-  pricing: pinnedPricing(),                       // @anyllm/pricing
-  sink: drizzleUsageSink(db, llmCalls),           // @anyllm/drizzle, or a custom one
+  pricing: pinnedPricing(),                       // @gullabs/pricing
+  sink: drizzleUsageSink(db, llmCalls),           // @gullabs/drizzle, or a custom one
   telemetry: sentryTelemetry(Sentry),
   logger: pinoLogger,
   middleware: [/* ordered outermost-first */],
@@ -1109,7 +1109,7 @@ prompt-injection / template-injection surface a richer engine would create:
 Lesson from **LiteLLM's `model_prices_and_context_window.json`**: adopt its proven `supports_*`
 vocabulary for easy import. But we **separate the two registries** (resolving the §9/§10 conflict
 two experts flagged): **capabilities** are bundled in the adapter (change only when the SDK does)
-and resolved through the runtime `ModelRegistry`; **pricing** lives solely in `@anyllm/pricing`,
+and resolved through the runtime `ModelRegistry`; **pricing** lives solely in `@gullabs/pricing`,
 injected via the `PricingSource` port (pricing churns weekly; adapters should not). `descriptor.pricing`
 is an OPTIONAL seed only — used to generate the snapshot and as a last-resort fallback (then
 `Cost.confidence = 'estimated'`). `PricingSource` is the single authority frozen on each record.
@@ -1187,7 +1187,7 @@ so it reads THIS client's registry + tenant policy: `client.describeConfigForMod
 
 ## 10. Costing
 
-- **Source of data:** a pinned snapshot in `@anyllm/pricing`, seeded/refreshed from a LiteLLM-style
+- **Source of data:** a pinned snapshot in `@gullabs/pricing`, seeded/refreshed from a LiteLLM-style
   combined registry / `tokenlens` (TS-native) — not hand-maintained. The snapshot carries a
   `version` and is vendored + checksummed (§18). `PricingSource` is the single cost authority.
 - **When:** computed at call time inside the engine.
@@ -1345,7 +1345,7 @@ interface LlmCallRecord {
 }
 ```
 
-### `@anyllm/drizzle` reference schema (typed columns + jsonb forward-compat)
+### `@gullabs/drizzle` reference schema (typed columns + jsonb forward-compat)
 The reference table persists the **full** record contract (no silent field-dropping — that was the
 exact drift the design claims to eliminate):
 ```ts
@@ -1407,7 +1407,7 @@ interface SinkConformance {
   //          inputTokens, outputTokens, recordSchemaVersion, createdAt
   readBack(callId: string): Promise<Partial<LlmCallRecord>>
 }
-declare function assertSinkConformance(sink: UsageSink & SinkConformance): Promise<void>  // @anyllm/testing
+declare function assertSinkConformance(sink: UsageSink & SinkConformance): Promise<void>  // @gullabs/testing
 ```
 
 **Temporal note:** the sink write happens inside the activity (workflow code can't do I/O); the
@@ -1451,7 +1451,7 @@ type CallSiteConfigPatch = {
   config?: Pick<GenConfig, 'temperature' | 'topP' | 'topK' | 'maxOutputTokens' | 'stopSequences' | 'serviceTier' | 'timeoutMs'>
     & { reasoning?: ReasoningIntent; providerOptions?: Record<string, Record<string, unknown>> }
 }
-// Guaranteed JSON-round-trippable (no schema, no binary) — enforced by a type-level test in @anyllm/testing.
+// Guaranteed JSON-round-trippable (no schema, no binary) — enforced by a type-level test in @gullabs/testing.
 type StoredCallSiteConfig = { configSchemaVersion: number; patch: CallSiteConfigPatch }  // versioned envelope
 
 interface OverridePolicy {
@@ -1590,8 +1590,8 @@ Adapter copies the entire raw usage → `Usage.raw` → `rawUsage`, and the unre
 `CanonicalTokenType` + cost rule later, backfilling from `rawUsage`/`rawDetails`.
 
 **A new provider (e.g. xAI/Mistral).**
-Write `@anyllm/grok` implementing `ProviderAdapter` from `@anyllm/protocol` (map request, forward
-passthrough, capture raw, obey usage invariants), peer-depend on `@anyllm/protocol` + the raw SDK,
+Write `@gullabs/grok` implementing `ProviderAdapter` from `@gullabs/protocol` (map request, forward
+passthrough, capture raw, obey usage invariants), peer-depend on `@gullabs/protocol` + the raw SDK,
 assert `specVersion` compatibility at registration, prove it with `runAdapterConformance`. Register
 it. Core, registry, costing, persistence untouched.
 
@@ -1620,7 +1620,7 @@ sustainable. Agent loops live in the host.
 - **Capabilities (adapter/registry) and pricing (`PricingSource`) are separate registries.**
 - **Payload capture default-OFF**, redacted + size-capped + retention-classed, engine-enforced before the sink.
 - **Idempotency (result dedup) and attemptId (spend completeness) are separate keys.**
-- **Canonical sink contract** with `recordSchemaVersion`; conformance kits ship in `@anyllm/testing`.
+- **Canonical sink contract** with `recordSchemaVersion`; conformance kits ship in `@gullabs/testing`.
 - **Reasoning is *intent*, not a guarantee**; lossy mappings warn; reasoning round-trips with signatures.
 - **Cost carries `confidence` + currency + nano-precision** + provider-native categories for reconciliation.
 - **providerOptions is a quarantined escape hatch:** typed registry, transport keys stripped, Warning on collision.
@@ -1712,20 +1712,20 @@ before any code lands. Add the chosen name as a NAMING decision.
 
 **License.** **Apache-2.0** (explicit patent grant, preferred for company-backed OSS wrapping vendor
 SDKs) + `LICENSE` + SPDX headers. Verify and attribute the LiteLLM/tokenlens pricing-data license in
-`@anyllm/pricing`.
+`@gullabs/pricing`.
 
 **Versioning (one scheme: numeric monotonic).** `specVersion: 1` (port), `recordSchemaVersion: 1`
 (record), `wireVersion: 1` (serialized payloads/idempotency inputs), `configSchemaVersion: 1`
-(stored UI config). The adapter contract lives in slow-moving **`@anyllm/protocol`**; core declares
+(stored UI config). The adapter contract lives in slow-moving **`@gullabs/protocol`**; core declares
 it a peerDependency, so community adapters re-release only when the protocol majors, not when core
 does.
 
-> **`@anyllm/protocol` MUST resolve to a single instance (the same hazard §18 fixes for Zod).**
+> **`@gullabs/protocol` MUST resolve to a single instance (the same hazard §18 fixes for Zod).**
 > Protocol owns the `declare module` augmentation targets (`KnownModels`, `ProviderOptionsRegistry`)
 > and any brand/`instanceof` identity checks (e.g. `Tool`/error brands). Module augmentation and
 > brand checks require ONE resolved copy: if core resolves `protocol@1` and an adapter resolves
 > `protocol@2` in the host tree, augmentation merges and identity checks silently break. Therefore
-> protocol is NOT a wide-range peer: it is peer-ranged to a **single major** (`"@anyllm/protocol":
+> protocol is NOT a wide-range peer: it is peer-ranged to a **single major** (`"@gullabs/protocol":
 > "^1"`), and a protocol MAJOR is a coordinated ecosystem bump (core + all first-party adapters
 > released together). Core installs a runtime singleton guard — a `Symbol.for('anyllm.protocol')`
 > stamped with the resolved version on `globalThis`; a second, version-skewed copy logs a loud
@@ -1743,8 +1743,8 @@ does.
   }
 }
 ```
-`@anyllm/core` (app surface) / `@anyllm/core/adapter` (`ResolvedRequest`, `AdapterCtx`,
-`AdapterResult`) / `@anyllm/core/sink` (`LlmCallRecord`, `UsageSink`). Adopt API Extractor with
+`@gullabs/core` (app surface) / `@gullabs/core/adapter` (`ResolvedRequest`, `AdapterCtx`,
+`AdapterResult`) / `@gullabs/core/sink` (`LlmCallRecord`, `UsageSink`). Adopt API Extractor with
 `@public`/`@internal` tags and gate releases on an api-report diff.
 
 **Closed unions are the riskiest semver liability.** `Part`, `StreamEvent`, `Warning`,
@@ -1777,7 +1777,7 @@ streaming, citations, multimodal output, reasoning-intent. Publish a stability t
 **fidelity matrix** (reasoning round-trip, positional cache, server tools, service tiers, multimodal
 out) in the README.
 
-**Community extensibility.** Ship runnable conformance kits from `@anyllm/testing` as first-class
+**Community extensibility.** Ship runnable conformance kits from `@gullabs/testing` as first-class
 exports: `runAdapterConformance(make)`, `runSinkConformance(make)`, `runPricingConformance(make)`,
 plus per-adapter `normalizeUsage` fixtures (so xAI/Mistral/Bedrock authors can't corrupt cost
 ledgers). Publish a `ProviderAdapterFactory` type, an npm keyword (`anyllm-adapter`) + naming
@@ -1800,7 +1800,7 @@ Studied the recommended tools; folded the best ideas in (above) rather than adop
 
 - **LiteLLM (`model_prices_and_context_window.json`)** — proven `supports_*` flag vocabulary +
   explicit cache keys + tiered breakpoints → adopted into `ModelDescriptor`/`ModelPricing` (§9). We
-  *generate* `@anyllm/pricing` from a LiteLLM-style file rather than hand-curating. We **diverge**
+  *generate* `@gullabs/pricing` from a LiteLLM-style file rather than hand-curating. We **diverge**
   on one point: we split capabilities (adapter/registry) from pricing (`PricingSource`) because
   pricing churns weekly and adapters should not.
 - **Langfuse (usageDetails / costDetails)** — token types are an open set. We adopted the *idea* but
@@ -1811,7 +1811,7 @@ Studied the recommended tools; folded the best ideas in (above) rather than adop
   the structured `warnings` "never silently drop a setting" pattern and `providerOptions` (input) vs
   `providerMetadata` (output) naming. Their biggest recurring pain — **port spec evolution
   (V1→V2→V3)** — drove two decisions here: version the port (`specVersion`) AND put it in a separate
-  slow-moving `@anyllm/protocol` package so community adapters don't churn (§7, §18).
+  slow-moving `@gullabs/protocol` package so community adapters don't churn (§7, §18).
 - **Standard Schema** — adopted as the public validator contract so the semver-stable surface isn't
   hard-coupled to a single validator's major version; Zod stays the blessed impl.
 
@@ -1824,11 +1824,11 @@ Sources: [LiteLLM pricing JSON](https://github.com/BerriAI/litellm/blob/main/mod
 
 ## 20. Build order
 
-1. `@anyllm/protocol` — port contract, `ResolvedRequest`/`AdapterCtx`/`AdapterResult`, descriptor, versions.
-2. `@anyllm/core` — engine, ports, call-site registry, config resolution+clamp, routing, middleware, error taxonomy.
-3. `@anyllm/testing` — fakes + conformance kits (lets us TDD the engine with no network).
-4. `@anyllm/google` — first real adapter (raw `@google/genai`), incl. Imagen + Files + cache manager + reasoning signatures.
-5. `@anyllm/pricing` + `@anyllm/drizzle` — costing (single authority) + reference sink.
+1. `@gullabs/protocol` — port contract, `ResolvedRequest`/`AdapterCtx`/`AdapterResult`, descriptor, versions.
+2. `@gullabs/core` — engine, ports, call-site registry, config resolution+clamp, routing, middleware, error taxonomy.
+3. `@gullabs/testing` — fakes + conformance kits (lets us TDD the engine with no network).
+4. `@gullabs/google` — first real adapter (raw `@google/genai`), incl. Imagen + Files + cache manager + reasoning signatures.
+5. `@gullabs/pricing` + `@gullabs/drizzle` — costing (single authority) + reference sink.
 6. Pilot migration: **OpenMontage** (lowest risk) end-to-end.
-7. `@anyllm/anthropic`, `@anyllm/openai` (Responses API target).
+7. `@gullabs/anthropic`, `@gullabs/openai` (Responses API target).
 8. Migrate postbuzz → ai-studio → redline (highest stakes last).

@@ -1,5 +1,5 @@
 /**
- * Call-site definition for @anyllm/core.
+ * Call-site definition for @gullabs/core.
  *
  * A {@link CallSite} is a reusable, named prompt template with an associated
  * model and optional Zod schema for structured output.  It is the unit of
@@ -85,7 +85,7 @@ export interface CallSite<S extends ZodType = ZodType> {
  *
  * @example
  * ```ts
- * import { defineCallSite } from '@anyllm/core'
+ * import { defineCallSite } from '@gullabs/core'
  * import { z } from 'zod'
  *
  * const classify = defineCallSite({

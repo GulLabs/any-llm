@@ -1,5 +1,5 @@
 /**
- * Core types for @anyllm/core.
+ * Core types for @gullabs/core.
  *
  * These types form the stable public surface of the library.  All other
  * packages depend on them; changing a type here is a breaking change.

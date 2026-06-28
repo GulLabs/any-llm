@@ -4,7 +4,7 @@
  * @module
  */
 
-import type { Clock } from '@anyllm/core'
+import type { Clock } from '@gullabs/core'
 
 /**
  * A deterministic Clock whose current time is fully controlled by the caller.

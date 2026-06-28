@@ -4,7 +4,7 @@
  * @module
  */
 
-import type { IdGenerator } from '@anyllm/core'
+import type { IdGenerator } from '@gullabs/core'
 
 /**
  * An IdGenerator that returns sequential, assertable IDs.

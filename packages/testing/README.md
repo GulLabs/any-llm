@@ -1,4 +1,4 @@
-# @anyllm/testing
+# @gullabs/testing
 
 Reusable test fakes for any-llm. Lets you drive the full engine pipeline — including the Gemini adapter — without any network calls or mocking frameworks.
 
@@ -19,12 +19,12 @@ Reusable test fakes for any-llm. Lets you drive the full engine pipeline — inc
 
 ```ts
 import { z } from 'zod'
-import { createClient, geminiPricingSource, defineCallSite } from '@anyllm/core'
-import { geminiAdapter } from '@anyllm/google'
+import { createClient, geminiPricingSource, defineCallSite } from '@gullabs/core'
+import { geminiAdapter } from '@gullabs/google'
 import {
   FakeClock, FakeIds, RecordingSink,
   fakeAuth, fakeGeminiResponse, makeFakeGemini,
-} from '@anyllm/testing'
+} from '@gullabs/testing'
 
 const fakeClient = makeFakeGemini(
   fakeGeminiResponse({

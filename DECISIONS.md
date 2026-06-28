@@ -10,7 +10,7 @@ section. Review on return; flag anything to revisit.
 ---
 
 ## Parked questions for Atif (Q)
-- **Q1 — npm name.** "any-llm" collides with mozilla-ai/any-llm. Using `@anyllm/*` scope as a
+- **Q1 — npm name.** "any-llm" collides with mozilla-ai/any-llm. Using `@gullabs/*` scope as a
   working placeholder locally. Pick a real name before any publish. (Non-blocking for build.)
 - **Q2 — Git remote.** Defaulting to **local commits only, no remote, no push** (pushing is
   outward-facing; you OSS later). Tell me the remote when you want it pushed.
@@ -45,14 +45,14 @@ section. Review on return; flag anything to revisit.
   the critics found much of the new machinery broken/contradictory. Per your "stop over-engineering"
   rule, v1 builds the lean `SPEC.md`, not the 117KB design. Kept the cheap good bits (Resolved/Adapter
   contracts, typed LlmError, GROSS token convention, attemptId ledger, frozen micro-USD cost); cut the
-  machinery (Standard Schema, middleware, ModelRegistry, @anyllm/protocol, compile-time ConfigFor<M>,
+  machinery (Standard Schema, middleware, ModelRegistry, @gullabs/protocol, compile-time ConfigFor<M>,
   reresolve, ResultCache, conformance kits, multi-provider/streaming/tools/multimodal).
 - **D7 — v1 scope = 4 goals only:** Gemini Flex; record usage; capture thinking + postmortems; track
   cost. Everything else is a documented seam, not built.
 - **D6 — Seams designed, machinery deferred:** adapter boundary, sink port, usage/cost open maps,
   config resolution, pricing-behind-function. Future providers/streaming/tools drop in without rewrite.
 - **D5 — Transport: own thin adapters over raw SDKs (@google/genai), NOT Vercel AI SDK.** (Your call.)
-- **D4 — Persistence: `UsageSink` port + `@anyllm/drizzle` reference `llm_calls` schema.** Core imports
+- **D4 — Persistence: `UsageSink` port + `@gullabs/drizzle` reference `llm_calls` schema.** Core imports
   no ORM; hosts write to their own DB.
 - **D3 — Costing: frozen micro-USD + `pricingVersion`; pricing snapshot seeded tokenlens-style.**
 - **D2 — Stack: pnpm workspace monorepo, TypeScript strict, vitest, tsup (ESM+CJS+d.ts), Node ≥20.**

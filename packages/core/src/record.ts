@@ -1,8 +1,8 @@
 /**
- * Persisted call record for @anyllm/core.
+ * Persisted call record for @gullabs/core.
  *
  * `LlmCallRecord` is the canonical shape written to the `llm_calls` table by
- * `@anyllm/drizzle` (or any custom `UsageSink`).  `buildRecord` assembles it
+ * `@gullabs/drizzle` (or any custom `UsageSink`).  `buildRecord` assembles it
  * from engine-internal inputs with no I/O.
  *
  * @module

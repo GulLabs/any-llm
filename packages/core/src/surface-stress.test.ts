@@ -1,5 +1,5 @@
 /**
- * Surface-stress / fuzz tests for @anyllm/core — engine level.
+ * Surface-stress / fuzz tests for @gullabs/core — engine level.
  *
  * Hammers the public surface with adversarial inputs and proves invariants
  * hold WITHOUT any network.  Deterministic via mulberry32 PRNG (no Math.random).
@@ -47,7 +47,7 @@ import {
   RecordingSink,
   SignalAwareFakeAdapter,
   fakeAuth,
-} from '@anyllm/testing'
+} from '@gullabs/testing'
 
 // ---------------------------------------------------------------------------
 // Deterministic PRNG — mulberry32 (https://gist.github.com/tommyettinger/46a874533244883189143505d203312c)

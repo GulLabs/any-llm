@@ -1,5 +1,5 @@
 /**
- * Cost computation for @anyllm/core.
+ * Cost computation for @gullabs/core.
  *
  * This module provides `computeCost` (pure function) and
  * `geminiPricingSource` (factory returning a {@link PricingSource} port
@@ -167,7 +167,7 @@ export function computeCost(model: string, usage: Usage, _tier?: string): Cost {
  *
  * @example
  * ```ts
- * import { geminiPricingSource } from '@anyllm/core'
+ * import { geminiPricingSource } from '@gullabs/core'
  *
  * const pricing = geminiPricingSource()
  * const cost = pricing.price('gemini-2.5-pro', usage, 'flex')

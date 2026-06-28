@@ -4,7 +4,7 @@
  * @module
  */
 
-import type { UsageSink, LlmCallRecord } from '@anyllm/core'
+import type { UsageSink, LlmCallRecord } from '@gullabs/core'
 
 /**
  * Options for {@link RecordingSink}.

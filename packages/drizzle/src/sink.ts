@@ -1,4 +1,4 @@
-import type { LlmCallRecord, UsageSink } from '@anyllm/core'
+import type { LlmCallRecord, UsageSink } from '@gullabs/core'
 import { llmCalls } from './schema.js'
 
 /**

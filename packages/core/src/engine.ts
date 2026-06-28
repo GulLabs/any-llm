@@ -1,5 +1,5 @@
 /**
- * Engine for @anyllm/core — the heart of the library.
+ * Engine for @gullabs/core — the heart of the library.
  *
  * {@link createClient} wires together all port implementations and returns a
  * `{ generate, runStructured }` client.  Every LLM call goes through the same

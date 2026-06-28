@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { drizzleUsageSink, llmCalls, type InsertableDb } from './index.js'
-import type { JsonValue, LlmCallRecord } from '@anyllm/core'
+import type { JsonValue, LlmCallRecord } from '@gullabs/core'
 
 type InsertCall = {
   table: unknown

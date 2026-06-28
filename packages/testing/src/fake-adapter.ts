@@ -15,7 +15,7 @@ import type {
   AdapterResult,
   AuthMaterial,
   AuthProvider,
-} from '@anyllm/core'
+} from '@gullabs/core'
 
 // ---------------------------------------------------------------------------
 // FakeAdapter script entry

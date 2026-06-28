@@ -1,5 +1,5 @@
 /**
- * Tests for cost computation in @anyllm/core.
+ * Tests for cost computation in @gullabs/core.
  *
  * Covers:
  * - The codex-mandated 250k/100k/5k/2k scenario (no double-counting).

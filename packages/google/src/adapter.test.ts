@@ -1,7 +1,7 @@
 /**
- * @anyllm/google — adapter contract tests.
+ * @gullabs/google — adapter contract tests.
  *
- * All tests use fakes from @anyllm/testing — NO real network calls.
+ * All tests use fakes from @gullabs/testing — NO real network calls.
  * makeFakeGemini/fakeGeminiResponse/fakeGeminiBlocked are the sole test doubles.
  *
  * @module
@@ -13,8 +13,8 @@ import {
   LlmError,
   createClient,
   geminiPricingSource,
-} from '@anyllm/core'
-import type { ResolvedRequest, AdapterCtx } from '@anyllm/core'
+} from '@gullabs/core'
+import type { ResolvedRequest, AdapterCtx } from '@gullabs/core'
 import {
   fakeGeminiResponse,
   fakeGeminiBlocked,
@@ -23,7 +23,7 @@ import {
   FakeIds,
   RecordingSink,
   fakeAuth,
-} from '@anyllm/testing'
+} from '@gullabs/testing'
 import { geminiAdapter } from './adapter.js'
 import { zodToGeminiSchema } from './schema.js'
 

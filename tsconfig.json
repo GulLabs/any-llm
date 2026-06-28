@@ -4,10 +4,10 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@anyllm/core": ["packages/core/src/index.ts"],
-      "@anyllm/google": ["packages/google/src/index.ts"],
-      "@anyllm/drizzle": ["packages/drizzle/src/index.ts"],
-      "@anyllm/testing": ["packages/testing/src/index.ts"]
+      "@gullabs/core": ["packages/core/src/index.ts"],
+      "@gullabs/google": ["packages/google/src/index.ts"],
+      "@gullabs/drizzle": ["packages/drizzle/src/index.ts"],
+      "@gullabs/testing": ["packages/testing/src/index.ts"]
     }
   },
   "include": ["packages/*/src/**/*.ts"]

@@ -41,7 +41,7 @@ describe('FakeClock', () => {
 
   it('satisfies the Clock interface structurally', () => {
     // Compile-time check: FakeClock is assignable to Clock.
-    const clock: import('@anyllm/core').Clock = new FakeClock(0)
+    const clock: import('@gullabs/core').Clock = new FakeClock(0)
     expect(typeof clock.now()).toBe('number')
   })
 })

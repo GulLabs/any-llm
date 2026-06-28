@@ -8,7 +8,7 @@
  * @module
  */
 
-import type { AuthMaterial } from '@anyllm/core'
+import type { AuthMaterial } from '@gullabs/core'
 
 // ---------------------------------------------------------------------------
 // Response shape — mirrors the @google/genai surface we actually consume
@@ -162,7 +162,7 @@ export interface GeminiGenerateParams {
  *
  * Satisfied by:
  * - The real GoogleGenAI client (via buildGoogleClient wrapper).
- * - FakeGeminiClient from @anyllm/testing (its generateContent accepts unknown).
+ * - FakeGeminiClient from @gullabs/testing (its generateContent accepts unknown).
  */
 export interface GeminiClientLike {
   models: {

@@ -1,5 +1,5 @@
 /**
- * Engine integration tests for @anyllm/core.
+ * Engine integration tests for @gullabs/core.
  *
  * These tests drive createClient against port-level fakes (FakeAdapter,
  * fakeAuth, RecordingSink, FakeClock, FakeIds) with the real geminiPricingSource.
@@ -28,7 +28,7 @@ import {
   RecordingSink,
   SignalAwareFakeAdapter,
   fakeAuth,
-} from '@anyllm/testing'
+} from '@gullabs/testing'
 
 // ---------------------------------------------------------------------------
 // Shared fixtures

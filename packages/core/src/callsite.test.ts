@@ -1,5 +1,5 @@
 /**
- * Call-site tests for @anyllm/core.
+ * Call-site tests for @gullabs/core.
  *
  * Tests defineCallSite + client.runStructured: template rendering, config
  * resolution, schema validation, callSiteId propagation.
@@ -21,7 +21,7 @@ import {
   FakeIds,
   RecordingSink,
   fakeAuth,
-} from '@anyllm/testing'
+} from '@gullabs/testing'
 
 // ---------------------------------------------------------------------------
 // Shared fixtures

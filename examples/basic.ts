@@ -15,8 +15,8 @@ import {
   createClient,
   geminiPricingSource,
   defineCallSite,
-} from '@anyllm/core'
-import { geminiAdapter } from '@anyllm/google'
+} from '@gullabs/core'
+import { geminiAdapter } from '@gullabs/google'
 import {
   FakeClock,
   FakeIds,
@@ -24,7 +24,7 @@ import {
   fakeAuth,
   fakeGeminiResponse,
   makeFakeGemini,
-} from '@anyllm/testing'
+} from '@gullabs/testing'
 
 // ---------------------------------------------------------------------------
 // 1. Define the output schema
@@ -157,7 +157,7 @@ console.log('\n========================================\n')
 // REAL GEMINI CALL — uncomment to use with a live API key and a Drizzle DB
 // ---------------------------------------------------------------------------
 //
-// import { drizzleUsageSink, llmCalls } from '@anyllm/drizzle'
+// import { drizzleUsageSink, llmCalls } from '@gullabs/drizzle'
 // import { drizzle } from 'drizzle-orm/node-postgres'
 // import pg from 'pg'
 //

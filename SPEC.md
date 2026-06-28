@@ -30,19 +30,19 @@ multimodal, no middleware, no registry). Seams are present; machinery is not.
 ## Packages (pnpm workspace monorepo — the seam for optional deps)
 ```
 packages/
-  core/      @anyllm/core      # types, ports, engine, callsite, cost, errors, record  (no provider deps)
-  google/    @anyllm/google    # GeminiAdapter over @google/genai  (peerDep @google/genai)
-  drizzle/   @anyllm/drizzle   # reference llm_calls schema + drizzleUsageSink  (peerDep drizzle-orm)
-  testing/   @anyllm/testing   # FakeClock, FakeIds, RecordingSink, fakeGemini, scenario fixtures
+  core/      @gullabs/core      # types, ports, engine, callsite, cost, errors, record  (no provider deps)
+  google/    @gullabs/google    # GeminiAdapter over @google/genai  (peerDep @google/genai)
+  drizzle/   @gullabs/drizzle   # reference llm_calls schema + drizzleUsageSink  (peerDep drizzle-orm)
+  testing/   @gullabs/testing   # FakeClock, FakeIds, RecordingSink, fakeGemini, scenario fixtures
 ```
 Tooling: TypeScript (strict, `exactOptionalPropertyTypes`), **vitest**, **tsup** (ESM+CJS+d.ts),
 Node ≥20. Provider SDKs are **peerDependencies** (a host that only uses Gemini never pulls others).
 > Naming note (decide before publish): "any-llm" collides with mozilla-ai/any-llm on npm; the
-> `@anyllm/*` scope is a working placeholder. Not a blocker for local build.
+> `@gullabs/*` scope is a working placeholder. Not a blocker for local build.
 
 ---
 
-## Core types (`@anyllm/core`)
+## Core types (`@gullabs/core`)
 
 ```ts
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [k: string]: JsonValue }
@@ -138,7 +138,7 @@ export class LlmError extends Error {
 
 ---
 
-## Ports (`@anyllm/core` — host/companion implements)
+## Ports (`@gullabs/core` — host/companion implements)
 ```ts
 export interface ProviderAdapter {
   id: string                                       // 'google'
@@ -231,7 +231,7 @@ details = { input, cached, output }   // thinking billed at output rate (folded 
 
 ---
 
-## Persisted record (`record.ts`) + reference schema (`@anyllm/drizzle`)
+## Persisted record (`record.ts`) + reference schema (`@gullabs/drizzle`)
 ```ts
 export interface LlmCallRecord {
   recordSchemaVersion: 1
@@ -260,13 +260,13 @@ export interface LlmCallRecord {
   createdAt: string                    // Clock-stamped
 }
 ```
-`@anyllm/drizzle` ships the matching `pgTable('llm_calls', …)` (typed columns + jsonb lanes) and
+`@gullabs/drizzle` ships the matching `pgTable('llm_calls', …)` (typed columns + jsonb lanes) and
 `drizzleUsageSink(db, table)`. Idempotency: insert `onConflictDoNothing` on `attemptId`.
 Core imports no ORM; a host with a different store implements `UsageSink` directly.
 
 ---
 
-## Gemini adapter (`@anyllm/google`)
+## Gemini adapter (`@gullabs/google`)
 - `geminiAdapter(): ProviderAdapter` over `@google/genai` (peerDep), API-key + Vertex-WIF auth.
 - Maps: `serviceTier:'flex'` → Gemini Flex; `reasoning` → `thinkingConfig` (budget for 2.5, level for
   3.x) with a `reasoning-mapping` warning when lossy; `output.schema` → `responseSchema`
@@ -280,7 +280,7 @@ Core imports no ORM; a host with a different store implements `UsageSink` direct
 
 ---
 
-## Testing strategy (`@anyllm/testing` + per-package suites) — NO real Gemini calls
+## Testing strategy (`@gullabs/testing` + per-package suites) — NO real Gemini calls
 - **Fakes:** `FakeClock`, `FakeIds`, `RecordingSink` (captures records), `fakeGemini` (a stub
   `@google/genai` client returning scripted responses incl. usageMetadata with thoughtsTokenCount).
 - **Unit:** cost math (GROSS/net, >200k tier, cached discount, unknown-model→null); error

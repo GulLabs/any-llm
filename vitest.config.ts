@@ -6,10 +6,10 @@ const src = (p: string) => fileURLToPath(new URL(`./packages/${p}/src/index.ts`,
 export default defineConfig({
   resolve: {
     alias: {
-      '@anyllm/core': src('core'),
-      '@anyllm/google': src('google'),
-      '@anyllm/drizzle': src('drizzle'),
-      '@anyllm/testing': src('testing'),
+      '@gullabs/core': src('core'),
+      '@gullabs/google': src('google'),
+      '@gullabs/drizzle': src('drizzle'),
+      '@gullabs/testing': src('testing'),
     },
   },
   test: {

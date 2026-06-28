@@ -1,5 +1,5 @@
 /**
- * Gemini pricing snapshot for @anyllm/core.
+ * Gemini pricing snapshot for @gullabs/core.
  *
  * All rates are in **micro-USD per million tokens** (µUSD/M).
  * To get the cost for N tokens: `cost_µUSD = N * ratePerM / 1_000_000`.

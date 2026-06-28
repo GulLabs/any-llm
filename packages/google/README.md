@@ -1,4 +1,4 @@
-# @anyllm/google
+# @gullabs/google
 
 Gemini provider adapter for any-llm. A thin mapping layer over `@google/genai` that converts `ResolvedRequest` → Gemini SDK params and maps the response back to `AdapterResult`. Never persists, never computes cost, never loops — pure request/response.
 
@@ -17,8 +17,8 @@ Gemini provider adapter for any-llm. A thin mapping layer over `@google/genai` t
 ## Quick example
 
 ```ts
-import { geminiAdapter } from '@anyllm/google'
-import { createClient, geminiPricingSource } from '@anyllm/core'
+import { geminiAdapter } from '@gullabs/google'
+import { createClient, geminiPricingSource } from '@gullabs/core'
 
 const client = createClient({
   adapters: [geminiAdapter()],  // uses buildGoogleClient(auth) at call time

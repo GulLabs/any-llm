@@ -1,5 +1,5 @@
 /**
- * Typed errors for @anyllm/core.
+ * Typed errors for @gullabs/core.
  *
  * Every throw from the engine is an {@link LlmError}.  Adapters classify raw
  * SDK errors into an LlmError; the engine surfaces them to callers.  Side-effect
