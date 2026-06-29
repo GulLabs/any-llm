@@ -121,6 +121,7 @@ export function computeCost(model: string, usage: Usage, tier?: string): Cost {
   if (rates === undefined) {
     return {
       microUsd: null,
+      usd: null,
       pricingVersion,
       confidence: 'estimated',
       details: { input: 0, cached: 0, output: 0 },
@@ -154,6 +155,7 @@ export function computeCost(model: string, usage: Usage, tier?: string): Cost {
 
   return {
     microUsd,
+    usd: microUsd / 1_000_000,
     pricingVersion,
     confidence: 'exact',
     details: {

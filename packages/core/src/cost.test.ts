@@ -354,3 +354,37 @@ describe('property — sum(details) === microUsd', () => {
     expect(failures).toHaveLength(0)
   })
 })
+
+// ---------------------------------------------------------------------------
+// usd convenience field
+// ---------------------------------------------------------------------------
+
+describe('Cost.usd — derived convenience field', () => {
+  it('usd === microUsd / 1e6 for a priced call (round-trip within 1 µUSD)', () => {
+    const usage = makeUsage({ inputTokens: 100_000, outputTokens: 5_000 })
+    const cost = computeCost('gemini-2.5-flash', usage)
+
+    expect(cost.microUsd).not.toBeNull()
+    expect(cost.usd).not.toBeNull()
+    // Round-trip: converting usd back to µUSD must equal the canonical value.
+    expect(Math.round(cost.usd! * 1_000_000)).toBe(cost.microUsd)
+  })
+
+  it('usd === null when model is unpriced (microUsd null)', () => {
+    const usage = makeUsage({ inputTokens: 10_000, outputTokens: 500 })
+    const cost = computeCost('some-future-model-xyz', usage)
+
+    expect(cost.microUsd).toBeNull()
+    expect(cost.usd).toBeNull()
+  })
+
+  it('usd is exact division without rounding (microUsd / 1_000_000)', () => {
+    // Use a model and token count that produces a non-round microUsd.
+    const usage = makeUsage({ inputTokens: 1_000, outputTokens: 333 })
+    const cost = computeCost('gemini-2.5-flash', usage)
+
+    if (cost.microUsd !== null) {
+      expect(cost.usd).toBe(cost.microUsd / 1_000_000)
+    }
+  })
+})

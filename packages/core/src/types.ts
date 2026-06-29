@@ -308,6 +308,12 @@ export interface Cost {
    * captured for later backfill.
    */
   microUsd: number | null
+  /**
+   * Derived convenience view of `microUsd` in whole USD (= `microUsd / 1_000_000`).
+   * Display-only; micro-USD is canonical and is the value persisted.
+   * `null` when unpriced.
+   */
+  usd: number | null
   /** Identifies the pricing snapshot used (e.g. `"gemini-2026-06-27"`). */
   pricingVersion: string
   /**
