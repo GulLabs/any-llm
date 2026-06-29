@@ -119,4 +119,11 @@ export const GEMINI_PRICING: Readonly<Record<string, ModelRates>> = Object.freez
       outputPerM: 18_000_000,
     },
   },
+
+  // ── Gemini 3 Flash (preview) ──  input $0.50, output $3.00, cached $0.05 (90% discount)
+  'gemini-3-flash-preview': {
+    inputPerM: 500_000,
+    cachedPerM: 50_000,
+    outputPerM: 3_000_000,
+  },
 })

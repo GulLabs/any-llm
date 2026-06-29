@@ -843,6 +843,34 @@ export function createClient(config: ClientConfig): Client {
       let cleanup: () => void = () => {}
 
       try {
+        // Step 4b: Per-model config validation — runs BEFORE auth/rate-limiter/adapter.
+        // Validates a projection of resolvedConfig that excludes execution-spine
+        // fields (timeoutMs, providerOptions), keeping only the generation knobs
+        // that belong to the model's schema.
+        if (req.modelDescriptor?.validateConfig !== undefined) {
+          const { temperature, topP, topK, maxOutputTokens, stopSequences, reasoning, serviceTier } =
+            req.config
+          const projection: Record<string, unknown> = { serviceTier }
+          if (temperature !== undefined) projection['temperature'] = temperature
+          if (topP !== undefined) projection['topP'] = topP
+          if (topK !== undefined) projection['topK'] = topK
+          if (maxOutputTokens !== undefined) projection['maxOutputTokens'] = maxOutputTokens
+          if (stopSequences !== undefined) projection['stopSequences'] = stopSequences
+          if (reasoning !== undefined) projection['reasoning'] = reasoning
+
+          const syncOrAsync = req.modelDescriptor.validateConfig['~standard'].validate(projection)
+          const validationResult =
+            syncOrAsync instanceof Promise ? await syncOrAsync : syncOrAsync
+
+          if (validationResult.issues !== undefined) {
+            const message = validationResult.issues.map((i) => i.message).join('; ')
+            throw new LlmError(`Model config validation failed: ${message}`, {
+              kind: 'bad_request',
+              retryable: false,
+            })
+          }
+        }
+
         // Step 5: Resolve adapter (may throw LlmError 'bad_request')
         const adapter = routeFn(req.model, adapters)
         provider = adapter.id

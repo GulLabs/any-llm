@@ -8,6 +8,8 @@
  */
 
 import { LlmError } from './errors.js'
+import type { JsonValue } from './types.js'
+import type { StandardSchemaV1 } from './standard-schema.js'
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -45,7 +47,37 @@ export interface ModelDescriptor {
      * Omitted for models that do not support reasoning.
      */
     reasoningApi?: 'budget' | 'level'
+    /**
+     * Whether the model supports tunable sampling parameters.
+     * - `'tunable'` — temperature, topP, topK are accepted (Gemini 2.5 series).
+     * - `'fixed'`   — sampling is fixed; temperature/topP/topK are rejected
+     *                 at dispatch time (Gemini 3.x series).
+     */
+    sampling?: 'tunable' | 'fixed'
+    /**
+     * Explicit context caching configuration for this model.
+     * `explicit` — whether the model supports explicit cache creation.
+     * `minTokens` — minimum token count required before caching takes effect.
+     */
+    caching?: { explicit: boolean; minTokens: number }
+    /**
+     * `true` when the model supports Google Search grounding.
+     * Per-model grounding support is populated in the grounding batch after verification.
+     */
+    grounding?: boolean
   }
+  /**
+   * Plain JSON Schema object (suitable for client UX form-generation).
+   * Typed as {@link JsonValue} so it can be serialised without any schema lib.
+   */
+  configJsonSchema?: JsonValue
+  /**
+   * Hand-written Standard Schema v1 validator the engine runs before dispatch.
+   * Receives a projection of the resolved config (excluding execution-spine
+   * fields such as `timeoutMs`).  Returns `{ value }` on success or
+   * `{ issues }` on failure.
+   */
+  validateConfig?: StandardSchemaV1
 }
 
 /**
@@ -106,6 +138,116 @@ export function createModelRegistry(descriptors: ModelDescriptor[]): ModelRegist
 }
 
 // ---------------------------------------------------------------------------
+// Gemini config schema + validator factories
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns a plain JSON Schema object for Gemini generation config.
+ *
+ * Common properties (both families): `maxOutputTokens`, `stopSequences`,
+ * `reasoning`, `serviceTier`.
+ *
+ * When `sampling === 'tunable'`, also includes `temperature`, `topP`, `topK`.
+ * When `sampling === 'fixed'`, those three are omitted.
+ *
+ * Typed as {@link JsonValue} — no schema library required.
+ */
+export function makeGeminiConfigSchema(opts: { sampling: 'tunable' | 'fixed' }): JsonValue {
+  const samplingProps: { [k: string]: JsonValue } =
+    opts.sampling === 'tunable'
+      ? {
+          temperature: { type: 'number', minimum: 0, maximum: 2 },
+          topP: { type: 'number' },
+          topK: { type: 'integer' },
+        }
+      : {}
+
+  return {
+    type: 'object',
+    additionalProperties: true,
+    properties: {
+      maxOutputTokens: { type: 'integer' },
+      stopSequences: { type: 'array', items: { type: 'string' } },
+      reasoning: {
+        type: 'object',
+        properties: {
+          effort: { type: 'string', enum: ['none', 'low', 'medium', 'high'] },
+          budgetTokens: { type: 'integer' },
+          includeThoughts: { type: 'boolean' },
+        },
+      },
+      serviceTier: { type: 'string', enum: ['flex', 'standard'] },
+      ...samplingProps,
+    },
+  }
+}
+
+/**
+ * Returns a hand-written Standard Schema v1 validator for Gemini generation
+ * config.
+ *
+ * Behaviour:
+ * - Non-object value → single issue (not a plain object).
+ * - `sampling === 'fixed'` and `temperature` present → issue with path.
+ * - `sampling === 'fixed'` and `topP` present → issue with path.
+ * - `sampling === 'fixed'` and `topK` present → issue with path.
+ * - All issues are collected before returning (no short-circuit).
+ * - `sampling === 'tunable'` → always passes (no further constraints in v1).
+ */
+export function makeGeminiConfigValidator(opts: {
+  sampling: 'tunable' | 'fixed'
+}): StandardSchemaV1 {
+  return {
+    '~standard': {
+      vendor: 'gullabs-gemini',
+      version: 1,
+      validate(value: unknown): StandardSchemaV1.Result<unknown> {
+        if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+          return {
+            issues: [{ message: 'config must be an object' }],
+          }
+        }
+
+        if (opts.sampling === 'tunable') {
+          return { value }
+        }
+
+        // sampling === 'fixed': collect all forbidden-field violations.
+        const cfg = value as Record<string, unknown>
+        const issues: StandardSchemaV1.Issue[] = []
+
+        if (cfg['temperature'] !== undefined) {
+          issues.push({
+            message:
+              'temperature is not supported on this model (Gemini 3.x fixes sampling); remove it.',
+            path: ['temperature'],
+          })
+        }
+        if (cfg['topP'] !== undefined) {
+          issues.push({
+            message:
+              'topP is not supported on this model (Gemini 3.x fixes sampling); remove it.',
+            path: ['topP'],
+          })
+        }
+        if (cfg['topK'] !== undefined) {
+          issues.push({
+            message:
+              'topK is not supported on this model (Gemini 3.x fixes sampling); remove it.',
+            path: ['topK'],
+          })
+        }
+
+        if (issues.length > 0) {
+          return { issues }
+        }
+        return { value }
+      },
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Built-in Gemini descriptor set (derived from GEMINI_PRICING + adapter logic)
 // ---------------------------------------------------------------------------
 
@@ -117,44 +259,108 @@ export function createModelRegistry(descriptors: ModelDescriptor[]): ModelRegist
  * Extend or replace via `ClientConfig.modelRegistry`.
  */
 export const geminiModelDescriptors: ModelDescriptor[] = [
-  // ── Gemini 2.5 series — thinkingBudget API ──────────────────────────────
+  // ── Gemini 2.5 series — thinkingBudget API, tunable sampling ────────────
+  // caching minTokens: Gemini 2.5 series floor is 2048 (Gemini context-caching docs).
   {
     id: 'gemini-2.5-pro',
     provider: 'google',
     pricingFamily: 'gemini-2.5-pro',
-    capabilities: { reasoning: true, structuredOutput: true, reasoningApi: 'budget' },
+    capabilities: {
+      reasoning: true,
+      structuredOutput: true,
+      reasoningApi: 'budget',
+      sampling: 'tunable',
+      caching: { explicit: true, minTokens: 2048 },
+    },
+    configJsonSchema: makeGeminiConfigSchema({ sampling: 'tunable' }),
+    validateConfig: makeGeminiConfigValidator({ sampling: 'tunable' }),
   },
   {
     id: 'gemini-2.5-flash',
     provider: 'google',
     pricingFamily: 'gemini-2.5-flash',
-    capabilities: { reasoning: true, structuredOutput: true, reasoningApi: 'budget' },
+    capabilities: {
+      reasoning: true,
+      structuredOutput: true,
+      reasoningApi: 'budget',
+      sampling: 'tunable',
+      caching: { explicit: true, minTokens: 2048 },
+    },
+    configJsonSchema: makeGeminiConfigSchema({ sampling: 'tunable' }),
+    validateConfig: makeGeminiConfigValidator({ sampling: 'tunable' }),
   },
   {
     id: 'gemini-2.5-flash-lite',
     provider: 'google',
     pricingFamily: 'gemini-2.5-flash-lite',
-    capabilities: { reasoning: true, structuredOutput: true, reasoningApi: 'budget' },
+    capabilities: {
+      reasoning: true,
+      structuredOutput: true,
+      reasoningApi: 'budget',
+      sampling: 'tunable',
+      caching: { explicit: true, minTokens: 2048 },
+    },
+    configJsonSchema: makeGeminiConfigSchema({ sampling: 'tunable' }),
+    validateConfig: makeGeminiConfigValidator({ sampling: 'tunable' }),
   },
 
-  // ── Gemini 3.x series — thinkingLevel API ───────────────────────────────
+  // ── Gemini 3.x series — thinkingLevel API, fixed sampling ───────────────
+  // caching minTokens: Gemini 3.x series floor is 4096 (Gemini context-caching docs).
   {
     id: 'gemini-3.5-flash',
     provider: 'google',
     pricingFamily: 'gemini-3.5-flash',
-    capabilities: { reasoning: true, structuredOutput: true, reasoningApi: 'level' },
+    capabilities: {
+      reasoning: true,
+      structuredOutput: true,
+      reasoningApi: 'level',
+      sampling: 'fixed',
+      caching: { explicit: true, minTokens: 4096 },
+    },
+    configJsonSchema: makeGeminiConfigSchema({ sampling: 'fixed' }),
+    validateConfig: makeGeminiConfigValidator({ sampling: 'fixed' }),
   },
   {
     id: 'gemini-3.1-flash-lite',
     provider: 'google',
     pricingFamily: 'gemini-3.1-flash-lite',
-    capabilities: { reasoning: true, structuredOutput: true, reasoningApi: 'level' },
+    capabilities: {
+      reasoning: true,
+      structuredOutput: true,
+      reasoningApi: 'level',
+      sampling: 'fixed',
+      caching: { explicit: true, minTokens: 4096 },
+    },
+    configJsonSchema: makeGeminiConfigSchema({ sampling: 'fixed' }),
+    validateConfig: makeGeminiConfigValidator({ sampling: 'fixed' }),
   },
   {
     id: 'gemini-3.1-pro-preview',
     provider: 'google',
     pricingFamily: 'gemini-3.1-pro-preview',
-    capabilities: { reasoning: true, structuredOutput: true, reasoningApi: 'level' },
+    capabilities: {
+      reasoning: true,
+      structuredOutput: true,
+      reasoningApi: 'level',
+      sampling: 'fixed',
+      caching: { explicit: true, minTokens: 4096 },
+    },
+    configJsonSchema: makeGeminiConfigSchema({ sampling: 'fixed' }),
+    validateConfig: makeGeminiConfigValidator({ sampling: 'fixed' }),
+  },
+  {
+    id: 'gemini-3-flash-preview',
+    provider: 'google',
+    pricingFamily: 'gemini-3-flash-preview',
+    capabilities: {
+      reasoning: true,
+      structuredOutput: true,
+      reasoningApi: 'level',
+      sampling: 'fixed',
+      caching: { explicit: true, minTokens: 4096 },
+    },
+    configJsonSchema: makeGeminiConfigSchema({ sampling: 'fixed' }),
+    validateConfig: makeGeminiConfigValidator({ sampling: 'fixed' }),
   },
 ]
 
