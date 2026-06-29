@@ -16,7 +16,7 @@ Initial v1 implementation. Scope: four goals, no more — see `SPEC.md`.
 **`@gullabs/core`**
 - `createClient` engine: 12-step pipeline (config resolution → adapter → normalize → validate → cost → record → result)
 - `defineCallSite` — typed, reusable prompt template with `{{var}}` interpolation (anti-injection: values are not re-scanned)
-- `geminiPricingSource` — `PricingSource` implementation backed by the built-in Gemini pricing snapshot (`gemini-2026-06-27`)
+- `geminiPricingSource` — `PricingSource` implementation backed by the built-in Gemini pricing snapshot (`gemini-2026-06-28`)
 - `computeCost` — pure cost function; GROSS token convention enforced; `sum(details) === microUsd` guaranteed by construction
 - Gemini pricing snapshot: 2.5 Pro (tiered >200k), 2.5 Flash, 2.5 Flash-Lite, 3.0 Flash, 3.0 Flash-Lite
 - `buildRecord` — assembles `LlmCallRecord` from engine state; frozen cost, `pricingVersion`, and `reasoningText` included

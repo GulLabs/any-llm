@@ -1,10 +1,12 @@
 # any-llm
 
+[![CI](https://github.com/GulLabs/any-llm/actions/workflows/ci.yml/badge.svg)](https://github.com/GulLabs/any-llm/actions/workflows/ci.yml)
+
 An in-process TypeScript library that standardises LLM calls with first-class observability. v1 delivers four things: **Gemini Flex** calls, **token usage capture** (input / output / cached / thinking), **thinking text capture** and per-call postmortems, and **micro-USD cost tracking** frozen into every persisted record. The design is a thin adapter over raw provider SDKs — no agent loop, no framework, no magic.
 
 ## Install
 
-```
+```bash
 pnpm add @gullabs/core @gullabs/google
 # optional companions:
 pnpm add @gullabs/drizzle    # Drizzle ORM sink for Postgres
@@ -19,18 +21,14 @@ The four v1 goals in ~25 lines:
 
 ```ts
 import { z } from 'zod'
-import { createClient, geminiPricingSource, defineCallSite } from '@gullabs/core'
+import { createClient, geminiPricingSource, defineCallSite, envAuth } from '@gullabs/core'
 import { geminiAdapter } from '@gullabs/google'
 import { drizzleUsageSink, llmCalls } from '@gullabs/drizzle'
 
 // 1. Wire up the client
 const client = createClient({
   adapters: [geminiAdapter()],          // Gemini Flex via @google/genai
-  auth: {
-    async credentials(_provider) {
-      return { apiKey: process.env.GEMINI_API_KEY! }
-    },
-  },
+  auth: envAuth(),                      // reads GEMINI_API_KEY from process.env
   pricing: geminiPricingSource(),       // built-in Gemini pricing snapshot
   sink: drizzleUsageSink(db, llmCalls), // write every call record to your DB
 })
@@ -62,6 +60,26 @@ console.log(result.reasoningText)   // thought summary from the model
 ```
 
 See [`examples/basic.ts`](./examples/basic.ts) for a **fully runnable** version (no network required — uses test fakes). Run it with `pnpm example`.
+
+## Architecture
+
+Every call — whether `generate()` or `runStructured()` — goes through the same 12-step pipeline:
+
+```
+generate() / runStructured()
+  → resolveConfig()               [libDefaults → callSite → opts; deep-merge]
+  → route(model, adapters)        → ProviderAdapter
+  → auth.credentials(provider)    → AuthMaterial
+  → rateLimiter.acquire("provider:model")    [pre-send pacing; propagates on reject]
+  → adapter.run(resolved, ctx)    ← provider SDK (anti-corruption layer)
+  → normalizeUsage()              [enforce GROSS token convention]
+  → zod.safeParse(rawStructured)  [structured output validation; terminal on failure]
+  → pricing.price()               [micro-USD cost; fail-open]
+  → buildRecord() → sink.record() [persist call record; fail-open]
+  → LlmResult
+```
+
+The design is **Ports & Adapters (hexagonal)**: the core engine depends only on port interfaces (`ProviderAdapter`, `UsageSink`, `PricingSource`, `AuthProvider`, `RateLimiter`). All concrete implementations live in separate packages — the engine never imports a provider SDK. Side effects (`sink.record`, `pricing.price`, `telemetry`) are **fail-open**: a broken sink cannot fail an LLM call. The rate-limiter is the one deliberate exception — `acquire` rejection propagates so backpressure is actually enforced.
 
 ## Packages
 
