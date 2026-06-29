@@ -39,16 +39,111 @@ export type CallMetadata = Record<string, JsonValue>
 
 /**
  * A single text part in a message.
- * The `kind` discriminant is kept so the union can be extended
- * (e.g. `image`, `file`, `audio`) without breaking existing consumers.
+ * The `kind` discriminant allows narrowing within the {@link Part} union.
  */
 export type TextPart = { kind: 'text'; text: string }
 
 /**
- * A single message in the conversation history.
- * v1 supports only text parts; the `parts` union is open for future kinds.
+ * An inline binary media part, base64-encoded.
+ *
+ * `data` must be a **raw base64 string** with **no** `data:<mime>;base64,`
+ * prefix — the prefix is stripped/rejected by most provider SDKs.
+ *
+ * `mediaResolution` is a normalised cross-provider hint for image/video
+ * detail level (`'low'` reduces tokens; `'high'` maximises fidelity).
+ * Adapters map this to the closest provider-specific setting and emit an
+ * {@link Warning | unsupported-setting} warning when the model cannot honour it.
  */
-export type Message = { role: 'user' | 'assistant'; parts: TextPart[] }
+export type InlineMediaPart = {
+  kind: 'inline-media'
+  /** IANA media type, e.g. `"image/png"`, `"video/mp4"`. */
+  mimeType: string
+  /**
+   * Raw base64-encoded bytes — **no** `data:…;base64,` prefix.
+   * Most provider SDKs expect bare base64.
+   */
+  data: string
+  /**
+   * Cross-provider media detail hint.
+   * `'low'` → fewer tokens / lower cost.
+   * `'medium'` → balanced (provider default when omitted).
+   * `'high'` → highest fidelity / most tokens.
+   * Adapters emit `unsupported-setting` when the model cannot honour the hint.
+   */
+  mediaResolution?: 'low' | 'medium' | 'high'
+}
+
+/**
+ * A provider-hosted file reference part.
+ *
+ * Used when a file has already been uploaded to the provider's file-storage
+ * service (e.g. Gemini File API).  The provider dereferences `uri` server-side,
+ * so no binary payload is sent with the request.
+ *
+ * `mediaResolution` behaves identically to {@link InlineMediaPart.mediaResolution}.
+ */
+export type FileUriPart = {
+  kind: 'file-uri'
+  /** Provider-assigned URI, e.g. `"https://generativelanguage.googleapis.com/v1beta/files/…"`. */
+  uri: string
+  /** IANA media type of the referenced file, e.g. `"image/jpeg"`, `"video/mp4"`. */
+  mimeType: string
+  /**
+   * Cross-provider media detail hint — see {@link InlineMediaPart.mediaResolution}.
+   * Adapters emit `unsupported-setting` when the model cannot honour the hint.
+   */
+  mediaResolution?: 'low' | 'medium' | 'high'
+}
+
+/**
+ * Discriminated union of all supported message part kinds.
+ * Switch on `part.kind` for exhaustive narrowing.
+ */
+export type Part = TextPart | InlineMediaPart | FileUriPart
+
+// ---------------------------------------------------------------------------
+// Part type guards
+// ---------------------------------------------------------------------------
+
+/**
+ * Narrows `part` to {@link TextPart}.
+ * @example
+ * ```ts
+ * if (isTextPart(p)) console.log(p.text)
+ * ```
+ */
+export function isTextPart(part: Part): part is TextPart {
+  return part.kind === 'text'
+}
+
+/**
+ * Narrows `part` to {@link InlineMediaPart}.
+ * @example
+ * ```ts
+ * if (isInlineMediaPart(p)) sendBase64(p.mimeType, p.data)
+ * ```
+ */
+export function isInlineMediaPart(part: Part): part is InlineMediaPart {
+  return part.kind === 'inline-media'
+}
+
+/**
+ * Narrows `part` to {@link FileUriPart}.
+ * @example
+ * ```ts
+ * if (isFileUriPart(p)) useProviderUri(p.uri)
+ * ```
+ */
+export function isFileUriPart(part: Part): part is FileUriPart {
+  return part.kind === 'file-uri'
+}
+
+/**
+ * A single message in the conversation history.
+ * `parts` is a heterogeneous array of {@link Part} values — text, inline
+ * media, and provider-hosted file references can be freely mixed.
+ */
+export type Message = { role: 'user' | 'assistant'; parts: Part[] }
 
 /**
  * Intent for the model's internal reasoning / chain-of-thought capability.
@@ -117,7 +212,10 @@ export interface LlmRequest<S extends StandardSchemaV1 = StandardSchemaV1> {
   model: string
   /** Optional system instruction prepended to the conversation. */
   system?: string
-  /** Conversation history.  v1 supports text parts only. */
+  /**
+   * Conversation history.
+   * Parts may be text, inline media (base64), or provider-hosted file references.
+   */
   messages: Message[]
   /**
    * When present, the adapter requests structured JSON output and the engine

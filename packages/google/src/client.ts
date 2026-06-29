@@ -80,10 +80,60 @@ export interface GeminiResponseShape {
 // Request / config shape — what the adapter sends to generateContent
 // ---------------------------------------------------------------------------
 
+/**
+ * Per-part media-resolution hint emitted on inline/file parts.
+ * Real type: @google/genai `PartMediaResolution`; `level` values come from
+ * the `PartMediaResolutionLevel` string enum (we only emit the LOW/MEDIUM/HIGH
+ * subset our normalized `mediaResolution` maps to).
+ */
+export interface GeminiPartMediaResolution {
+  level?: 'MEDIA_RESOLUTION_LOW' | 'MEDIA_RESOLUTION_MEDIUM' | 'MEDIA_RESOLUTION_HIGH'
+}
+
 /** A text part in a content object we construct. */
-export interface GeminiContentPart {
+export interface GeminiTextContentPart {
   text: string
 }
+
+/**
+ * An inline binary media part in a content object we construct.
+ * `data` must be raw base64 — no `data:…;base64,` prefix.
+ */
+export interface GeminiInlineDataContentPart {
+  inlineData: {
+    /** IANA media type, e.g. `"image/png"`. */
+    mimeType: string
+    /** Raw base64-encoded bytes (no data-URL prefix). */
+    data: string
+  }
+  /** Optional per-part media-resolution hint (real field: `Part.mediaResolution`). */
+  mediaResolution?: GeminiPartMediaResolution
+}
+
+/**
+ * A provider-hosted file reference part in a content object we construct.
+ * The Gemini service dereferences `fileUri` server-side.
+ */
+export interface GeminiFileDataContentPart {
+  fileData: {
+    /** IANA media type of the referenced file. */
+    mimeType: string
+    /** Provider-assigned file URI, e.g. from the Gemini File API. */
+    fileUri: string
+  }
+  /** Optional per-part media-resolution hint (real field: `Part.mediaResolution`). */
+  mediaResolution?: GeminiPartMediaResolution
+}
+
+/**
+ * Union of all part shapes the adapter may produce for `GeminiContent.parts`.
+ * Each member (including the optional per-part `mediaResolution`) is a
+ * structural subset of the real `@google/genai` `Part` type for the fields we use.
+ */
+export type GeminiContentPart =
+  | GeminiTextContentPart
+  | GeminiInlineDataContentPart
+  | GeminiFileDataContentPart
 
 /** A content object (message) we construct. */
 export interface GeminiContent {

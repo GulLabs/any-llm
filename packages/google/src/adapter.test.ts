@@ -1113,3 +1113,241 @@ describe('Standard Schema — non-Zod vendor (e.g. valibot)', () => {
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// 16. Multimodal part mapping
+// ---------------------------------------------------------------------------
+
+describe('multimodal part mapping', () => {
+  /** Extract the contents array from a captured fake-client call. */
+  function getContents(
+    call: unknown,
+  ): Array<{ role: string; parts: unknown[] }> {
+    return (call as { contents: Array<{ role: string; parts: unknown[] }> })
+      .contents
+  }
+
+  it('maps a text part to { text }', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await adapter.run(
+      makeResolvedReq({
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hello' }] }],
+      }),
+      FAKE_CTX,
+    )
+
+    const parts = getContents(client.calls[0])[0]!.parts
+    expect(parts).toEqual([{ text: 'hello' }])
+  })
+
+  it('maps an inline-media part to { inlineData: { mimeType, data } }', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await adapter.run(
+      makeResolvedReq({
+        messages: [
+          {
+            role: 'user',
+            parts: [
+              { kind: 'inline-media', mimeType: 'image/png', data: 'base64abc' },
+            ],
+          },
+        ],
+      }),
+      FAKE_CTX,
+    )
+
+    const parts = getContents(client.calls[0])[0]!.parts
+    expect(parts).toEqual([
+      { inlineData: { mimeType: 'image/png', data: 'base64abc' } },
+    ])
+  })
+
+  it('maps a file-uri part to { fileData: { mimeType, fileUri } }', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await adapter.run(
+      makeResolvedReq({
+        messages: [
+          {
+            role: 'user',
+            parts: [
+              {
+                kind: 'file-uri',
+                uri: 'https://generativelanguage.googleapis.com/v1beta/files/abc',
+                mimeType: 'video/mp4',
+              },
+            ],
+          },
+        ],
+      }),
+      FAKE_CTX,
+    )
+
+    const parts = getContents(client.calls[0])[0]!.parts
+    expect(parts).toEqual([
+      {
+        fileData: {
+          mimeType: 'video/mp4',
+          fileUri: 'https://generativelanguage.googleapis.com/v1beta/files/abc',
+        },
+      },
+    ])
+  })
+
+  it('preserves mixed part order in one message', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await adapter.run(
+      makeResolvedReq({
+        messages: [
+          {
+            role: 'user',
+            parts: [
+              { kind: 'text', text: 'describe this image:' },
+              { kind: 'inline-media', mimeType: 'image/jpeg', data: 'b64data' },
+              {
+                kind: 'file-uri',
+                uri: 'gs://bucket/file.mp4',
+                mimeType: 'video/mp4',
+              },
+              { kind: 'text', text: 'and this video' },
+            ],
+          },
+        ],
+      }),
+      FAKE_CTX,
+    )
+
+    const parts = getContents(client.calls[0])[0]!.parts
+    expect(parts).toEqual([
+      { text: 'describe this image:' },
+      { inlineData: { mimeType: 'image/jpeg', data: 'b64data' } },
+      { fileData: { mimeType: 'video/mp4', fileUri: 'gs://bucket/file.mp4' } },
+      { text: 'and this video' },
+    ])
+  })
+
+  it.each([
+    ['low', 'MEDIA_RESOLUTION_LOW'],
+    ['medium', 'MEDIA_RESOLUTION_MEDIUM'],
+    ['high', 'MEDIA_RESOLUTION_HIGH'],
+  ] as const)(
+    'maps inline-media mediaResolution %s → %s on the emitted part',
+    async (level, expected) => {
+      const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+      const adapter = geminiAdapter({ client })
+
+      const result = await adapter.run(
+        makeResolvedReq({
+          messages: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  kind: 'inline-media',
+                  mimeType: 'image/png',
+                  data: 'abc',
+                  mediaResolution: level,
+                },
+              ],
+            },
+          ],
+        }),
+        FAKE_CTX,
+      )
+
+      const parts = getContents(client.calls[0])[0]!.parts
+      expect(parts[0]).toMatchObject({ mediaResolution: { level: expected } })
+      expect(result.warnings.filter((w) => w.type === 'unsupported-setting')).toHaveLength(0)
+    },
+  )
+
+  it.each([
+    ['low', 'MEDIA_RESOLUTION_LOW'],
+    ['medium', 'MEDIA_RESOLUTION_MEDIUM'],
+    ['high', 'MEDIA_RESOLUTION_HIGH'],
+  ] as const)(
+    'maps file-uri mediaResolution %s → %s on the emitted part',
+    async (level, expected) => {
+      const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+      const adapter = geminiAdapter({ client })
+
+      const result = await adapter.run(
+        makeResolvedReq({
+          messages: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  kind: 'file-uri',
+                  uri: 'gs://bucket/file.mp4',
+                  mimeType: 'video/mp4',
+                  mediaResolution: level,
+                },
+              ],
+            },
+          ],
+        }),
+        FAKE_CTX,
+      )
+
+      const parts = getContents(client.calls[0])[0]!.parts
+      expect(parts[0]).toMatchObject({ mediaResolution: { level: expected } })
+      expect(result.warnings.filter((w) => w.type === 'unsupported-setting')).toHaveLength(0)
+    },
+  )
+
+  it('does not emit warning when mediaResolution is absent', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await adapter.run(
+      makeResolvedReq({
+        messages: [
+          {
+            role: 'user',
+            parts: [
+              { kind: 'inline-media', mimeType: 'image/png', data: 'abc' },
+            ],
+          },
+        ],
+      }),
+      FAKE_CTX,
+    )
+
+    const parts = getContents(client.calls[0])[0]!.parts
+    expect(parts).toEqual([{ inlineData: { mimeType: 'image/png', data: 'abc' } }])
+    expect(parts[0]).not.toHaveProperty('mediaResolution')
+  })
+
+  it('omits mediaResolution when unset on file-uri', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await adapter.run(
+      makeResolvedReq({
+        messages: [
+          {
+            role: 'user',
+            parts: [
+              { kind: 'file-uri', uri: 'gs://b/f', mimeType: 'image/jpeg' },
+            ],
+          },
+        ],
+      }),
+      FAKE_CTX,
+    )
+
+    const parts = getContents(client.calls[0])[0]!.parts
+    expect(parts).toEqual([
+      { fileData: { mimeType: 'image/jpeg', fileUri: 'gs://b/f' } },
+    ])
+    expect(parts[0]).not.toHaveProperty('mediaResolution')
+  })
+})

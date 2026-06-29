@@ -6,7 +6,7 @@
  * vitest run time if the type shapes change.
  */
 
-import { describe, it, expectTypeOf } from 'vitest'
+import { describe, it, expect, expectTypeOf } from 'vitest'
 import type {
   LlmResult,
   Usage,
@@ -15,10 +15,14 @@ import type {
   FinishReason,
   JsonValue,
   TextPart,
+  InlineMediaPart,
+  FileUriPart,
+  Part,
   Message,
   GenConfig,
   ReasoningIntent,
 } from './types.js'
+import { isTextPart, isInlineMediaPart, isFileUriPart } from './types.js'
 
 describe('LlmResult<T> type shape', () => {
   it('output is T | undefined for a given T', () => {
@@ -139,12 +143,75 @@ describe('TextPart type shape', () => {
   })
 })
 
+describe('InlineMediaPart type shape', () => {
+  it('has kind, mimeType, data, and optional mediaResolution', () => {
+    expectTypeOf<InlineMediaPart>().toEqualTypeOf<{
+      kind: 'inline-media'
+      mimeType: string
+      data: string
+      mediaResolution?: 'low' | 'medium' | 'high'
+    }>()
+  })
+})
+
+describe('FileUriPart type shape', () => {
+  it('has kind, uri, mimeType, and optional mediaResolution', () => {
+    expectTypeOf<FileUriPart>().toEqualTypeOf<{
+      kind: 'file-uri'
+      uri: string
+      mimeType: string
+      mediaResolution?: 'low' | 'medium' | 'high'
+    }>()
+  })
+})
+
+describe('Part type shape', () => {
+  it('is the union of TextPart | InlineMediaPart | FileUriPart', () => {
+    expectTypeOf<Part>().toEqualTypeOf<TextPart | InlineMediaPart | FileUriPart>()
+  })
+})
+
 describe('Message type shape', () => {
-  it('has role and parts', () => {
+  it('has role and parts (Part[] — heterogeneous union)', () => {
     expectTypeOf<Message>().toEqualTypeOf<{
       role: 'user' | 'assistant'
-      parts: TextPart[]
+      parts: Part[]
     }>()
+  })
+})
+
+describe('part type guards', () => {
+  it('isTextPart narrows to TextPart', () => {
+    const p: Part = { kind: 'text', text: 'hello' }
+    if (isTextPart(p)) {
+      expectTypeOf(p).toEqualTypeOf<TextPart>()
+      expect(p.text).toBe('hello')
+    }
+    expect(isTextPart(p)).toBe(true)
+    expect(isTextPart({ kind: 'inline-media', mimeType: 'image/png', data: 'abc' })).toBe(false)
+    expect(isTextPart({ kind: 'file-uri', uri: 'gs://b/f', mimeType: 'image/jpeg' })).toBe(false)
+  })
+
+  it('isInlineMediaPart narrows to InlineMediaPart', () => {
+    const p: Part = { kind: 'inline-media', mimeType: 'image/png', data: 'abc123' }
+    if (isInlineMediaPart(p)) {
+      expectTypeOf(p).toEqualTypeOf<InlineMediaPart>()
+      expect(p.data).toBe('abc123')
+    }
+    expect(isInlineMediaPart(p)).toBe(true)
+    expect(isInlineMediaPart({ kind: 'text', text: 'hi' })).toBe(false)
+    expect(isInlineMediaPart({ kind: 'file-uri', uri: 'gs://b/f', mimeType: 'image/jpeg' })).toBe(false)
+  })
+
+  it('isFileUriPart narrows to FileUriPart', () => {
+    const p: Part = { kind: 'file-uri', uri: 'gs://bucket/file', mimeType: 'video/mp4' }
+    if (isFileUriPart(p)) {
+      expectTypeOf(p).toEqualTypeOf<FileUriPart>()
+      expect(p.uri).toBe('gs://bucket/file')
+    }
+    expect(isFileUriPart(p)).toBe(true)
+    expect(isFileUriPart({ kind: 'text', text: 'hi' })).toBe(false)
+    expect(isFileUriPart({ kind: 'inline-media', mimeType: 'image/png', data: 'abc' })).toBe(false)
   })
 })
 

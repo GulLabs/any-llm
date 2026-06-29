@@ -19,6 +19,9 @@ export type {
   JsonValue,
   CallMetadata,
   TextPart,
+  InlineMediaPart,
+  FileUriPart,
+  Part,
   Message,
   ReasoningIntent,
   GenConfig,
@@ -29,6 +32,7 @@ export type {
   Cost,
   LlmResult,
 } from './types.js'
+export { isTextPart, isInlineMediaPart, isFileUriPart } from './types.js'
 
 // Errors
 export type { LlmErrorKind, LlmErrorOptions, HttpClassification } from './errors.js'

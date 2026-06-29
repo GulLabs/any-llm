@@ -18,6 +18,7 @@ import type {
   FinishReason,
   JsonValue,
   AuthMaterial,
+  Part,
 } from '@gullabs/core'
 import type { ZodTypeAny } from 'zod'
 import { buildGoogleClient } from './client.js'
@@ -25,6 +26,7 @@ import type {
   GeminiClientLike,
   GeminiGenerateConfig,
   GeminiContent,
+  GeminiContentPart,
   GeminiResponseShape,
   GeminiUsageMetadataShape,
 } from './client.js'
@@ -65,6 +67,29 @@ function mapFinishReason(raw: string | undefined): FinishReason | undefined {
       return 'content_filter'
     default:
       return 'other'
+  }
+}
+
+// ---------------------------------------------------------------------------
+// mediaResolution mapping (normalized hint → Gemini PartMediaResolutionLevel)
+// ---------------------------------------------------------------------------
+
+/**
+ * Map our normalized cross-provider `mediaResolution` hint to the Gemini
+ * `PartMediaResolutionLevel` string-enum value emitted on `Part.mediaResolution`.
+ */
+function mapMediaResolution(
+  res: 'low' | 'medium' | 'high',
+): 'MEDIA_RESOLUTION_LOW' | 'MEDIA_RESOLUTION_MEDIUM' | 'MEDIA_RESOLUTION_HIGH' {
+  switch (res) {
+    case 'low':
+      return 'MEDIA_RESOLUTION_LOW'
+    case 'medium':
+      return 'MEDIA_RESOLUTION_MEDIUM'
+    case 'high':
+      return 'MEDIA_RESOLUTION_HIGH'
+    default:
+      return assertNever(res)
   }
 }
 
@@ -163,11 +188,55 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       // ------------------------------------------------------------------
       // 1. Map messages → contents
       // ------------------------------------------------------------------
+
+      /**
+       * Map a single {@link Part} to its Gemini SDK equivalent.
+       *
+       * - `text`          → `{ text }`
+       * - `inline-media`  → `{ inlineData: { mimeType, data } }` + optional `mediaResolution`
+       * - `file-uri`      → `{ fileData: { mimeType, fileUri } }` + optional `mediaResolution`
+       *
+       * `mediaResolution` IS supported as a per-part field by the Gemini SDK
+       * (`Part.mediaResolution`).  The normalised value is mapped to the
+       * `PartMediaResolutionLevel` string enum before emission.
+       */
+      const mapPart = (p: Part): GeminiContentPart => {
+        switch (p.kind) {
+          case 'text':
+            return { text: p.text }
+
+          case 'inline-media': {
+            return {
+              inlineData: {
+                mimeType: p.mimeType,
+                data: p.data,
+              },
+              ...(p.mediaResolution !== undefined
+                ? { mediaResolution: { level: mapMediaResolution(p.mediaResolution) } }
+                : {}),
+            }
+          }
+
+          case 'file-uri': {
+            return {
+              fileData: {
+                mimeType: p.mimeType,
+                fileUri: p.uri,
+              },
+              ...(p.mediaResolution !== undefined
+                ? { mediaResolution: { level: mapMediaResolution(p.mediaResolution) } }
+                : {}),
+            }
+          }
+
+          default:
+            return assertNever(p)
+        }
+      }
+
       const contents: GeminiContent[] = req.messages.map((msg) => ({
         role: msg.role === 'assistant' ? 'model' : 'user',
-        parts: msg.parts
-          .filter((p): p is { kind: 'text'; text: string } => p.kind === 'text')
-          .map((p) => ({ text: p.text })),
+        parts: msg.parts.map(mapPart),
       }))
 
       // ------------------------------------------------------------------
