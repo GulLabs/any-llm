@@ -22,3 +22,12 @@ export type { GeminiClientLike } from './client.js'
 export { buildGoogleClient } from './client.js'
 export { zodToGeminiSchema } from './schema.js'
 export type { GeminiSchema } from './schema.js'
+export type { GoogleFileHandle, GoogleFileStoreOptions, GeminiFilesClientLike } from './file-store.js'
+export { GoogleFileStore } from './file-store.js'
+export type {
+  GoogleCacheHandle,
+  CacheKey,
+  GoogleCacheStoreOptions,
+  GeminiCachesClientLike,
+} from './cache-store.js'
+export { GoogleCacheStore } from './cache-store.js'
