@@ -39,6 +39,8 @@ const GOOD_USAGE: Usage = {
 }
 
 const DUMMY_RESULT: LlmResult = {
+  callId: 'test-call-id',
+  attemptId: 'test-attempt-id',
   usage: GOOD_USAGE,
   model: 'gemini-2.5-pro',
   latencyMs: 0,
@@ -49,7 +51,6 @@ const DUMMY_RESULT: LlmResult = {
 function makeCtx(signal?: AbortSignal): EngineCtx {
   return {
     callId: 'c1',
-    model: 'gemini-2.5-pro',
     clock: NOOP_CLOCK,
     logger: NOOP_LOGGER,
     ...(signal !== undefined ? { signal } : {}),

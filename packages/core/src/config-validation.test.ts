@@ -89,7 +89,7 @@ async function expectBadRequest(
   config: Parameters<typeof client.generate>[0]['config'],
 ): Promise<LlmError> {
   try {
-    await client.generate({ model, messages: MESSAGES, config })
+    await client.generate({ model, messages: MESSAGES, ...(config !== undefined ? { config } : {}) })
     throw new Error('expected generate() to throw, but it resolved')
   } catch (e) {
     expect(e).toBeInstanceOf(LlmError)

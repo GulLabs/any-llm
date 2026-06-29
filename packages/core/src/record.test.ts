@@ -25,6 +25,7 @@ function makeUsage(overrides: Partial<Usage> = {}): Usage {
 function makeCost(overrides: Partial<Cost> = {}): Cost {
   return {
     microUsd: 1500,
+    usd: 1500 / 1_000_000,
     pricingVersion: 'gemini-2026-06-27',
     confidence: 'exact',
     details: { input: 1000, cached: 0, output: 500 },

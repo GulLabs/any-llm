@@ -301,7 +301,7 @@ describe('GoogleFileStore', () => {
 
       expect(consoleSpy).toHaveBeenCalledOnce()
       // The raw Error object must NOT appear as any argument
-      const callArgs = consoleSpy.mock.calls[0]
+      const callArgs = consoleSpy.mock.calls[0]!
       expect(callArgs).not.toContain(rawErr)
       // The second arg (sanitized message) must be a string, not an object
       expect(typeof callArgs[1]).toBe('string')
