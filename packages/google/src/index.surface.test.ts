@@ -12,8 +12,8 @@ import { describe, it, expect } from 'vitest'
 import { FLEX_DEFAULT_TIMEOUT_MS, TRANSPORT_TIMEOUT_BUFFER_MS } from './index.js'
 
 describe('@gullabs/google package surface: timeout constants', () => {
-  it('FLEX_DEFAULT_TIMEOUT_MS is exported and equals 900_000', () => {
-    expect(FLEX_DEFAULT_TIMEOUT_MS).toBe(900_000)
+  it('FLEX_DEFAULT_TIMEOUT_MS is exported and equals 1_500_000', () => {
+    expect(FLEX_DEFAULT_TIMEOUT_MS).toBe(1_500_000)
   })
 
   it('TRANSPORT_TIMEOUT_BUFFER_MS is exported and equals 5_000', () => {

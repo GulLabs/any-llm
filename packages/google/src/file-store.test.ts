@@ -310,6 +310,81 @@ describe('GoogleFileStore', () => {
     }
   })
 
+  // Abort signal tests (FIX 6)
+  it('rejects with kind aborted when AbortSignal is already aborted before polling starts', async () => {
+    const client = makeClient({
+      upload: vi.fn().mockResolvedValue({
+        name: 'files/abc123',
+        uri: 'https://example.com/files/abc123',
+        mimeType: 'image/png',
+        state: 'PROCESSING',
+      }),
+      get: vi.fn().mockResolvedValue({
+        state: 'PROCESSING',
+        name: 'files/abc123',
+        uri: 'https://example.com/files/abc123',
+        mimeType: 'image/png',
+      }),
+    })
+
+    const controller = new AbortController()
+    controller.abort() // Already aborted before upload call
+
+    const store = new GoogleFileStore({ auth: fakeAuth, client, sleep: fastSleep })
+    const err = await store
+      .upload(new Uint8Array([1]), 'image/png', { signal: controller.signal })
+      .catch((e) => e)
+
+    expect(err).toBeInstanceOf(LlmError)
+    expect((err as LlmError).kind).toBe('aborted')
+    // get should NOT have been called — aborted before first poll
+    expect(client.get).not.toHaveBeenCalled()
+  })
+
+  it('rejects with kind aborted and stops polling when signal fires mid-PROCESSING', async () => {
+    const client = makeClient({
+      upload: vi.fn().mockResolvedValue({
+        name: 'files/abc123',
+        uri: 'https://example.com/files/abc123',
+        mimeType: 'image/png',
+        state: 'PROCESSING',
+      }),
+      get: vi.fn().mockResolvedValue({
+        state: 'PROCESSING',
+        name: 'files/abc123',
+        uri: 'https://example.com/files/abc123',
+        mimeType: 'image/png',
+      }),
+    })
+
+    const controller = new AbortController()
+
+    // Sleep that aborts the controller on its first call, simulating mid-poll abort
+    let sleepCount = 0
+    const abortingSleep = (): Promise<void> => {
+      sleepCount++
+      if (sleepCount === 1) controller.abort()
+      return Promise.resolve()
+    }
+
+    const store = new GoogleFileStore({
+      auth: fakeAuth,
+      client,
+      sleep: abortingSleep,
+      poll: { timeoutMs: 300_000, intervalMs: 0 },
+    })
+
+    const err = await store
+      .upload(new Uint8Array([1]), 'image/png', { signal: controller.signal })
+      .catch((e) => e)
+
+    expect(err).toBeInstanceOf(LlmError)
+    expect((err as LlmError).kind).toBe('aborted')
+    // Polling stopped — get was called at most once (the one poll after first sleep)
+    // before the next iteration detects the abort
+    expect(client.get).toHaveBeenCalledTimes(1)
+  })
+
   // 7. deleteAll continues past individual failures
   it('deleteAll continues past individual failures and calls onDeleteError for each', async () => {
     const onDeleteError = vi.fn()

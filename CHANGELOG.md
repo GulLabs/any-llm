@@ -7,6 +7,56 @@ This project does not use semantic versioning yet — it will adopt semver on fi
 
 ---
 
+## [Unreleased] / 0.2.0 — next
+
+### Security
+
+**`@gullabs/core`**
+- `redactSecrets(text)` — new exported utility that scrubs Google API keys (`AIza…` prefix),
+  HTTP Bearer tokens, and common sensitive URL query-parameter values (`key=`, `api_key=`,
+  `access_token=`, `token=`, `signature=`, `sig=`, `X-Goog-*`) from strings. Best-effort; not
+  full DLP. Pure function with no dependencies.
+- `buildRecord` now applies `redactSecrets` to `errorMessage` before persisting the audit record.
+  The live `LlmError` thrown to the caller is **not** modified — only the persisted copy is
+  redacted. This prevents API keys in signed-URL error messages from being written to the sink.
+
+### Changed
+
+**`@gullabs/core`**
+- `retryMiddleware`: when `req.config.timeoutMs` is set it is now enforced as a **true
+  overall wall-clock ceiling** across all retry attempts and back-off sleep periods.  Previously
+  `timeoutMs` was a per-attempt budget only.  Specifically:
+  - A new attempt is refused (throws `LlmError('timeout', retryable: false)`) when the remaining
+    budget is ≤ 0 before the attempt would start.
+  - The remaining budget is passed as the per-attempt `config.timeoutMs` so the engine's
+    `AbortSignal` deadline shrinks on every attempt.
+  - Back-off sleep is clamped to the remaining budget so the sleep never overshoots the ceiling.
+  - When `timeoutMs` is **not** set, behavior is unchanged (fully backward-compatible).
+- `retryMiddleware` opts object gains an optional `now?: () => number` injectable clock for
+  deterministic unit testing of deadline logic.
+- `GenConfig.timeoutMs` JSDoc updated to document the overall-ceiling semantics when the retry
+  middleware is installed.
+
+### Fixed
+
+**`@gullabs/core`**
+- `geminiModelDescriptors`: Gemini 3.x models (`gemini-3.5-flash`, `gemini-3.1-flash-lite`,
+  `gemini-3.1-pro-preview`, `gemini-3-flash-preview`) had `caching.minTokens: 4096`. Corrected to
+  `2048` — Google's explicit-cache minimum is 2048 tokens for ALL models; there is no documented
+  4096 floor specific to 3.x.
+
+**`@gullabs/google`**
+- Flex-tier `AbortSignal` enforcement: the adapter now arms a client-side `AbortSignal` at the
+  effective timeout to guard against `@google/genai` SDK bug #1277 where `httpOptions.timeout` may
+  be a no-op for `generateContent`. Flex calls without an explicit `timeoutMs` use
+  `FLEX_DEFAULT_TIMEOUT_MS` (1 500 000 ms / 25 min) as the signal deadline.
+- Vertex Flex header workaround: on the Vertex AI path with `serviceTier: 'flex'`, the adapter
+  injects `X-Vertex-AI-LLM-Request-Type: shared` and `X-Vertex-AI-LLM-Shared-Request-Type: flex`
+  headers. This mitigates `@google/genai` SDK bug #1468 where `serviceTier` in the body is silently
+  ignored on Vertex (Flex calls were billed at standard rate).
+
+---
+
 ## [Unreleased] / 0.1.0 — 2026-06-29
 
 ### Breaking
@@ -56,7 +106,7 @@ This project does not use semantic versioning yet — it will adopt semver on fi
   `result.providerMetadata['groundingMetadata']`; `promptFeedback` captured alongside it.
 - Grounding + schema conflict guard: adapter throws `LlmError('bad_request')` when
   `googleSearch` tool and `output.schema` are both set.
-- `FLEX_DEFAULT_TIMEOUT_MS` (900 000) and `TRANSPORT_TIMEOUT_BUFFER_MS` (5 000) exported from
+- `FLEX_DEFAULT_TIMEOUT_MS` (1 500 000) and `TRANSPORT_TIMEOUT_BUFFER_MS` (5 000) exported from
   `@gullabs/google`.
 - Automatic `httpOptions.timeout` on every request: `FLEX_DEFAULT_TIMEOUT_MS` for Flex calls
   without `timeoutMs`; `timeoutMs + TRANSPORT_TIMEOUT_BUFFER_MS` when `timeoutMs` is set.

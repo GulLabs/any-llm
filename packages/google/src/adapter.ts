@@ -391,6 +391,39 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       }
 
       // ------------------------------------------------------------------
+      // 5c. Re-assert fixed-sampling invariant AFTER providerOptions merge.
+      //     providerOptions.google is a last-write-wins escape hatch, but on
+      //     Gemini 3.x (sampling: 'fixed') the API rejects temperature/topP/topK
+      //     unconditionally.  Strip them and warn so the call is not rejected,
+      //     but DO NOT throw — providerOptions is intentional caller override
+      //     territory; strip+warn is the correct policy.
+      // ------------------------------------------------------------------
+      if (req.modelDescriptor?.capabilities?.sampling === 'fixed') {
+        const droppedSampling: string[] = []
+        if ('temperature' in config) {
+          delete (config as Record<string, unknown>).temperature
+          droppedSampling.push('temperature')
+        }
+        if ('topP' in config) {
+          delete (config as Record<string, unknown>).topP
+          droppedSampling.push('topP')
+        }
+        if ('topK' in config) {
+          delete (config as Record<string, unknown>).topK
+          droppedSampling.push('topK')
+        }
+        if (droppedSampling.length > 0) {
+          warnings.push({
+            type: 'unsupported-setting',
+            setting: droppedSampling.join(', '),
+            details:
+              `Sampling parameter(s) [${droppedSampling.join(', ')}] from providerOptions.google were stripped: ` +
+              `this model has fixed sampling (Gemini 3.x) and the API rejects these fields.`,
+          })
+        }
+      }
+
+      // ------------------------------------------------------------------
       // 5b. Grounding ↔ structured-output conflict guard
       //     Tools arrive via providerOptions.google; check after the merge.
       // ------------------------------------------------------------------
@@ -413,10 +446,50 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       }
 
       // ------------------------------------------------------------------
-      // 6. AbortSignal passthrough
+      // 6. AbortSignal passthrough + FIX A-2: client-side flex ceiling
+      //
+      // FIX A-2 belt-and-suspenders: @google/genai issue #1277 — on some SDK
+      // versions httpOptions.timeout is a no-op for generateContent.  On the
+      // flex-default path (flex tier, no explicit timeoutMs) the engine arms NO
+      // AbortSignal; relying solely on httpOptions.timeout risks a silent hang.
+      // We arm our own AbortController here and combine it with any incoming
+      // signal so WE enforce the ceiling regardless of the SDK bug.
+      //
+      // ONLY the flex-default path needs this extra timer: when timeoutMs IS set
+      // the engine already arms a hard AbortSignal at exactly timeoutMs — adding
+      // another timer would be redundant and could mask the correct error.
+      //
+      // Abort reason uses DOMException with name 'TimeoutError' so classifyError
+      // maps the resulting LlmError to kind:'timeout' (retryable:true), matching
+      // how the rest of the codebase surfaces timeout errors.
+      //
+      // AbortSignal.any requires Node ≥ 20.3; our engine floor is Node ≥ 20,
+      // so this is always available in supported environments.
+      //
       // Real SDK: GenerateContentConfig.abortSignal (in config, NOT in params)
       // ------------------------------------------------------------------
-      if (ctx.signal !== undefined) {
+      let _flexTimeoutHandle: ReturnType<typeof setTimeout> | undefined
+
+      if (config.serviceTier === 'flex' && genConfig.timeoutMs === undefined) {
+        // Flex-default path: engine armed no timer — arm one ourselves.
+        const flexController = new AbortController()
+        const timeoutReason = new DOMException(
+          `Flex timeout: call exceeded ${FLEX_DEFAULT_TIMEOUT_MS}ms client-side ceiling` +
+            ' (@google/genai #1277 belt-and-suspenders)',
+          'TimeoutError',
+        )
+        _flexTimeoutHandle = setTimeout(
+          () => flexController.abort(timeoutReason),
+          FLEX_DEFAULT_TIMEOUT_MS,
+        )
+        // Combine with caller signal if present — either aborting cancels the request.
+        if (ctx.signal !== undefined) {
+          config.abortSignal = AbortSignal.any([flexController.signal, ctx.signal])
+        } else {
+          config.abortSignal = flexController.signal
+        }
+      } else if (ctx.signal !== undefined) {
+        // Normal path: engine handles timer (if any); pass ctx.signal through.
         config.abortSignal = ctx.signal
       }
 
@@ -458,7 +531,36 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       }
 
       if (Object.keys(mergedHttpOptions).length > 0) {
-        config.httpOptions = mergedHttpOptions as { timeout?: number }
+        config.httpOptions = mergedHttpOptions as { timeout?: number; headers?: Record<string, string> }
+      }
+
+      // ------------------------------------------------------------------
+      // 7b. FIX A-1: Vertex flex routing headers
+      //
+      // @google/genai issue #1468: on Vertex, body-level serviceTier is ignored;
+      // Vertex reads the service tier from HTTP request headers instead.  Without
+      // these headers a flex call silently bills at standard rate.
+      //
+      // Headers are set AFTER spreading caller-supplied httpOptions.headers so that
+      // OUR Vertex-tier headers always win — they are required for correct billing
+      // and routing, not cosmetic.  Any other caller headers are preserved.
+      //
+      // These headers are Vertex-only; do NOT add them for API-key (Gemini
+      // Developer API) calls where they are meaningless.
+      // ------------------------------------------------------------------
+      if (config.serviceTier === 'flex' && 'vertex' in ctx.auth) {
+        const baseHttpOpts = (config.httpOptions ?? {}) as Record<string, unknown>
+        const callerHeaders =
+          (baseHttpOpts['headers'] as Record<string, string> | undefined) ?? {}
+        config.httpOptions = {
+          ...baseHttpOpts,
+          headers: {
+            ...callerHeaders,
+            // These two headers activate flex routing on Vertex AI.
+            'X-Vertex-AI-LLM-Request-Type': 'shared',
+            'X-Vertex-AI-LLM-Shared-Request-Type': 'flex',
+          },
+        } as { timeout?: number; headers?: Record<string, string> }
       }
 
       // ------------------------------------------------------------------
@@ -497,6 +599,10 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
           provider: 'google',
           cause: classified.cause ?? rawErr,
         })
+      } finally {
+        // FIX A-2: always clear the flex timeout timer so it never leaks,
+        // regardless of whether the call succeeded, threw, or was aborted.
+        if (_flexTimeoutHandle !== undefined) clearTimeout(_flexTimeoutHandle)
       }
 
       // ------------------------------------------------------------------

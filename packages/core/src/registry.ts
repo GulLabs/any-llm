@@ -316,7 +316,7 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
   },
 
   // ── Gemini 3.x series — thinkingLevel API, fixed sampling ───────────────
-  // caching minTokens: Gemini 3.x series floor is 4096 (Gemini context-caching docs).
+  // caching minTokens: Gemini 3.x series floor is 2048 (Google explicit-cache docs).
   {
     id: 'gemini-3.5-flash',
     provider: 'google',
@@ -326,7 +326,7 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       structuredOutput: true,
       reasoningApi: 'level',
       sampling: 'fixed',
-      caching: { explicit: true, minTokens: 4096 },
+      caching: { explicit: true, minTokens: 2048 },
       grounding: true,
     },
     configJsonSchema: makeGeminiConfigSchema({ sampling: 'fixed' }),
@@ -341,7 +341,7 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       structuredOutput: true,
       reasoningApi: 'level',
       sampling: 'fixed',
-      caching: { explicit: true, minTokens: 4096 },
+      caching: { explicit: true, minTokens: 2048 },
       grounding: true,
     },
     configJsonSchema: makeGeminiConfigSchema({ sampling: 'fixed' }),
@@ -356,7 +356,7 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       structuredOutput: true,
       reasoningApi: 'level',
       sampling: 'fixed',
-      caching: { explicit: true, minTokens: 4096 },
+      caching: { explicit: true, minTokens: 2048 },
       grounding: true,
     },
     configJsonSchema: makeGeminiConfigSchema({ sampling: 'fixed' }),
@@ -371,7 +371,7 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       structuredOutput: true,
       reasoningApi: 'level',
       sampling: 'fixed',
-      caching: { explicit: true, minTokens: 4096 },
+      caching: { explicit: true, minTokens: 2048 },
       grounding: true,
     },
     configJsonSchema: makeGeminiConfigSchema({ sampling: 'fixed' }),

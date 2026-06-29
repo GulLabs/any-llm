@@ -154,10 +154,10 @@ describe('geminiModelDescriptors — Batch 2b fields', () => {
     }
   })
 
-  it('3.x models have caching.minTokens === 4096', () => {
+  it('3.x models have caching.minTokens === 2048', () => {
     const fixed = geminiModelDescriptors.filter((d) => d.id.startsWith('gemini-3'))
     for (const d of fixed) {
-      expect(d.capabilities?.caching?.minTokens, `${d.id}`).toBe(4096)
+      expect(d.capabilities?.caching?.minTokens, `${d.id}`).toBe(2048)
     }
   })
 
@@ -168,7 +168,7 @@ describe('geminiModelDescriptors — Batch 2b fields', () => {
     expect(found!.capabilities?.reasoningApi).toBe('level')
     expect(found!.capabilities?.sampling).toBe('fixed')
     expect(found!.capabilities?.grounding).toBe(true)
-    expect(found!.capabilities?.caching).toEqual({ explicit: true, minTokens: 4096 })
+    expect(found!.capabilities?.caching).toEqual({ explicit: true, minTokens: 2048 })
   })
 })
 

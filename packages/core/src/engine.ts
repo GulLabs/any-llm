@@ -890,7 +890,7 @@ export function createClient(config: ClientConfig): Client {
         // Invariant A (timeout-beats-abort microtask ordering): the timeout
         // promise rejects BEFORE its AbortController is fired — guaranteed by
         // buildCancellationRace.  Do not reorder.
-        const cancellation = buildCancellationRace(ctx.signal, req.config.timeoutMs)
+        const cancellation = buildCancellationRace(ctx.signal, req.attemptTimeoutMs ?? req.config.timeoutMs)
         cleanup = cancellation.cleanup
         const { raceParts, combinedSignal } = cancellation
 

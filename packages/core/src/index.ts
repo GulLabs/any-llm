@@ -109,6 +109,9 @@ export { retryMiddleware, computeBackoffMs } from './retry.js'
 // Utilities
 export { assertNever } from './assert.js'
 
+// Secret redaction (best-effort; for persisted/logged error text)
+export { redactSecrets } from './redact.js'
+
 // Auth helpers
 export { envAuth } from './auth.js'
 

@@ -194,8 +194,8 @@ const refreshed = await cacheStore.refreshIfExpiringSoon(cacheHandle)
 
 ## Flex long-timeout calls
 
-Flex-tier calls can run for up to 15 minutes. The adapter sets `httpOptions.timeout` to
-`FLEX_DEFAULT_TIMEOUT_MS` (900 000 ms) automatically for all Flex calls. To set an explicit
+Flex-tier calls can run for up to 25 minutes. The adapter sets `httpOptions.timeout` to
+`FLEX_DEFAULT_TIMEOUT_MS` (1 500 000 ms) automatically for all Flex calls. To set an explicit
 per-call deadline on top of that:
 
 ```ts
@@ -208,6 +208,13 @@ const result = await client.generate({
   },
 })
 ```
+
+**Verified field syntax for Flex:** set `serviceTier: 'flex'` in `config` (not in
+`providerOptions.google`) and set `timeoutMs` in ms in `config` for the engine deadline. The
+adapter automatically sets `httpOptions.timeout` to `timeoutMs + 5 000 ms` as a transport-layer
+buffer. **Vertex AI caveat:** on Vertex, the `serviceTier` body field is silently ignored (SDK bug
+#1468); the adapter works around this by injecting `X-Vertex-AI-LLM-Request-Type` and
+`X-Vertex-AI-LLM-Shared-Request-Type` headers on the Vertex Flex path.
 
 ## Cost
 
@@ -222,6 +229,59 @@ if (result.cost) {
 }
 ```
 
+## providerOptions escape hatch
+
+`config.providerOptions` is an **unvalidated passthrough**. Values are forwarded verbatim to the
+raw provider SDK; the engine does not validate, log, or audit them.
+
+```ts
+// Example: inject a cached-content resource name for the Gemini adapter
+const result = await client.generate({
+  model: 'gemini-2.5-pro',
+  messages: [...],
+  config: {
+    providerOptions: {
+      google: { cachedContent: cacheHandle.cacheName },
+    },
+  },
+})
+```
+
+There is no guarantee that any key inside `providerOptions` will be honoured — it depends entirely
+on what the underlying provider adapter does with it. Use sparingly and document any reliance on
+specific keys in application code.
+
+## Overall timeout semantics (`timeoutMs`)
+
+`config.timeoutMs` sets an **overall wall-clock ceiling** for the logical call, including all
+retry attempts and back-off sleep periods, when the retry middleware is installed.
+
+```ts
+const client = createClient({
+  adapters: [geminiAdapter()],
+  auth: envAuth(),
+  pricing: geminiPricingSource(),
+  middleware: [retryMiddleware({ maxAttempts: 3 })],
+})
+
+const result = await client.generate({
+  model: 'gemini-2.5-flash',
+  messages: [...],
+  config: {
+    timeoutMs: 30_000, // 30 s total ceiling across all attempts + back-off
+  },
+})
+```
+
+The retry middleware enforces this ceiling by:
+- Refusing to start a new attempt when the remaining budget is ≤ 0 (throws `LlmError('timeout')`).
+- Passing the shrinking remaining budget as the per-attempt `timeoutMs` so each attempt's internal
+  `AbortSignal` deadline shrinks with elapsed time.
+- Clamping the back-off sleep to the remaining budget so the sleep never overshoots the deadline.
+
+Without the retry middleware, `timeoutMs` applies only to the single attempt (the engine arms an
+`AbortSignal` at that value for the adapter).
+
 ## What v1 does NOT do yet
 
 These are **designed seams** — the ports exist, the machinery is not built yet:
@@ -229,7 +289,6 @@ These are **designed seams** — the ports exist, the machinery is not built yet
 - **Multiple providers** — only Gemini (`gemini-*`) is wired. The `ProviderAdapter` port and router are in place for others.
 - **Streaming** — `generate` / `runStructured` return a full response. A `stream()` seam is in the design but unimplemented.
 - **Tool use** — no function-calling machinery. The `Part` union's `kind` discriminant is reserved for future `tool-call` and `tool-result` variants.
-- **Rate limiting, redaction** — ports are named in the spec; v1 stubs are absent.
 - **Other auth methods** — Vertex AI WIF path exists in `buildGoogleClient`; API-key path is the tested one.
 
 ## Reference

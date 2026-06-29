@@ -189,7 +189,19 @@ export interface GenConfig {
    * `'flex'` enables Gemini Flex pricing tier; `'standard'` uses standard pricing.
    */
   serviceTier?: 'flex' | 'standard'
-  /** Per-call timeout in milliseconds; the engine wraps the adapter in AbortSignal. */
+  /**
+   * Overall wall-clock ceiling for the logical call.
+   *
+   * Honored as a **true ceiling across retry attempts** when the retry
+   * middleware is installed: the sum of all attempt windows plus back-off
+   * sleep never exceeds this value.  The middleware enforces this by:
+   * - Refusing to start a new attempt once the budget is exhausted.
+   * - Passing the shrinking remaining budget as the per-attempt timeout.
+   * - Clamping back-off sleep to the remaining budget.
+   *
+   * With no retry middleware it is simply the single-attempt timeout —
+   * the engine arms an `AbortSignal` at exactly this value for the adapter.
+   */
   timeoutMs?: number
   /**
    * Verbatim provider-specific options forwarded to the raw SDK.

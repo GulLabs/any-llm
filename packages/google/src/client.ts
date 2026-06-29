@@ -17,13 +17,14 @@ import type { AuthMaterial } from '@gullabs/core'
 /**
  * Default HTTP transport timeout for Gemini Flex service-tier calls (ms).
  *
- * Flex calls may legitimately run for up to 15 minutes.  The @google/genai
- * SDK defaults to 1 minute, which would terminate a long flex call before
- * the engine's AbortSignal-based deadline fires.  We set the transport timeout
- * to match flex call budgets so the AbortSignal (hard ceiling) remains the
- * actual deadline.
+ * The default per-attempt transport (httpOptions) timeout applied ONLY when a
+ * flex call provides no explicit `timeoutMs`. Set to 25 minutes (1_500_000 ms)
+ * to cover the ~20-minute flex workload ceiling with margin.  The @google/genai
+ * SDK defaults to 1 minute, which would terminate a long flex call prematurely.
+ * Callers SHOULD still set `timeoutMs` for a precise per-attempt ceiling; this
+ * value is only the backstop for callers that do not.
  */
-export const FLEX_DEFAULT_TIMEOUT_MS = 900_000
+export const FLEX_DEFAULT_TIMEOUT_MS = 1_500_000
 
 /**
  * Buffer added above `timeoutMs` when setting the SDK transport timeout.
@@ -230,8 +231,10 @@ export interface GeminiGenerateConfig {
    * deadline so the SDK fetch does not preempt the abort.
    *
    * Real field: GenerateContentConfig.httpOptions.timeout (milliseconds).
+   * Real field: GenerateContentConfig.httpOptions.headers (Record<string,string>).
+   *   Used by FIX A-1 to inject Vertex flex routing headers.
    */
-  httpOptions?: { timeout?: number }
+  httpOptions?: { timeout?: number; headers?: Record<string, string> }
 }
 
 /**

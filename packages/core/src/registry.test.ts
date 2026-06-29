@@ -124,6 +124,39 @@ describe('geminiModelDescriptors', () => {
 })
 
 // ---------------------------------------------------------------------------
+// geminiModelDescriptors — cache minTokens
+// ---------------------------------------------------------------------------
+
+describe('geminiModelDescriptors — cache minTokens', () => {
+  it('2.5-series models have caching minTokens 2048', () => {
+    const twoPointFiveIds = ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+    for (const id of twoPointFiveIds) {
+      const desc = geminiModelDescriptors.find((d) => d.id === id)
+      expect(desc?.capabilities?.caching?.minTokens, `${id} minTokens`).toBe(2048)
+    }
+  })
+
+  it('3.x-series models have caching minTokens 2048 (not 4096)', () => {
+    const threeXIds = [
+      'gemini-3.5-flash',
+      'gemini-3.1-flash-lite',
+      'gemini-3.1-pro-preview',
+      'gemini-3-flash-preview',
+    ]
+    for (const id of threeXIds) {
+      const desc = geminiModelDescriptors.find((d) => d.id === id)
+      expect(desc?.capabilities?.caching?.minTokens, `${id} minTokens`).toBe(2048)
+    }
+  })
+
+  it('all models have explicit caching enabled', () => {
+    for (const d of geminiModelDescriptors) {
+      expect(d.capabilities?.caching?.explicit, `${d.id} explicit`).toBe(true)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
 // createClient — duplicate adapter id guard
 // ---------------------------------------------------------------------------
 

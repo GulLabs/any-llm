@@ -395,7 +395,7 @@ would call to resolve URIs or inject cached content. Rejected for three reasons:
 
 **Context:**
 The `@google/genai` SDK defaults its HTTP transport timeout to ~60 seconds. Gemini Flex-tier calls
-can legitimately run for up to 15 minutes. Without an explicit transport timeout, the SDK would
+can legitimately run for up to 25 minutes. Without an explicit transport timeout, the SDK would
 cancel a long Flex call before the engine's `AbortSignal`-based deadline fires. Additionally, when
 callers set `timeoutMs`, the engine arms an `AbortSignal` at exactly that value. If the SDK
 transport timer fired at the same millisecond, the raw SDK error would arrive instead of the
@@ -411,7 +411,7 @@ The Gemini adapter sets `config.httpOptions.timeout` on every request according 
    (currently 5 000 ms). This ensures the engine's `AbortSignal` always fires before the SDK
    transport timer.
 3. **`serviceTier === 'flex'`, no `timeoutMs`** — transport timeout = `FLEX_DEFAULT_TIMEOUT_MS`
-   (currently 900 000 ms, 15 minutes). No buffer is applied because there is no engine `AbortSignal`
+   (currently 1 500 000 ms, 25 minutes). No buffer is applied because there is no engine `AbortSignal`
    deadline in this case.
 4. **`serviceTier === 'standard'`, no `timeoutMs`** — no forced timeout; the SDK default applies.
 
@@ -506,3 +506,178 @@ sink.
   floating-point accumulation error.
 - The field is `null` when `microUsd` is `null` (unpriced model), consistent with the null
   semantics already documented on `Cost.microUsd`.
+
+---
+
+## ADR-015: `timeoutMs` as Overall Wall-Clock Ceiling Across Retry Attempts
+
+**Status:** Accepted
+
+**Context:**
+`GenConfig.timeoutMs` was originally documented and implemented as a per-attempt timeout: the
+engine arms an `AbortSignal` at that value for each individual adapter invocation.  With retry
+middleware installed, a caller setting `timeoutMs: 30_000` expected a 30-second total budget for
+the entire logical call (all attempts + back-off), but the actual behavior was 30 seconds *per
+attempt* — a 3-attempt retry could run for up to 90 seconds before surfacing an error.  This is
+confusing and makes `timeoutMs` unpredictable as a scheduling primitive in production.
+
+**Decision:**
+When the retry middleware is installed and `req.config.timeoutMs` is set, `retryMiddleware`
+enforces it as an **overall wall-clock ceiling** for the logical call.  Implementation:
+
+1. `start = Date.now()` is captured once before the first attempt.
+2. Before each attempt, `remaining = timeoutMs - (Date.now() - start)` is computed.  If
+   `remaining ≤ 0`, the middleware throws `LlmError('timeout', retryable: false)` without starting
+   another attempt.
+3. The shrinking remaining budget is passed as `attemptTimeoutMs` on the cloned request (an
+   internal field on `ResolvedRequest` set by the retry middleware; the engine reads it to arm the
+   per-attempt `AbortSignal`, leaving `config.timeoutMs` unchanged so the persisted audit record
+   always reflects the caller's original value).
+4. After a failed attempt, `remainingAfter` is recomputed.  If `≤ 0`, the classified error from
+   the attempt is rethrown immediately (no sleep; no next attempt).
+5. Back-off sleep is clamped: `delayMs = Math.min(delayMs, remainingAfter)` so the sleep never
+   overshoots the deadline.
+6. When `timeoutMs` is **not** set (undefined), all deadline logic is skipped and behavior is
+   identical to the pre-fix implementation (full backward compatibility).
+
+The `retryMiddleware` opts object gains an optional `now?: () => number` injectable clock so the
+deadline logic can be tested deterministically without real timers.
+
+**Considered and rejected:** moving the deadline enforcement into the engine's `runPipeline`
+function.  Rejected because: (a) the retry loop lives in middleware, not in the engine; (b) the
+engine already handles per-attempt timeouts via `buildCancellationRace`; (c) placing overall-budget
+logic in the middleware keeps the engine pipeline simple and separates the two concerns cleanly.
+
+**Consequences:**
+- `timeoutMs` now means what callers expect: the total wall-clock budget for the logical call,
+  not a per-attempt limit.
+- Retry policies that previously relied on `timeoutMs` as a per-attempt limit must either increase
+  the value or remove it.  This is a behavior change (though not a type-level breaking change).
+- `buildCancellationRace` in the engine continues to arm per-attempt `AbortSignal` at the
+  *remaining* budget, so each attempt's HTTP timeout also shrinks — the ceiling is respected at
+  both the retry level and the transport level.
+
+---
+
+## ADR-016: Best-Effort Secret Redaction on Error Record Persistence
+
+**Status:** Accepted
+
+**Context:**
+Provider SDKs sometimes include the raw request URL (which may contain an API key as a `key=`
+query parameter or a signed-URL `X-Goog-Signature`) in their error messages.  When these errors
+are classified and persisted as `LlmCallRecord.errorMessage`, secrets from the transient error
+message end up in the append-only audit log.  This is a credential-hygiene risk: the log may be
+readable by more operators than the running service, and secrets written to a database are harder
+to rotate than secrets in memory.
+
+**Decision:**
+A `redactSecrets(text: string): string` utility is added to `@gullabs/core` and applied to
+`errorMessage` at the single point where it is written into `LlmCallRecord` (inside `buildRecord`
+in `record.ts`).
+
+`redactSecrets` is a best-effort, regex-based scrubber.  It covers the most common patterns:
+- Google API keys (`AIza[0-9A-Za-z_\-]{20,}` → `AIza…REDACTED`)
+- HTTP Bearer tokens (`Bearer\s+[A-Za-z0-9._\-]+` → `Bearer …REDACTED`)
+- Sensitive URL query-parameter values for keys: `X-Goog-*`, `key`, `api_key`, `access_token`,
+  `token`, `signature`, `sig` — value replaced with `REDACTED`.
+
+The live `LlmError` thrown to the caller is **not** modified.  Redaction is applied only to the
+persisted copy.  This preserves the full error context for the caller (who already has the secret)
+while protecting the audit log from accidental exposure.
+
+**Considered and rejected:**
+- *Full DLP pipeline*: a proper DLP solution with content-type detection, entropy analysis, and
+  provider-specific patterns would be more thorough but is a substantial dependency.  The
+  risk-vs-cost trade-off favors a simple regex scrubber for v1.
+- *Redacting the live error*: callers may need the full error text for debugging (e.g. to see which
+  URL failed).  Redacting the thrown error would make operational debugging harder without
+  meaningfully improving security (the caller already holds the secret).
+- *Provider-adapter responsibility*: redaction in each adapter is fragile because adapters may not
+  know which parts of SDK error messages contain secrets.  Centralising in `buildRecord` ensures
+  every error path — regardless of provider — goes through one redaction point.
+
+**Consequences:**
+- API keys and Bearer tokens that appear in provider error messages are scrubbed from persisted
+  records; the audit log is safe to export to less-privileged storage.
+- False negatives are possible: custom or future secret formats may not be caught.  The JSDoc on
+  `redactSecrets` makes this limitation explicit.
+- False positives are unlikely given the specific patterns used, but `keyword=` or `sig=` in
+  benign text would be redacted.  This is acceptable for error text.
+- `redactSecrets` is exported from `@gullabs/core` so host applications can apply it to their own
+  log lines or error reporting integrations.
+
+---
+
+## ADR-017: Gemini 3.x Sampling Params Are Hard-Rejected (House Policy, Stricter Than Google)
+
+**Status:** Accepted
+
+**Context:**
+Google's documentation for Gemini 3.x models *discourages* the use of `temperature`, `topP`, and
+`topK`, recommending `temperature=1.0` and noting that changing sampling parameters "may lead to
+unexpected behavior." Google does **not** hard-reject these parameters at the API level — a
+request with `temperature=0.7` on a Gemini 3.x model is accepted and processed.
+
+**Decision:**
+We deliberately choose to **hard-reject** `temperature`, `topP`, and `topK` on all Gemini 3.x
+models in the registry validator (`makeGeminiConfigValidator({ sampling: 'fixed' })`). Additionally,
+these fields are stripped with a warning from the `providerOptions.google` escape hatch before the
+request reaches the adapter.
+
+This is a **house-policy invariant** that is intentionally stricter than Google's advisory stance.
+The `ModelDescriptor.capabilities.sampling` field encodes this as `'fixed'`, and the engine validates
+the projection of `GenConfig` against the descriptor's validator before auth and rate-limiter acquire.
+
+**Rationale:**
+A single enforced sampling contract per model family is more valuable for our typed-config and UX
+story than permitting a discouraged knob. The `configJsonSchema` (used for form generation) omits
+these fields entirely for `fixed` models, ensuring UIs cannot expose them. Config validation fires
+before any network or auth cost, so the rejection is immediate.
+
+**Trade-off (conscious divergence from upstream):**
+We will reject some requests that Google's API would accept. Host applications that have a
+legitimate reason to pass non-default sampling to Gemini 3.x models cannot do so through this
+library without adding a custom model descriptor with `sampling: 'tunable'`. This is an acceptable
+cost: the constraint is explicit, documented, and localized to a single descriptor flag.
+
+---
+
+## ADR-018: Verified `@google/genai` SDK Bugs and Mitigations
+
+**Status:** Accepted
+
+**Context:**
+Two confirmed bugs in the `@google/genai` SDK affect Gemini Flex-tier reliability and have been
+verified against the SDK source and issue tracker.
+
+**Bug #1277 — `config.httpOptions.timeout` may be a no-op for `generateContent`:**
+The SDK's `httpOptions.timeout` field is documented as the transport-layer timeout, but due to a
+bug in how the SDK wires the timeout into the underlying fetch/HTTP layer, the timeout may not be
+enforced for `generateContent` requests. This means a Flex-tier call that stalls at the network
+layer may hang indefinitely even with `httpOptions.timeout` set.
+
+*Mitigation:* The Gemini adapter (`@gullabs/google`) arms a client-side `AbortSignal` to enforce
+the effective timeout. For Flex calls without an explicit `timeoutMs`, the signal is set at
+`FLEX_DEFAULT_TIMEOUT_MS` (1 500 000 ms, 25 min). When `timeoutMs` is set, the remaining budget from the
+retry middleware is the signal deadline. The `AbortSignal` is passed as `config.abortSignal` so the
+SDK will honour it regardless of whether `httpOptions.timeout` fires.
+
+**Bug #1468 — On Vertex, `serviceTier` in the request body is ignored for Flex:**
+When targeting Vertex AI (as opposed to the Gemini Developer API), the `serviceTier: 'flex'`
+field in the generation config body is silently ignored. Flex calls on Vertex are billed at the
+standard tier rate without any indication that the tier selection was not honoured.
+
+*Mitigation:* On the Vertex flex path, the adapter injects two HTTP headers:
+- `X-Vertex-AI-LLM-Request-Type: shared`
+- `X-Vertex-AI-LLM-Shared-Request-Type: flex`
+
+These headers are the correct Vertex-native mechanism for requesting Flex tier and are honoured
+by the Vertex AI backend independently of the body field.
+
+**Consequences:**
+- Flex calls will time out correctly via `AbortSignal` even if the SDK's transport timeout is
+  silently dropped.
+- Vertex Flex calls are billed at the Flex rate when the headers are injected correctly. Hosts
+  that bypass the adapter and call Vertex directly must inject these headers themselves.
+- If Google fixes either bug, the mitigations remain harmless (belt-and-suspenders).

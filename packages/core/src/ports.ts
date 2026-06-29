@@ -52,6 +52,13 @@ export interface ResolvedRequest {
    * heuristics.
    */
   modelDescriptor?: ModelDescriptor
+  /**
+   * Internal-use field set by the retry middleware (the type is exported, but consumers should
+   * not set this; it is overwritten per attempt and never persisted). Carries the shrinking
+   * per-attempt budget so the engine can arm the AbortSignal correctly while leaving
+   * `config.timeoutMs` equal to the caller's original value in the audit record.
+   */
+  attemptTimeoutMs?: number
 }
 
 /**

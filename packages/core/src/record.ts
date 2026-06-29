@@ -11,6 +11,7 @@
 import type { JsonValue, Usage, FinishReason, Warning, GenConfig, Cost } from './types.js'
 import type { LlmErrorKind, LlmError } from './errors.js'
 import { assertNever } from './assert.js'
+import { redactSecrets } from './redact.js'
 
 // ---------------------------------------------------------------------------
 // Record interface
@@ -553,10 +554,13 @@ export function buildRecord(input: BuildRecordInput): LlmCallRecord {
     // Reasoning capture.
     ...(input.reasoningText !== undefined ? { reasoningText: input.reasoningText } : {}),
     // Postmortem — only on failure.
+    // errorMessage is redacted before persistence so secrets in provider error
+    // text (API keys in URLs, Bearer tokens) are not written to the audit record.
+    // The live LlmError thrown to the caller is NOT modified.
     ...(input.error !== undefined
       ? {
           errorKind: input.error.kind,
-          errorMessage: input.error.message,
+          errorMessage: redactSecrets(input.error.message),
         }
       : {}),
     metadata: input.metadata,

@@ -8,7 +8,7 @@
  */
 
 import type { AuthMaterial } from '@gullabs/core'
-import { LlmError, classifyError } from '@gullabs/core'
+import { LlmError, classifyError, redactSecrets } from '@gullabs/core'
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -59,7 +59,7 @@ export interface GoogleFileStoreOptions {
   poll?: {
     /** Delay between state polls. Default: 3000 ms. */
     intervalMs?: number
-    /** Max time to wait for ACTIVE. Default: 120 000 ms. */
+    /** Max time to wait for ACTIVE. Default: 300 000 ms (5 min). */
     timeoutMs?: number
   }
   /** Injectable sleep for tests. Default: real setTimeout. */
@@ -73,7 +73,7 @@ export interface GoogleFileStoreOptions {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_INTERVAL_MS = 3_000
-const DEFAULT_TIMEOUT_MS = 120_000
+const DEFAULT_TIMEOUT_MS = 300_000
 
 const realSleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms))
@@ -175,7 +175,7 @@ export class GoogleFileStore {
       ((name, err) =>
         console.error(
           `[GoogleFileStore] delete failed for "${name}":`,
-          classifyError(err).message,
+          redactSecrets(classifyError(err).message),
         ))
     this.intervalMs = opts.poll?.intervalMs ?? DEFAULT_INTERVAL_MS
     this.timeoutMs = opts.poll?.timeoutMs ?? DEFAULT_TIMEOUT_MS
@@ -201,8 +201,9 @@ export class GoogleFileStore {
   async upload(
     source: Uint8Array | Blob,
     mimeType: string,
-    opts?: { displayName?: string },
+    opts?: { displayName?: string; signal?: AbortSignal },
   ): Promise<GoogleFileHandle> {
+    const signal = opts?.signal
     const client = await this.getClient()
 
     let uploadResp: {
@@ -249,6 +250,36 @@ export class GoogleFileStore {
     // PROCESSING (or unknown) — poll until ACTIVE or timeout.
     const deadline = this.now() + this.timeoutMs
 
+    // Pre-flight: if the signal is already aborted, throw before creating any
+    // promise so we never produce an unhandled rejection.
+    if (signal?.aborted) {
+      throw new LlmError('File upload polling aborted', {
+        kind: 'aborted',
+        retryable: false,
+      })
+    }
+
+    // Build an abort-race promise so future aborts wake up the sleep race
+    // immediately rather than waiting the full interval.  Created only when
+    // the signal is NOT already aborted (guard above handles that case).
+    const abortRacePromise: Promise<never> | undefined =
+      signal !== undefined
+        ? new Promise<never>((_, reject) => {
+            signal.addEventListener(
+              'abort',
+              () => {
+                reject(
+                  new LlmError('File upload polling aborted', {
+                    kind: 'aborted',
+                    retryable: false,
+                  }),
+                )
+              },
+              { once: true },
+            )
+          })
+        : undefined
+
     for (;;) {
       if (this.now() >= deadline) {
         throw new LlmError('Timed out waiting for uploaded file to become ACTIVE', {
@@ -257,7 +288,21 @@ export class GoogleFileStore {
         })
       }
 
-      await this.sleep(this.intervalMs)
+      // Also guard here: the signal may have fired during client.get() from
+      // the previous iteration, before we looped back to the sleep race.
+      if (signal?.aborted) {
+        throw new LlmError('File upload polling aborted', {
+          kind: 'aborted',
+          retryable: false,
+        })
+      }
+
+      // Sleep — race against the abort promise so we wake up immediately
+      // when the signal fires rather than waiting the full interval.
+      const sleepCall = this.sleep(this.intervalMs)
+      await (abortRacePromise !== undefined
+        ? Promise.race([sleepCall, abortRacePromise])
+        : sleepCall)
 
       let pollResp: {
         name?: string

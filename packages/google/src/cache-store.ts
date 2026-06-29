@@ -11,7 +11,7 @@
  */
 
 import type { AuthMaterial } from '@gullabs/core'
-import { LlmError, classifyError } from '@gullabs/core'
+import { LlmError, classifyError, redactSecrets } from '@gullabs/core'
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -177,7 +177,7 @@ export class GoogleCacheStore {
       ((cacheName, err) =>
         console.error(
           `[GoogleCacheStore] delete failed for "${cacheName}":`,
-          classifyError(err).message,
+          redactSecrets(classifyError(err).message),
         ))
     this.now = opts.now ?? (() => Date.now())
   }

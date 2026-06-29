@@ -7,7 +7,7 @@
  * @module
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { z } from 'zod'
 import {
   LlmError,
@@ -27,6 +27,8 @@ import {
 } from '@gullabs/testing'
 import { geminiAdapter } from './adapter.js'
 import { zodToGeminiSchema } from './schema.js'
+import { FLEX_DEFAULT_TIMEOUT_MS } from './client.js'
+import type { GeminiClientLike, GeminiResponseShape } from './client.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -864,13 +866,30 @@ describe('message role mapping', () => {
 // ---------------------------------------------------------------------------
 
 describe('AbortSignal passthrough', () => {
-  it('passes the signal to config.abortSignal', async () => {
+  it('passes the signal to config.abortSignal unchanged on the standard-tier path', async () => {
+    // Use serviceTier:'standard' (or any path where timeoutMs is set) so the adapter
+    // passes ctx.signal through directly without wrapping it in AbortSignal.any.
+    // FIX A-2 only arms a combined signal on the flex-default path (flex + no timeoutMs).
     const controller = new AbortController()
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
 
     await adapter.run(
-      makeResolvedReq({ signal: controller.signal }),
+      makeResolvedReq({ signal: controller.signal, config: { serviceTier: 'standard' } }),
+      { ...FAKE_CTX, signal: controller.signal },
+    )
+
+    const call = client.calls[0] as { config?: { abortSignal?: AbortSignal } }
+    expect(call?.config?.abortSignal).toBe(controller.signal)
+  })
+
+  it('passes the signal to config.abortSignal unchanged when timeoutMs is set (engine handles timer)', async () => {
+    const controller = new AbortController()
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await adapter.run(
+      makeResolvedReq({ signal: controller.signal, config: { serviceTier: 'flex', timeoutMs: 60_000 } }),
       { ...FAKE_CTX, signal: controller.signal },
     )
 
@@ -1372,7 +1391,7 @@ describe('transport timeout (httpOptions.timeout)', () => {
     expect(call?.config?.httpOptions?.timeout).toBe(1_205_000)
   })
 
-  it('sets httpOptions.timeout to FLEX_DEFAULT_TIMEOUT_MS (900_000) when serviceTier is flex and no timeoutMs', async () => {
+  it('sets httpOptions.timeout to FLEX_DEFAULT_TIMEOUT_MS (1_500_000) when serviceTier is flex and no timeoutMs', async () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
 
@@ -1382,7 +1401,7 @@ describe('transport timeout (httpOptions.timeout)', () => {
     )
 
     const call = client.calls[0] as { config?: { httpOptions?: { timeout?: number } } }
-    expect(call?.config?.httpOptions?.timeout).toBe(900_000)
+    expect(call?.config?.httpOptions?.timeout).toBe(1_500_000)
   })
 
   it('does NOT set httpOptions.timeout when serviceTier is standard and no timeoutMs', async () => {
@@ -1639,5 +1658,296 @@ describe('grounding — registry capabilities', () => {
     for (const desc of geminiModelDescriptors) {
       expect(desc.capabilities?.grounding).toBe(true)
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Fixed-sampling invariant re-assertion (FIX 4)
+// ---------------------------------------------------------------------------
+
+describe('fixed-sampling invariant re-assertion after providerOptions merge', () => {
+  it('strips temperature/topP/topK from providerOptions.google for a fixed-sampling model and emits a warning', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    const result = await adapter.run(
+      {
+        model: 'gemini-3.5-flash',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
+        config: {
+          serviceTier: 'flex',
+          providerOptions: {
+            google: { temperature: 0.9, topP: 0.8, topK: 40 },
+          },
+        },
+        modelDescriptor: {
+          id: 'gemini-3.5-flash',
+          provider: 'google',
+          pricingFamily: 'gemini-3.5-flash',
+          capabilities: {
+            reasoning: true,
+            structuredOutput: true,
+            reasoningApi: 'level',
+            sampling: 'fixed',
+          },
+        },
+      },
+      FAKE_CTX,
+    )
+
+    // SDK must NOT receive sampling parameters
+    const call = client.calls[0] as {
+      config?: { temperature?: number; topP?: number; topK?: number }
+    }
+    expect(call?.config?.temperature).toBeUndefined()
+    expect(call?.config?.topP).toBeUndefined()
+    expect(call?.config?.topK).toBeUndefined()
+
+    // A warning must be surfaced
+    expect(result.warnings.length).toBeGreaterThanOrEqual(1)
+    const samplingWarning = result.warnings.find(
+      (w) => w.type === 'unsupported-setting',
+    )
+    expect(samplingWarning).toBeDefined()
+    expect((samplingWarning as { setting?: string }).setting).toContain('temperature')
+  })
+
+  it('keeps providerOptions temperature for a tunable-sampling model (gemini-2.5-pro)', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await adapter.run(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
+        config: {
+          serviceTier: 'flex',
+          providerOptions: {
+            google: { temperature: 0.7 },
+          },
+        },
+        modelDescriptor: {
+          id: 'gemini-2.5-pro',
+          provider: 'google',
+          pricingFamily: 'gemini-2.5-pro',
+          capabilities: {
+            reasoning: true,
+            structuredOutput: true,
+            reasoningApi: 'budget',
+            sampling: 'tunable',
+          },
+        },
+      },
+      FAKE_CTX,
+    )
+
+    // SDK MUST receive temperature for tunable models
+    const call = client.calls[0] as { config?: { temperature?: number } }
+    expect(call?.config?.temperature).toBe(0.7)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// FIX A-1. Vertex flex routing headers
+// ---------------------------------------------------------------------------
+
+/** Vertex auth context (non-apiKey path). */
+const VERTEX_CTX: AdapterCtx = {
+  auth: { vertex: { project: 'my-project', location: 'us-central1' } },
+  logger: { info() {}, warn() {}, error() {} },
+}
+
+describe('FIX A-1: Vertex flex routing headers', () => {
+  it('injects X-Vertex-AI-LLM-* headers when auth is Vertex and tier is flex', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await adapter.run(makeResolvedReq({ config: { serviceTier: 'flex' } }), VERTEX_CTX)
+
+    const call = client.calls[0] as {
+      config?: { httpOptions?: { headers?: Record<string, string> } }
+    }
+    expect(call?.config?.httpOptions?.headers?.['X-Vertex-AI-LLM-Request-Type']).toBe('shared')
+    expect(call?.config?.httpOptions?.headers?.['X-Vertex-AI-LLM-Shared-Request-Type']).toBe('flex')
+  })
+
+  it('does NOT inject Vertex headers when auth is API key (not Vertex)', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await adapter.run(makeResolvedReq({ config: { serviceTier: 'flex' } }), FAKE_CTX)
+
+    const call = client.calls[0] as {
+      config?: { httpOptions?: { headers?: Record<string, string> } }
+    }
+    expect(call?.config?.httpOptions?.headers?.['X-Vertex-AI-LLM-Request-Type']).toBeUndefined()
+    expect(call?.config?.httpOptions?.headers?.['X-Vertex-AI-LLM-Shared-Request-Type']).toBeUndefined()
+  })
+
+  it('does NOT inject Vertex headers when tier is standard (even with Vertex auth)', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await adapter.run(makeResolvedReq({ config: { serviceTier: 'standard' } }), VERTEX_CTX)
+
+    const call = client.calls[0] as {
+      config?: { httpOptions?: { headers?: Record<string, string> } }
+    }
+    expect(call?.config?.httpOptions?.headers?.['X-Vertex-AI-LLM-Request-Type']).toBeUndefined()
+  })
+
+  it('preserves caller httpOptions.headers; our Vertex-tier headers win on conflict', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await adapter.run(
+      makeResolvedReq({
+        config: {
+          serviceTier: 'flex',
+          providerOptions: {
+            google: {
+              httpOptions: {
+                headers: {
+                  'X-Custom-Header': 'caller-value',
+                  // caller tries to set this; ours must win
+                  'X-Vertex-AI-LLM-Request-Type': 'caller-override',
+                },
+              },
+            },
+          },
+        },
+      }),
+      VERTEX_CTX,
+    )
+
+    const call = client.calls[0] as {
+      config?: { httpOptions?: { headers?: Record<string, string> } }
+    }
+    // Custom caller header preserved
+    expect(call?.config?.httpOptions?.headers?.['X-Custom-Header']).toBe('caller-value')
+    // Our Vertex tier headers win on conflict
+    expect(call?.config?.httpOptions?.headers?.['X-Vertex-AI-LLM-Request-Type']).toBe('shared')
+    expect(call?.config?.httpOptions?.headers?.['X-Vertex-AI-LLM-Shared-Request-Type']).toBe('flex')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// FIX A-2. Client-side AbortSignal for flex default timeout
+// ---------------------------------------------------------------------------
+
+describe('FIX A-2: client-side flex AbortSignal ceiling', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('aborts a hanging flex call at FLEX_DEFAULT_TIMEOUT_MS when no timeoutMs is set', async () => {
+    vi.useFakeTimers()
+
+    // A client that hangs until the AbortSignal fires.
+    const hangingClient: GeminiClientLike = {
+      models: {
+        generateContent(params): Promise<GeminiResponseShape> {
+          return new Promise<GeminiResponseShape>((_resolve, reject) => {
+            const sig = params.config?.abortSignal
+            if (sig?.aborted === true) {
+              reject(sig.reason)
+              return
+            }
+            sig?.addEventListener('abort', () => reject(sig.reason), { once: true })
+          })
+        },
+      },
+    }
+
+    const adapter = geminiAdapter({ client: hangingClient })
+
+    // No timeoutMs — engine arms no AbortSignal; adapter must arm a client-side timer.
+    // Attach .catch() BEFORE advancing timers so the rejection is never unhandled.
+    const errPromise = adapter
+      .run(makeResolvedReq({ config: { serviceTier: 'flex' } }), FAKE_CTX)
+      .catch((e: unknown) => e)
+
+    // Advance fake timers past FLEX_DEFAULT_TIMEOUT_MS — triggers the adapter's setTimeout.
+    await vi.advanceTimersByTimeAsync(FLEX_DEFAULT_TIMEOUT_MS + 1)
+
+    const err = await errPromise
+    expect(err).toBeInstanceOf(LlmError)
+    expect((err as LlmError).kind).toBe('timeout')
+  })
+
+  it('does NOT arm the flex timer when timeoutMs is set (engine handles that path)', async () => {
+    vi.useFakeTimers()
+
+    // Track whether abortSignal is set and what type it is.
+    let capturedSignal: AbortSignal | undefined
+
+    const capturingClient: GeminiClientLike = {
+      models: {
+        generateContent(params): Promise<GeminiResponseShape> {
+          capturedSignal = params.config?.abortSignal
+          // Resolve immediately — we just want to inspect the config.
+          return Promise.resolve({
+            candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }],
+            usageMetadata: {},
+          })
+        },
+      },
+    }
+
+    const engineController = new AbortController()
+    const adapter = geminiAdapter({ client: capturingClient })
+
+    await adapter.run(
+      makeResolvedReq({ config: { serviceTier: 'flex', timeoutMs: 60_000 } }),
+      { ...FAKE_CTX, signal: engineController.signal },
+    )
+
+    // When timeoutMs is set, we pass ctx.signal through (engine handles the deadline).
+    // The captured signal should BE the engine signal, not a combined one.
+    expect(capturedSignal).toBe(engineController.signal)
+  })
+
+  it('combines the flex timer with the incoming caller signal', async () => {
+    vi.useFakeTimers()
+
+    let capturedSignal: AbortSignal | undefined
+
+    const capturingClient: GeminiClientLike = {
+      models: {
+        generateContent(params): Promise<GeminiResponseShape> {
+          capturedSignal = params.config?.abortSignal
+          // Hang — we'll abort via the caller signal.
+          return new Promise<GeminiResponseShape>((_resolve, reject) => {
+            const sig = params.config?.abortSignal
+            if (sig?.aborted === true) { reject(sig.reason); return }
+            sig?.addEventListener('abort', () => reject(sig.reason), { once: true })
+          })
+        },
+      },
+    }
+
+    const callerController = new AbortController()
+    const adapter = geminiAdapter({ client: capturingClient })
+
+    // Attach .catch() BEFORE advancing timers so the rejection is never unhandled.
+    const errPromise = adapter
+      .run(makeResolvedReq({ config: { serviceTier: 'flex' } }), {
+        ...FAKE_CTX,
+        signal: callerController.signal,
+      })
+      .catch((e: unknown) => e)
+
+    // Abort via caller signal (before the flex timer fires).
+    callerController.abort(new DOMException('caller cancelled', 'AbortError'))
+    await vi.advanceTimersByTimeAsync(1)
+
+    const err = await errPromise
+    expect(err).toBeInstanceOf(LlmError)
+    // Caller-triggered abort → kind:'aborted'
+    expect((err as LlmError).kind).toBe('aborted')
+
+    // Confirm a combined signal was passed (not the raw callerController signal).
+    expect(capturedSignal).not.toBe(callerController.signal)
+    expect(capturedSignal?.aborted).toBe(true)
   })
 })
