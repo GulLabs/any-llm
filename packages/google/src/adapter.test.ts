@@ -1351,3 +1351,61 @@ describe('multimodal part mapping', () => {
     expect(parts[0]).not.toHaveProperty('mediaResolution')
   })
 })
+
+// ---------------------------------------------------------------------------
+// 17. Transport timeout (httpOptions.timeout)
+// ---------------------------------------------------------------------------
+
+describe('transport timeout (httpOptions.timeout)', () => {
+  it('sets httpOptions.timeout to timeoutMs when timeoutMs is set', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await adapter.run(
+      makeResolvedReq({ config: { serviceTier: 'flex', timeoutMs: 1_200_000 } }),
+      FAKE_CTX,
+    )
+
+    const call = client.calls[0] as { config?: { httpOptions?: { timeout?: number } } }
+    expect(call?.config?.httpOptions?.timeout).toBe(1_200_000)
+  })
+
+  it('sets httpOptions.timeout to FLEX_DEFAULT_TIMEOUT_MS (900_000) when serviceTier is flex and no timeoutMs', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await adapter.run(
+      makeResolvedReq({ config: { serviceTier: 'flex' } }),
+      FAKE_CTX,
+    )
+
+    const call = client.calls[0] as { config?: { httpOptions?: { timeout?: number } } }
+    expect(call?.config?.httpOptions?.timeout).toBe(900_000)
+  })
+
+  it('does NOT set httpOptions.timeout when serviceTier is standard and no timeoutMs', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await adapter.run(
+      makeResolvedReq({ config: { serviceTier: 'standard' } }),
+      FAKE_CTX,
+    )
+
+    const call = client.calls[0] as { config?: { httpOptions?: { timeout?: number } } }
+    expect(call?.config?.httpOptions).toBeUndefined()
+  })
+
+  it('uses timeoutMs (not FLEX_DEFAULT) when both timeoutMs and flex are set', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await adapter.run(
+      makeResolvedReq({ config: { serviceTier: 'flex', timeoutMs: 300_000 } }),
+      FAKE_CTX,
+    )
+
+    const call = client.calls[0] as { config?: { httpOptions?: { timeout?: number } } }
+    expect(call?.config?.httpOptions?.timeout).toBe(300_000)
+  })
+})

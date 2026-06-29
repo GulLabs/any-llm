@@ -21,7 +21,7 @@ import type {
   Part,
 } from '@gullabs/core'
 import type { ZodTypeAny } from 'zod'
-import { buildGoogleClient } from './client.js'
+import { buildGoogleClient, FLEX_DEFAULT_TIMEOUT_MS } from './client.js'
 import type {
   GeminiClientLike,
   GeminiGenerateConfig,
@@ -399,7 +399,31 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       }
 
       // ------------------------------------------------------------------
-      // 7. Build params + call the SDK
+      // 7. Transport timeout — set httpOptions.timeout so the @google/genai
+      //    HTTP transport does NOT preempt the AbortSignal hard ceiling.
+      //
+      //    Policy:
+      //    - timeoutMs is set     → transport timeout = timeoutMs
+      //      (the AbortSignal fires at the same deadline; transport timeout
+      //       just prevents the SDK from killing the request earlier)
+      //    - serviceTier 'flex', no timeoutMs → FLEX_DEFAULT_TIMEOUT_MS (15 min)
+      //    - standard, no timeoutMs          → no forced timeout (SDK default)
+      //
+      //    exactOptionalPropertyTypes: only set when defined.
+      // ------------------------------------------------------------------
+      const transportTimeoutMs: number | undefined =
+        genConfig.timeoutMs !== undefined
+          ? genConfig.timeoutMs
+          : genConfig.serviceTier === 'flex'
+            ? FLEX_DEFAULT_TIMEOUT_MS
+            : undefined
+
+      if (transportTimeoutMs !== undefined) {
+        config.httpOptions = { timeout: transportTimeoutMs }
+      }
+
+      // ------------------------------------------------------------------
+      // 8. Build params + call the SDK
       // ------------------------------------------------------------------
       const params = {
         model,
@@ -408,7 +432,7 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       }
 
       // ------------------------------------------------------------------
-      // 7b. Client construction + SDK call — both inside the classifier
+      // 8b. Client construction + SDK call — both inside the classifier
       //     so that ANY failure in run() (including a bad auth constructor)
       //     is rethrown as a typed LlmError(provider:'google').
       // ------------------------------------------------------------------
