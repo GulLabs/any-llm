@@ -90,6 +90,8 @@ export {
   createModelRegistry,
   geminiModelDescriptors,
   defaultGeminiRegistry,
+  makeGeminiConfigSchema,
+  makeGeminiConfigValidator,
 } from './registry.js'
 
 // Call site

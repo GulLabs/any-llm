@@ -457,8 +457,9 @@ config: {
 }
 ```
 
-The `providerOptions.google` object is merged into the Gemini `GenerateContentConfig` last
-(after all typed-field mapping), so `tools` reaches the SDK verbatim.
+The `providerOptions.google` object is merged after typed-field mapping, so `tools` reaches the
+SDK verbatim; transport/abort scaffolding (`abortSignal`, `httpOptions`) is applied afterward,
+and caller-supplied `httpOptions` still wins.
 
 The adapter inspects the merged config after the merge and enforces a hard guard: if
 `tools` contains any entry with a `googleSearch` or `googleSearchRetrieval` key AND

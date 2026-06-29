@@ -63,17 +63,18 @@ See [`examples/basic.ts`](./examples/basic.ts) for a **fully runnable** version 
 
 ## Architecture
 
-Every call — whether `generate()` or `runStructured()` — goes through the same 12-step pipeline:
+Every call — whether `generate()` or `runStructured()` — goes through the pipeline below. Model-config validation (`validateModelConfig`) runs pre-dispatch inside `runAttempt`, before routing or auth:
 
 ```
 generate() / runStructured()
   → resolveConfig()               [libDefaults → callSite → opts; deep-merge]
+  → validateModelConfig()         [Standard Schema pre-dispatch check; terminal on failure]
   → route(model, adapters)        → ProviderAdapter
   → auth.credentials(provider)    → AuthMaterial
   → rateLimiter.acquire("provider:model")    [pre-send pacing; propagates on reject]
   → adapter.run(resolved, ctx)    ← provider SDK (anti-corruption layer)
   → normalizeUsage()              [enforce GROSS token convention]
-  → zod.safeParse(rawStructured)  [structured output validation; terminal on failure]
+  → Standard Schema validate(rawStructured)  [structured output validation; terminal on failure]
   → pricing.price()               [micro-USD cost; fail-open]
   → buildRecord() → sink.record() [persist call record; fail-open]
   → LlmResult

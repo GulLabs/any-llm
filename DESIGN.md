@@ -120,8 +120,8 @@ was sent.
 ### Grounding and Conflict Guard
 
 Grounding is requested via `providerOptions.google.tools: [{ googleSearch: {} }]`. The
-`providerOptions.google` object is merged into `GenerateContentConfig` last (after all
-typed-field mapping). After the merge, the adapter checks whether any tool entry has a
+`providerOptions.google` object is merged after typed-field mapping; transport/abort scaffolding
+(`abortSignal`, `httpOptions`) is applied afterward, and caller-supplied `httpOptions` still wins. After the merge, the adapter checks whether any tool entry has a
 `googleSearch` or `googleSearchRetrieval` key. If so and `req.outputSchema` is also set, the
 adapter throws `LlmError('bad_request', retryable: false)` immediately — Gemini does not support
 grounding combined with `responseSchema`. When grounding is active, `candidate.groundingMetadata`
