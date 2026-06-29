@@ -126,52 +126,59 @@ sink — retries are visible as separate records sharing a `callId`.
 
 Each invocation generates a fresh `attemptId`. Steps:
 
-1. **Route.** `routeFn(model, adapters)` selects the `ProviderAdapter`. With a single adapter,
+1. **Config validation.** When `req.modelDescriptor.validateConfig` is set, the engine runs the
+   Standard Schema v1 validator against a projection of the resolved config (`temperature`, `topP`,
+   `topK`, `maxOutputTokens`, `stopSequences`, `reasoning`, `serviceTier`). Failure throws
+   `LlmError('bad_request', retryable: false)` before any network I/O.
+
+2. **Route.** `routeFn(model, adapters)` selects the `ProviderAdapter`. With a single adapter,
    it is used unconditionally. With multiple adapters, the default router reads `adapter.id`
    against the derived provider (from registry, then slash convention). A custom `route` function
    can override entirely.
 
-2. **Auth.** `auth.credentials(provider)` returns `AuthMaterial` — `{ apiKey }` or
+3. **Auth.** `auth.credentials(provider)` returns `AuthMaterial` — `{ apiKey }` or
    `{ vertex: { project, location } }`.
 
-3. **Cancellation scaffolding.** Two independent `Promise<never>` rejection promises are built:
+4. **Cancellation scaffolding.** Two independent `Promise<never>` rejection promises are built:
    one fires when the caller's `AbortSignal` fires, one fires after `timeoutMs`. The timeout
    promise rejects **before** calling `AbortController.abort()` on the combined signal — this
    ordering guarantees `kind: 'timeout'` wins the `Promise.race` even against a synchronously
    aborting adapter.
 
-4. **Rate-limiter acquire.** `rateLimiter.acquire("${provider}:${model}", signal)` is raced
+5. **Rate-limiter acquire.** `rateLimiter.acquire("${provider}:${model}", signal)` is raced
    against the cancellation promises. On rejection (caller abort, timeout, or limiter error),
    the call fails. On resolution, a `Release` function is returned; it is called on every exit
    path (success and error).
 
-5. **Adapter invocation.** `adapter.run(resolvedReq, adapterCtx)` is raced against the
+6. **Adapter invocation.** `adapter.run(resolvedReq, adapterCtx)` is raced against the
    cancellation promises. The adapter receives the merged abort signal (caller + timeout).
 
-6. **Usage normalization.** `normalizeUsage(adapterResult.usage)` enforces the GROSS token
+7. **Usage normalization.** `normalizeUsage(adapterResult.usage)` enforces the GROSS token
    convention: clamps `cachedInputTokens ≤ inputTokens` and `thinkingTokens ≤ outputTokens`;
    replaces non-finite numbers with `0`; emits `Warning` entries for each violation. This
    runs once; the same normalized `Usage` object is used for cost, the result, and the record.
 
-7. **Structured output validation.** When `req.outputSchema` is set, the engine calls
-   `schema.safeParse(adapterResult.rawStructured)`. Failure throws `LlmError('parse_error',
-   retryable: false)` — this is terminal; the error path sinks a record before rethrowing.
+8. **Structured output validation.** When `req.outputSchema` is set, the engine calls
+   `schema['~standard'].validate(adapterResult.rawStructured)`. Failure throws
+   `LlmError('parse_error', retryable: false)` — this is terminal; the error path sinks a
+   record before rethrowing.
 
-8. **Cost computation.** `pricing.price(pricingKey, usage, serviceTier)` is called inside a
+9. **Cost computation.** `pricing.price(pricingKey, usage, serviceTier)` is called inside a
    try/catch. Failure appends an `'other'` warning and logs `llm.call.cost.failed`; the call
    succeeds without a `cost` field (fail-open).
 
-9. **Record assembly.** `buildRecord` assembles an `LlmCallRecord` from all collected fields.
-   This is a pure function with no I/O. Token hot fields (`inputTokens`, `outputTokens`, etc.)
-   are promoted to typed columns; open maps (`tokenDetails`, `rawUsage`, `providerMetadata`,
-   `warnings`, `generationConfig`) are stored as JSONB-compatible `JsonValue`.
+10. **Record assembly.** `buildRecord` assembles an `LlmCallRecord` from all collected fields.
+    This is a pure function with no I/O. Token hot fields (`inputTokens`, `outputTokens`, etc.)
+    are promoted to typed columns; open maps (`tokenDetails`, `rawUsage`, `providerMetadata`,
+    `warnings`, `generationConfig`) are stored as JSONB-compatible `JsonValue`.
 
-10. **Sink write.** `sink.record(record)` is called inside a try/catch. Failure logs
+11. **Sink write.** `sink.record(record)` is called inside a try/catch. Failure logs
     `llm.call.sink.failed` and is swallowed (fail-open). A record is written on both the success
     path and the error path (postmortem record with whatever usage was known).
 
-11. **Return `LlmResult`.** The result carries `usage`, `cost`, `text`, `output` (Zod-validated),
-    `reasoningText`, `latencyMs`, `warnings`, and provider metadata fields.
+12. **Return `LlmResult`.** The result carries `usage`, `cost` (including derived `cost.usd`),
+    `text`, `output` (schema-validated), `reasoningText`, `latencyMs`, `warnings`,
+    `providerMetadata`, and provider metadata fields.
 
 ### Phase 4 — Epilogue (once per logical call)
 
@@ -247,7 +254,88 @@ retry delay is not counted against the per-attempt timeout.
 
 ---
 
-## 6. Registry and Model Routing
+## 6. Multimodal Message Parts
+
+`Message.parts` is an array of the `Part` discriminated union:
+
+| `kind` | Type | Notes |
+|---|---|---|
+| `'text'` | `TextPart` | Plain text string. |
+| `'inline-media'` | `InlineMediaPart` | Base64-encoded bytes; `mimeType` required. No `data:…;base64,` prefix. |
+| `'file-uri'` | `FileUriPart` | Provider-hosted file reference; `uri` and `mimeType` required. |
+
+All three parts accept an optional `mediaResolution?: 'low' | 'medium' | 'high'` hint for
+image/video detail level. The Gemini adapter maps this to `PartMediaResolutionLevel`
+(`MEDIA_RESOLUTION_LOW` / `…_MEDIUM` / `…_HIGH`) and emits an `unsupported-setting` warning
+when a model cannot honour the hint.
+
+`isTextPart`, `isInlineMediaPart`, and `isFileUriPart` type guards are exported from
+`@gullabs/core` for exhaustive narrowing.
+
+The adapter maps `file-uri` parts to Gemini `fileData` parts (`{ fileUri, mimeType }`); no binary
+payload is sent with the request — the provider dereferences the URI server-side.
+
+---
+
+## 7. Registry as Config Schema Layer
+
+`ModelDescriptor` carries two optional schema fields in addition to capability flags:
+
+- **`configJsonSchema`** — a plain JSON Schema object (typed as `JsonValue`). Clients can
+  retrieve this to build form fields for a model's generation config without hard-coding per-model
+  knowledge. No schema library required to consume it.
+- **`validateConfig`** — a Standard Schema v1 validator. The engine runs this before auth and
+  rate-limiter acquire, against a **projection** of the resolved config: `temperature`, `topP`,
+  `topK`, `maxOutputTokens`, `stopSequences`, `reasoning`, `serviceTier`. Execution-spine fields
+  (`timeoutMs`, `providerOptions`) are excluded from the projection.
+
+When the validator returns issues, the engine throws `LlmError('bad_request', retryable: false)`
+with all issue messages joined. The error fires before any network I/O.
+
+For Gemini models, `makeGeminiConfigSchema` and `makeGeminiConfigValidator` factory functions
+produce per-family schemas parameterized by `{ sampling: 'tunable' | 'fixed' }`. Gemini 3.x
+models have `sampling: 'fixed'`; passing `temperature`, `topP`, or `topK` to them fails
+validation with per-field paths before the request leaves the process.
+
+---
+
+## 8. Resource Helpers (Google)
+
+The core engine is stateless and reference-only with respect to provider-hosted resources. Two
+helper classes in `@gullabs/google` handle the stateful upload and cache lifecycle:
+
+### `GoogleFileStore`
+
+Wraps the Gemini Files API. Not part of the engine; not imported by `@gullabs/core`.
+
+- `upload(source, mimeType, opts?)` — uploads bytes (`Uint8Array` or `Blob`) and polls until
+  the file reaches `ACTIVE` state (default poll interval: 3 s; default timeout: 120 s). Returns a
+  `GoogleFileHandle` with `name`, `uri`, `mimeType`, and optional `expiresAt`.
+- The returned `handle.uri` maps directly to `FileUriPart.uri`; no conversion needed.
+- `delete(handle)` and `deleteAll(handles)` are fail-open: errors go to an injectable
+  `onDeleteError` callback and are not rethrown.
+- The underlying SDK client is lazily constructed and memoised per store instance.
+- Provider auto-deletes files approximately 48 hours after upload regardless of explicit deletion.
+
+### `GoogleCacheStore`
+
+Wraps the Gemini Context Cache API. Reuse is **process-scoped** — the in-memory handle map does
+not survive restarts.
+
+- `getOrCreate(key, factory)` — returns a live `GoogleCacheHandle`, creating one if the map
+  is empty or the stored handle has expired (accounting for a configurable `expirySkewSeconds`
+  buffer, default 30 s). Optional `coalesce: true` serialises concurrent creates for the same key.
+- `refreshIfExpiringSoon(handle, opts?)` — extends the TTL if expiry is within
+  `thresholdSeconds` (default 300). Fail-open: returns the original handle unchanged if the
+  update call throws.
+- `delete(handle)` — removes from the local map and deletes from the provider. Fail-open.
+- `GoogleCacheHandle.cacheName` is passed to the adapter as
+  `providerOptions.google.cachedContent`; the adapter forwards it verbatim via the
+  `providerOptions.google` merge.
+
+---
+
+## 9. Registry and Model Routing
 
 ### `ModelDescriptor`
 
@@ -258,6 +346,9 @@ Each descriptor carries:
   `"gemini-2.5-pro-001"`).
 - `capabilities.reasoningApi` — `'budget'` (Gemini 2.5 series, `thinkingBudget`) or
   `'level'` (Gemini 3.x series, `thinkingLevel`).
+- `capabilities.sampling` — `'tunable'` (Gemini 2.5 series) or `'fixed'` (Gemini 3.x series).
+- `capabilities.caching` — `{ explicit: boolean; minTokens: number }`.
+- `capabilities.grounding` — whether the model supports Google Search grounding.
 
 ### Resolution Order
 
@@ -279,7 +370,7 @@ to extend or replace it.
 
 ---
 
-## 7. Extensibility
+## 10. Extensibility
 
 ### Adding a Provider Adapter
 
@@ -367,7 +458,47 @@ on duplicates.
 
 ---
 
-## 8. Not in v1 / Deliberate Scope Boundaries
+## 11. Grounding and Transport Timeout (Gemini)
+
+### Grounding
+
+Google Search grounding is requested via `providerOptions.google`:
+
+```ts
+config: { providerOptions: { google: { tools: [{ googleSearch: {} }] } } }
+```
+
+The `providerOptions.google` object is merged into `GenerateContentConfig` last, after all
+typed-field mapping. After the merge the adapter checks whether any entry in `config.tools`
+contains a `googleSearch` or `googleSearchRetrieval` key. If so and `req.outputSchema` is also
+set, the adapter throws `LlmError('bad_request', retryable: false)` — grounding and structured
+output are mutually exclusive at the Gemini API level.
+
+When grounding is active, `candidate.groundingMetadata` from the response is captured into
+`result.providerMetadata['groundingMetadata']` as `JsonValue`. `promptFeedback`, when present, is
+captured alongside it under `result.providerMetadata['promptFeedback']`. Both are persisted in the
+`LlmCallRecord` via the existing `providerMetadata` JSONB lane.
+
+### Transport Timeout
+
+The `@google/genai` SDK defaults its HTTP transport timeout to ~60 seconds. The adapter sets
+`config.httpOptions.timeout` on every request:
+
+| Condition | Transport timeout set |
+|---|---|
+| `providerOptions.google.httpOptions` present | Caller value wins (spread over any computed value) |
+| `timeoutMs` is set | `timeoutMs + 5 000 ms` (`TRANSPORT_TIMEOUT_BUFFER_MS`) |
+| `serviceTier === 'flex'`, no `timeoutMs` | `FLEX_DEFAULT_TIMEOUT_MS` (900 000 ms) |
+| `serviceTier === 'standard'`, no `timeoutMs` | No forced timeout; SDK default applies |
+
+The 5 000 ms buffer ensures the engine's `AbortSignal` fires before the SDK transport timer so
+the error is classified as `LlmError('timeout')` rather than a raw SDK error.
+`FLEX_DEFAULT_TIMEOUT_MS` and `TRANSPORT_TIMEOUT_BUFFER_MS` are exported constants from
+`@gullabs/google`.
+
+---
+
+## 12. Not in v1 / Deliberate Scope Boundaries
 
 These capabilities have designed seams in the type system but are not implemented in v1. They are
 not deferred because of time pressure; they are excluded because the one-call, Gemini-only
@@ -381,9 +512,8 @@ breaking change to the engine.
 Anthropic, OpenAI, and others. v1 ships only the Gemini adapter. Multi-adapter setups work today
 with the custom `route` option; the default router handles the single-adapter case.
 
-**Function calling / tool use.** `LlmRequest` does not yet carry a `tools` field. The `Message`
-type's `parts: TextPart[]` union is open (`kind` discriminant) to accommodate `tool-call` and
-`tool-result` parts when that capability is added.
+**Function calling / tool use.** `LlmRequest` does not yet carry a `tools` field. The `Part`
+union's `kind` discriminant is reserved for future `tool-call` and `tool-result` variants.
 
 **Provider-fallback middleware.** The middleware contract allows calling `next` with a modified
 `ResolvedRequest` pointing to a different model. A fallback middleware (retry on `server` with

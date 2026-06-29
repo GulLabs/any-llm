@@ -111,6 +111,32 @@ proceeds with `responseMimeType` alone and emits an `unsupported-setting` warnin
 performs the actual Zod `.safeParse` validation regardless of whether the adapter-level schema
 was sent.
 
+### Multimodal Parts
+
+`TextPart` → `{ text }`. `InlineMediaPart` → `{ inlineData: { mimeType, data } }`. `FileUriPart`
+→ `{ fileData: { mimeType, fileUri } }`. The `mediaResolution` hint on media parts maps to
+`{ mediaResolution: { level: 'MEDIA_RESOLUTION_LOW' | … } }` alongside the part object.
+
+### Grounding and Conflict Guard
+
+Grounding is requested via `providerOptions.google.tools: [{ googleSearch: {} }]`. The
+`providerOptions.google` object is merged into `GenerateContentConfig` last (after all
+typed-field mapping). After the merge, the adapter checks whether any tool entry has a
+`googleSearch` or `googleSearchRetrieval` key. If so and `req.outputSchema` is also set, the
+adapter throws `LlmError('bad_request', retryable: false)` immediately — Gemini does not support
+grounding combined with `responseSchema`. When grounding is active, `candidate.groundingMetadata`
+is captured alongside `promptFeedback` into `result.providerMetadata`.
+
+### Transport Timeout
+
+The `@google/genai` SDK's default HTTP transport timeout is ~60 s, too short for long Flex calls.
+The adapter sets `config.httpOptions.timeout`:
+
+- `serviceTier === 'flex'`, no `timeoutMs` → `FLEX_DEFAULT_TIMEOUT_MS` (900 000 ms).
+- `timeoutMs` is set → `timeoutMs + TRANSPORT_TIMEOUT_BUFFER_MS` (5 000 ms). The buffer ensures
+  the engine's `AbortSignal` fires first so the error classifies as `kind: 'timeout'`.
+- Caller-supplied `providerOptions.google.httpOptions` wins over any computed value.
+
 ### Error Classification
 
 The adapter wraps the entire SDK call (client construction + `generateContent`) in a single
@@ -143,10 +169,41 @@ This default is applied in the engine, not in merge logic, to keep the merge fun
 
 ---
 
-## Planned Seams (not in v1)
+## Landed in v1.1
+
+**Multimodal message parts.** `Message.parts` is now the `Part` discriminated union:
+`TextPart | InlineMediaPart | FileUriPart`. Inline base64 images/video (`inline-media`) and
+provider-hosted file references (`file-uri`) can be freely mixed with text parts. An optional
+`mediaResolution` hint on media parts maps to `PartMediaResolutionLevel` in the Gemini adapter.
+Type guards (`isTextPart`, `isInlineMediaPart`, `isFileUriPart`) are exported from `@gullabs/core`.
+
+**Google resource helpers.** `GoogleFileStore` (Files API: upload + poll + delete) and
+`GoogleCacheStore` (Context Cache API: getOrCreate + refresh + delete) are exported from
+`@gullabs/google`. Both are stateful, process-scoped helpers. The core engine remains stateless
+and reference-only; resource handles are passed to requests as `FileUriPart.uri` or via
+`providerOptions.google.cachedContent`.
+
+**Model-bound config validation.** `ModelDescriptor` now carries `configJsonSchema` (plain JSON
+Schema, for UX) and `validateConfig` (Standard Schema v1 validator). The engine validates a
+projection of the resolved config before auth and rate-limiter acquire. Gemini 3.x descriptors
+have `sampling: 'fixed'` and reject `temperature`, `topP`, `topK` at call time.
+
+**Grounding.** Requested via `providerOptions.google.tools: [{ googleSearch: {} }]`. The adapter
+captures `candidate.groundingMetadata` into `result.providerMetadata`. Grounding and structured
+output (`output.schema`) are mutually exclusive; the adapter enforces this with a `bad_request`
+error before the SDK call.
+
+**Flex transport timeout.** The adapter sets `config.httpOptions.timeout` automatically: 900 s for
+Flex calls without `timeoutMs`, and `timeoutMs + 5 000 ms` when `timeoutMs` is set. Both exported
+as `FLEX_DEFAULT_TIMEOUT_MS` and `TRANSPORT_TIMEOUT_BUFFER_MS`.
+
+**`Cost.usd` convenience field.** `= microUsd / 1_000_000`. Display-only; micro-USD remains
+canonical and is the only value persisted.
+
+## Planned Seams (not yet)
 
 The following capabilities have documented ports or type-system placeholders. They are excluded
-from v1 because the Gemini-only, non-streaming foundation needs to be stable first.
+because the Gemini-only, non-streaming foundation needs to be stable first.
 
 **Streaming.** A `stream()` method that returns an async iterable of normalized `StreamEvent`
 objects plus a `final: Promise<LlmResult>`. The `ProviderAdapter` interface is designed to
@@ -158,8 +215,8 @@ ended.
 `AuthMaterial` union already covers both `{ apiKey }` and `{ vertex }` auth forms; additional
 forms (OAuth token, bearer token) would extend the union.
 
-**Function calling.** `Message.parts` is typed as `TextPart[]` in v1 but the `kind` discriminant
-is reserved for future `tool-call` and `tool-result` part variants.
+**Function calling.** The `Part` union's `kind` discriminant is reserved for future `tool-call`
+and `tool-result` variants. `LlmRequest` does not yet carry a `tools` field.
 
 **`Redactor` port.** A planned port for scrubbing sensitive content from messages and results
 before persistence. Absent in v1; the port name is reserved. If added, it would be fail-closed

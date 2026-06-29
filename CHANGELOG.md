@@ -7,6 +7,63 @@ This project does not use semantic versioning yet — it will adopt semver on fi
 
 ---
 
+## [Unreleased] / 0.1.0 — 2026-06-29
+
+### Breaking
+
+**`@gullabs/core`**
+- `Message.parts` is now `Part[]` where `Part = TextPart | InlineMediaPart | FileUriPart`. Any
+  code that typed `parts` as `TextPart[]` must be updated. Existing messages with only text parts
+  are structurally compatible; the `kind: 'text'` field was already required by `TextPart`.
+
+### Added
+
+**`@gullabs/core`**
+- `InlineMediaPart` (`kind: 'inline-media'`) — inline base64 binary media with `mimeType` and
+  optional `mediaResolution` hint (`'low' | 'medium' | 'high'`).
+- `FileUriPart` (`kind: 'file-uri'`) — provider-hosted file reference with `uri`, `mimeType`,
+  and optional `mediaResolution` hint.
+- `Part` union type (`TextPart | InlineMediaPart | FileUriPart`).
+- `isTextPart`, `isInlineMediaPart`, `isFileUriPart` type-guard functions.
+- `ModelDescriptor.capabilities.sampling` — `'tunable'` | `'fixed'`.
+- `ModelDescriptor.capabilities.caching` — `{ explicit: boolean; minTokens: number }`.
+- `ModelDescriptor.capabilities.grounding` — boolean.
+- `ModelDescriptor.configJsonSchema` — plain JSON Schema object for UX form generation.
+- `ModelDescriptor.validateConfig` — Standard Schema v1 validator; engine runs before dispatch.
+- `makeGeminiConfigSchema(opts)` — factory for per-family Gemini config JSON Schema.
+- `makeGeminiConfigValidator(opts)` — factory for per-family Gemini config Standard Schema v1
+  validator; `sampling: 'fixed'` rejects `temperature`, `topP`, `topK` with per-field paths.
+- Config validation step in `runAttempt` — validates a projection of the resolved config
+  (excluding `timeoutMs`, `providerOptions`) before auth and rate-limiter acquire.
+- `Cost.usd` — derived convenience field; `= microUsd / 1_000_000`. Display-only; not persisted.
+- Gemini model descriptors extended to 7 entries: gemini-2.5-pro, gemini-2.5-flash,
+  gemini-2.5-flash-lite, gemini-3.5-flash, gemini-3.1-flash-lite, gemini-3.1-pro-preview,
+  gemini-3-flash-preview.
+
+**`@gullabs/google`**
+- `GoogleFileStore` — `upload(source, mimeType, opts?)` uploads bytes (`Uint8Array` | `Blob`)
+  and polls until `ACTIVE` (default interval 3 s, default timeout 120 s). `delete(handle)` and
+  `deleteAll(handles)` are fail-open.
+- `GoogleFileHandle` — `{ name, uri, mimeType, expiresAt? }` returned by `upload`.
+- `GoogleCacheStore` — `getOrCreate(key, factory)`, `create(input)`,
+  `refreshIfExpiringSoon(handle, opts?)`, `delete(handle)`. Process-scoped; not shared across
+  restarts. Optional `coalesce: true` serialises concurrent creates for the same key.
+- `GoogleCacheHandle` — `{ cacheName, expiresAt, model }` returned by cache operations.
+- `CacheKey` — `{ model, stableKey }` used by `getOrCreate`.
+- Multimodal part mapping in adapter: `inline-media` → Gemini `inlineData`, `file-uri` → Gemini
+  `fileData`, `mediaResolution` → `PartMediaResolutionLevel` enum.
+- Grounding metadata capture: `candidate.groundingMetadata` captured into
+  `result.providerMetadata['groundingMetadata']`; `promptFeedback` captured alongside it.
+- Grounding + schema conflict guard: adapter throws `LlmError('bad_request')` when
+  `googleSearch` tool and `output.schema` are both set.
+- `FLEX_DEFAULT_TIMEOUT_MS` (900 000) and `TRANSPORT_TIMEOUT_BUFFER_MS` (5 000) exported from
+  `@gullabs/google`.
+- Automatic `httpOptions.timeout` on every request: `FLEX_DEFAULT_TIMEOUT_MS` for Flex calls
+  without `timeoutMs`; `timeoutMs + TRANSPORT_TIMEOUT_BUFFER_MS` when `timeoutMs` is set.
+  Caller-supplied `providerOptions.google.httpOptions` wins over any computed value.
+
+---
+
 ## [Unreleased] / 0.0.0 — 2026-06-27
 
 Initial v1 implementation. Scope: four goals, no more — see `SPEC.md`.

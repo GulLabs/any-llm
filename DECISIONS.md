@@ -289,3 +289,219 @@ solely on prompt engineering.
 - `parse_error` is terminal: the library does not retry structured output validation failures.
   A model consistently returning non-conformant JSON is a prompt or schema problem, not a
   transient failure.
+
+---
+
+## ADR-010: Model-Bound, Schema-Described Config
+
+**Status:** Accepted
+
+**Context:**
+Different Gemini model families have different acceptable generation parameters. Gemini 3.x models
+fix sampling; passing `temperature`, `topP`, or `topK` to them causes a provider-side error
+(`bad_request`). The error is confusing to surface at the SDK level. Meanwhile, host UIs and config
+editors need a machine-readable description of which knobs a model accepts, so they can build form
+fields without hard-coding per-model knowledge in application code.
+
+**Decision:**
+Each `ModelDescriptor` carries two optional schema fields:
+
+- `configJsonSchema` — a plain JSON Schema object (typed as `JsonValue` so no schema library is
+  required to consume it). Used for UX form generation.
+- `validateConfig` — a hand-written Standard Schema v1 validator the engine runs before dispatch.
+
+The engine validates a **projection** of the resolved config: generation knobs only
+(`temperature`, `topP`, `topK`, `maxOutputTokens`, `stopSequences`, `reasoning`, `serviceTier`).
+Execution-spine fields (`timeoutMs`, `providerOptions`) are excluded from the projection so
+validation failures are about what the model can do, not how the engine calls it. A projection
+with issues throws `LlmError('bad_request', retryable: false)` before auth or rate-limiter acquire.
+
+`makeGeminiConfigSchema` and `makeGeminiConfigValidator` are factory functions parameterized by
+`{ sampling: 'tunable' | 'fixed' }`. `'fixed'` produces a validator that rejects `temperature`,
+`topP`, and `topK` with per-field issue paths; all issues are collected before returning so callers
+see every violation at once.
+
+**Rejected alternatives:**
+- *Per-model TypeScript types* — would leak model-specific types into the public API surface and
+  require callers to import and narrow types manually. Compile-time safety does not help when
+  the model is a runtime string from a database.
+- *One generic superset type* — a single config type that accepts all parameters for all models
+  cannot express per-model constraints; the only enforcement would be at the provider, which
+  produces an opaque error after auth and network roundtrip.
+
+**Consequences:**
+- Config validation fires before auth, rate-limiter, and adapter — the fastest possible rejection
+  for a misconfigured call.
+- The `configJsonSchema` field can be serialized to JSON and returned to clients as part of a
+  model-capabilities API response; no schema library required on the client.
+- Hosts that add custom model descriptors can supply their own validators by implementing the
+  Standard Schema v1 interface.
+- Extending the validated field set is non-breaking: new fields added to the projection simply
+  become subject to validation for any descriptor that chooses to check them.
+
+---
+
+## ADR-011: Reference-Only Core for Stateful Resources; Optional Provider Helpers
+
+**Status:** Accepted
+
+**Context:**
+Gemini's Files API and Context Cache API require stateful, long-lived client objects: upload a
+file once, receive a `uri`; create a cached-content resource once, receive a `cacheName`; reuse
+both across many requests. The core engine's call pipeline is stateless and per-attempt; it has
+no ownership model for provider-hosted resources.
+
+**Decision:**
+The core engine and `@gullabs/core` types remain stateless and reference-only. `FileUriPart` and
+the `providerOptions.google.cachedContent` field are reference types — they carry a URI or a
+resource name, respectively. The engine passes them to the adapter verbatim; it has no upload or
+cache lifecycle.
+
+Stateful resource management lives in `@gullabs/google` as opt-in helper classes:
+- `GoogleFileStore` — wraps the Gemini Files API. `upload(bytes, mimeType)` uploads and polls
+  until `ACTIVE`, returning a `GoogleFileHandle` whose `uri` field can be used directly in a
+  `FileUriPart`. `delete` / `deleteAll` are fail-open (errors go to `onDeleteError`, not rethrown).
+  The SDK client is memoised per store instance (lazy, built at most once).
+- `GoogleCacheStore` — wraps the Gemini Context Cache API. `getOrCreate(key, factory)` returns a
+  live `GoogleCacheHandle`, creating one if the in-process map is empty or the entry has expired
+  (with a configurable skew buffer). Reuse is **process-scoped** — the map lives in memory and
+  does not survive restarts. `refreshIfExpiringSoon` extends the TTL fail-open. `delete` is
+  fail-open. Optional `coalesce: true` serialises concurrent creates for the same key.
+
+**Considered and rejected:** a generic `ResourceManager` port in `@gullabs/core` that the engine
+would call to resolve URIs or inject cached content. Rejected for three reasons:
+1. Upload-once-reuse-N means resource identity is process-scoped or database-backed — there is no
+   single correct abstraction the library should own.
+2. Entangling the engine with resource lifecycle would require a new port, new injection point in
+   `ClientConfig`, and a new failure mode to classify; the per-call pipeline becomes more complex
+   with no benefit to the common case.
+3. Resources are not cross-provider: Gemini file URIs are useless to an Anthropic adapter. A
+   shared port would be a fake abstraction that collapses to a no-op for every provider except
+   the one that introduced it.
+
+**Consequences:**
+- Callers that do not need Files or Context Caching import neither class; the helpers are
+  additional exports from `@gullabs/google`, not engine dependencies.
+- The `GoogleFileHandle.uri` field maps directly to `FileUriPart.uri`; no conversion step needed.
+- The `GoogleCacheHandle.cacheName` is passed as `providerOptions.google.cachedContent`; the
+  Gemini adapter forwards it verbatim via the `providerOptions.google` merge.
+- The helpers have injectable clients and clocks so tests run without network or real SDK.
+
+---
+
+## ADR-012: Flex Transport Timeout via Per-Request `httpOptions`
+
+**Status:** Accepted
+
+**Context:**
+The `@google/genai` SDK defaults its HTTP transport timeout to ~60 seconds. Gemini Flex-tier calls
+can legitimately run for up to 15 minutes. Without an explicit transport timeout, the SDK would
+cancel a long Flex call before the engine's `AbortSignal`-based deadline fires. Additionally, when
+callers set `timeoutMs`, the engine arms an `AbortSignal` at exactly that value. If the SDK
+transport timer fired at the same millisecond, the raw SDK error would arrive instead of the
+engine's clean `LlmError('timeout')`.
+
+**Decision:**
+The Gemini adapter sets `config.httpOptions.timeout` on every request according to this precedence
+(highest first):
+
+1. **Caller-supplied `providerOptions.google.httpOptions`** — wins unconditionally; caller values
+   are spread over any computed value. This is the standard `providerOptions` escape-hatch.
+2. **`timeoutMs` is set** — transport timeout = `timeoutMs + TRANSPORT_TIMEOUT_BUFFER_MS`
+   (currently 5 000 ms). This ensures the engine's `AbortSignal` always fires before the SDK
+   transport timer.
+3. **`serviceTier === 'flex'`, no `timeoutMs`** — transport timeout = `FLEX_DEFAULT_TIMEOUT_MS`
+   (currently 900 000 ms, 15 minutes). No buffer is applied because there is no engine `AbortSignal`
+   deadline in this case.
+4. **`serviceTier === 'standard'`, no `timeoutMs`** — no forced timeout; the SDK default applies.
+
+The computed `httpOptions` is built from the computed base and then the caller's value is spread on
+top, so extra keys in a caller-supplied `httpOptions` object are preserved alongside any fields the
+adapter sets.
+
+**Deliberately not built:** automatic Flex → Standard fallback when a Flex call times out. Such a
+fallback is a disguised retry that crosses tier boundaries without the caller's awareness. Retry
+and fallback logic belongs in the middleware chain where it is explicit and auditable.
+
+**Consequences:**
+- Long Flex calls complete without being killed by the SDK transport layer.
+- When `timeoutMs` is set, the engine's `AbortSignal` is always the hard ceiling; the SDK transport
+  timer cannot preempt it.
+- `FLEX_DEFAULT_TIMEOUT_MS` and `TRANSPORT_TIMEOUT_BUFFER_MS` are exported constants so callers
+  can reason about the values they're building on.
+- Callers that need a different transport timeout set it via `providerOptions.google.httpOptions`
+  and their value wins.
+
+---
+
+## ADR-013: Grounding via `providerOptions` Passthrough; Hard Guard Against Grounding + Schema
+
+**Status:** Accepted
+
+**Context:**
+Google Search grounding is a Gemini capability that attaches live search results to the model's
+response. It is requested by including `{ googleSearch: {} }` in the Gemini `tools` array.
+Grounding is not a cross-provider concept and the library does not model it in `GenConfig`. A
+first-class `grounding` field on `GenConfig` would need to be mapped — or noop-ed — for every
+adapter, which is the wrong trade-off for a provider-specific feature. Grounding and structured
+output (`responseSchema`) are mutually exclusive at the Gemini API level.
+
+**Decision:**
+Grounding is requested entirely via `providerOptions.google`:
+
+```ts
+config: {
+  providerOptions: {
+    google: { tools: [{ googleSearch: {} }] },
+  },
+}
+```
+
+The `providerOptions.google` object is merged into the Gemini `GenerateContentConfig` last
+(after all typed-field mapping), so `tools` reaches the SDK verbatim.
+
+The adapter inspects the merged config after the merge and enforces a hard guard: if
+`tools` contains any entry with a `googleSearch` or `googleSearchRetrieval` key AND
+`req.outputSchema` is set, the adapter throws `LlmError('bad_request', retryable: false)` with a
+clear message. This catches the incompatibility at the library boundary rather than as a cryptic
+provider error.
+
+When grounding is active, the adapter captures `candidate.groundingMetadata` from the response
+and includes it in `result.providerMetadata` alongside any `promptFeedback`. The host reads
+grounding attribution from `result.providerMetadata['groundingMetadata']` as `JsonValue`; the
+library does not model the grounding metadata structure as a typed field.
+
+**Consequences:**
+- Grounding support requires no new typed fields on `GenConfig` or `LlmRequest`; it uses the
+  existing `providerOptions` passthrough.
+- The `bad_request` guard surfaces the mutual-exclusion constraint at call time with a human-
+  readable message, not as a provider API error.
+- Grounding metadata is preserved in `result.providerMetadata` and persisted in the `LlmCallRecord`
+  via the existing `providerMetadata` JSONB lane — no schema migration required.
+- Adding first-class typed grounding support later is additive and non-breaking.
+
+---
+
+## ADR-014: `Cost.usd` as a Derived, Display-Only Convenience Field
+
+**Status:** Accepted
+
+**Context:**
+`Cost.microUsd` is the canonical cost value — an integer count of micro-USD (1 USD = 1 000 000 µUSD)
+computed at call time and frozen into every persisted record. Callers frequently need to display
+cost in whole USD for UI labels and log lines. Dividing by `1_000_000` at every call site is
+mechanical and error-prone (integer vs float rounding).
+
+**Decision:**
+`Cost.usd` is a computed field equal to `microUsd / 1_000_000` (or `null` when `microUsd` is
+`null`). It is set alongside `microUsd` when `computeCost` builds the `Cost` object. It is
+**display-only**: it is not persisted to the `LlmCallRecord`, and it should not be used for
+financial calculations or aggregation. Micro-USD is canonical and is the only value written to the
+sink.
+
+**Consequences:**
+- `result.cost?.usd` is available for immediate display without division at the call site.
+- Aggregations (summing cost across records) must use `microUsd` from the persisted record to avoid
+  floating-point accumulation error.
+- The field is `null` when `microUsd` is `null` (unpriced model), consistent with the null
+  semantics already documented on `Cost.microUsd`.
