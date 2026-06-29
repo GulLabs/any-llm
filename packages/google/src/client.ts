@@ -25,6 +25,18 @@ import type { AuthMaterial } from '@gullabs/core'
  */
 export const FLEX_DEFAULT_TIMEOUT_MS = 900_000
 
+/**
+ * Buffer added above `timeoutMs` when setting the SDK transport timeout.
+ *
+ * When `timeoutMs` is set, the engine arms an AbortSignal at exactly
+ * `timeoutMs`.  If the SDK transport timer fired at the same instant it
+ * could preempt the signal and produce a raw SDK error instead of the
+ * engine's clean `kind:'timeout'`.  By setting the transport timeout to
+ * `timeoutMs + TRANSPORT_TIMEOUT_BUFFER_MS` we ensure the engine's
+ * AbortSignal always fires first.
+ */
+export const TRANSPORT_TIMEOUT_BUFFER_MS = 5_000
+
 // ---------------------------------------------------------------------------
 // Response shape — mirrors the @google/genai surface we actually consume
 // ---------------------------------------------------------------------------
@@ -50,6 +62,12 @@ export interface GeminiCandidateShape {
    * "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", etc.
    */
   finishReason?: string
+  /**
+   * Grounding metadata returned when Google Search grounding is active.
+   * Real SDK type: GroundingMetadata. Kept as `unknown` to avoid a hard
+   * coupling to @google/genai types; cast to JsonValue at the adapter boundary.
+   */
+  groundingMetadata?: unknown
 }
 
 /**

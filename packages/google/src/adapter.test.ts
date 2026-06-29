@@ -13,6 +13,7 @@ import {
   LlmError,
   createClient,
   geminiPricingSource,
+  geminiModelDescriptors,
 } from '@gullabs/core'
 import type { ResolvedRequest, AdapterCtx } from '@gullabs/core'
 import {
@@ -1357,7 +1358,7 @@ describe('multimodal part mapping', () => {
 // ---------------------------------------------------------------------------
 
 describe('transport timeout (httpOptions.timeout)', () => {
-  it('sets httpOptions.timeout to timeoutMs when timeoutMs is set', async () => {
+  it('sets httpOptions.timeout to timeoutMs + TRANSPORT_TIMEOUT_BUFFER_MS when timeoutMs is set', async () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
 
@@ -1366,8 +1367,9 @@ describe('transport timeout (httpOptions.timeout)', () => {
       FAKE_CTX,
     )
 
+    // Engine AbortSignal fires at 1_200_000 ms; transport sits 5 s above it.
     const call = client.calls[0] as { config?: { httpOptions?: { timeout?: number } } }
-    expect(call?.config?.httpOptions?.timeout).toBe(1_200_000)
+    expect(call?.config?.httpOptions?.timeout).toBe(1_205_000)
   })
 
   it('sets httpOptions.timeout to FLEX_DEFAULT_TIMEOUT_MS (900_000) when serviceTier is flex and no timeoutMs', async () => {
@@ -1396,7 +1398,7 @@ describe('transport timeout (httpOptions.timeout)', () => {
     expect(call?.config?.httpOptions).toBeUndefined()
   })
 
-  it('uses timeoutMs (not FLEX_DEFAULT) when both timeoutMs and flex are set', async () => {
+  it('uses timeoutMs + buffer (not FLEX_DEFAULT) when both timeoutMs and flex are set', async () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
 
@@ -1406,6 +1408,236 @@ describe('transport timeout (httpOptions.timeout)', () => {
     )
 
     const call = client.calls[0] as { config?: { httpOptions?: { timeout?: number } } }
-    expect(call?.config?.httpOptions?.timeout).toBe(300_000)
+    expect(call?.config?.httpOptions?.timeout).toBe(305_000)
+  })
+
+  it('caller-supplied httpOptions.timeout wins over computed timeout and extra fields are preserved', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    // Caller passes httpOptions with a custom timeout AND an extra field.
+    // The adapter computes timeoutMs + buffer = 1_205_000, but caller's 42 wins.
+    await adapter.run(
+      makeResolvedReq({
+        config: {
+          serviceTier: 'flex',
+          timeoutMs: 1_200_000,
+          providerOptions: {
+            google: {
+              httpOptions: { timeout: 42, someOtherField: 'x' },
+            },
+          },
+        },
+      }),
+      FAKE_CTX,
+    )
+
+    const call = client.calls[0] as {
+      config?: { httpOptions?: Record<string, unknown> }
+    }
+    // Caller timeout wins over computed timeout.
+    expect(call?.config?.httpOptions?.['timeout']).toBe(42)
+    // Extra caller field is preserved.
+    expect(call?.config?.httpOptions?.['someOtherField']).toBe('x')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 18. Grounding — conflict guard
+// ---------------------------------------------------------------------------
+
+describe('grounding — conflict guard', () => {
+  it('rejects with LlmError bad_request when googleSearch tool + outputSchema both present', async () => {
+    const schema = z.object({ answer: z.string() })
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    const err = await adapter
+      .run(
+        makeResolvedReq({
+          outputSchema: schema,
+          config: {
+            serviceTier: 'flex',
+            providerOptions: { google: { tools: [{ googleSearch: {} }] } },
+          },
+        }),
+        FAKE_CTX,
+      )
+      .catch((e: unknown) => e)
+
+    expect(err).toBeInstanceOf(LlmError)
+    expect((err as LlmError).kind).toBe('bad_request')
+    expect((err as LlmError).retryable).toBe(false)
+    expect((err as LlmError).message).toMatch(/grounding.*structured output/i)
+  })
+
+  it('rejects with LlmError bad_request when googleSearchRetrieval tool + outputSchema both present', async () => {
+    const schema = z.object({ answer: z.string() })
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          outputSchema: schema,
+          config: {
+            serviceTier: 'flex',
+            providerOptions: { google: { tools: [{ googleSearchRetrieval: {} }] } },
+          },
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request', retryable: false })
+  })
+
+  it('audit record is persisted when grounding+schema conflict throws (full-stack)', async () => {
+    const schema = z.object({ answer: z.string() })
+    const fakeClient = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const sink = new RecordingSink()
+
+    const llmClient = createClient({
+      adapters: [geminiAdapter({ client: fakeClient })],
+      auth: fakeAuth({ apiKey: 'test-key' }),
+      pricing: geminiPricingSource(),
+      sink,
+    })
+
+    await expect(
+      llmClient.generate({
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
+        output: { schema },
+        config: {
+          providerOptions: { google: { tools: [{ googleSearch: {} }] } },
+        },
+      }),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+
+    expect(sink.records).toHaveLength(1)
+    expect(sink.last()?.status).toBe('api_error')
+    expect(sink.last()?.errorKind).toBe('bad_request')
+  })
+
+  it('succeeds when googleSearch tool is present WITHOUT outputSchema', async () => {
+    const fakeGrounding = {
+      webSearchQueries: ['what is the capital of France?'],
+      groundingChunks: [],
+    }
+    const client = makeFakeGemini(
+      fakeGeminiResponse({ text: 'Paris', groundingMetadata: fakeGrounding }),
+    )
+    const adapter = geminiAdapter({ client })
+
+    const result = await adapter.run(
+      makeResolvedReq({
+        config: {
+          serviceTier: 'flex',
+          providerOptions: { google: { tools: [{ googleSearch: {} }] } },
+        },
+      }),
+      FAKE_CTX,
+    )
+
+    expect(result.text).toBe('Paris')
+    const meta = result.providerMetadata as { groundingMetadata?: unknown } | undefined
+    expect(meta?.groundingMetadata).toEqual(fakeGrounding)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 19. Grounding — providerMetadata merge
+// ---------------------------------------------------------------------------
+
+describe('grounding — providerMetadata merge', () => {
+  it('includes only groundingMetadata when no promptFeedback', async () => {
+    const fakeGrounding = { webSearchQueries: ['q1'], groundingChunks: [] }
+    const client = makeFakeGemini(
+      fakeGeminiResponse({ text: 'hi', groundingMetadata: fakeGrounding }),
+    )
+    const adapter = geminiAdapter({ client })
+    const result = await adapter.run(makeResolvedReq(), FAKE_CTX)
+
+    const meta = result.providerMetadata as Record<string, unknown> | undefined
+    expect(meta?.['groundingMetadata']).toEqual(fakeGrounding)
+    expect(meta?.['promptFeedback']).toBeUndefined()
+  })
+
+  it('includes both promptFeedback and groundingMetadata when both are present', async () => {
+    const fakeGrounding = { webSearchQueries: ['test query'] }
+    const rawResp = {
+      candidates: [
+        {
+          content: { parts: [{ text: 'hello' }] },
+          finishReason: 'STOP',
+          groundingMetadata: fakeGrounding,
+        },
+      ],
+      promptFeedback: { safetyRatings: [] as unknown[] },
+      usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
+    }
+    const client = makeFakeGemini(rawResp)
+    const adapter = geminiAdapter({ client })
+    const result = await adapter.run(makeResolvedReq(), FAKE_CTX)
+
+    const meta = result.providerMetadata as Record<string, unknown> | undefined
+    expect(meta?.['promptFeedback']).toBeDefined()
+    expect(meta?.['groundingMetadata']).toEqual(fakeGrounding)
+  })
+
+  it('omits providerMetadata entirely when neither promptFeedback nor groundingMetadata is present', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'plain' }))
+    const adapter = geminiAdapter({ client })
+    const result = await adapter.run(makeResolvedReq(), FAKE_CTX)
+
+    expect(result.providerMetadata).toBeUndefined()
+  })
+
+  it('grounding metadata is persisted on the record (full-stack)', async () => {
+    const fakeGrounding = {
+      webSearchQueries: ['capital of France'],
+      groundingChunks: [{ web: { uri: 'https://example.com', title: 'Example' } }],
+    }
+    const fakeClient = makeFakeGemini(
+      fakeGeminiResponse({
+        text: 'Paris',
+        groundingMetadata: fakeGrounding,
+        promptTokenCount: 10,
+        candidatesTokenCount: 5,
+        finishReason: 'STOP',
+      }),
+    )
+    const sink = new RecordingSink()
+    const llmClient = createClient({
+      adapters: [geminiAdapter({ client: fakeClient })],
+      auth: fakeAuth({ apiKey: 'test-key' }),
+      pricing: geminiPricingSource(),
+      sink,
+    })
+
+    const result = await llmClient.generate({
+      model: 'gemini-2.5-pro',
+      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Capital of France?' }] }],
+      config: { providerOptions: { google: { tools: [{ googleSearch: {} }] } } },
+    })
+
+    const resultMeta = result.providerMetadata as Record<string, unknown> | undefined
+    expect(resultMeta?.['groundingMetadata']).toEqual(fakeGrounding)
+
+    expect(sink.records).toHaveLength(1)
+    const recordMeta = sink.last()?.providerMetadata as Record<string, unknown> | undefined
+    expect(recordMeta?.['groundingMetadata']).toEqual(fakeGrounding)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 20. Grounding — registry capabilities
+// ---------------------------------------------------------------------------
+
+describe('grounding — registry capabilities', () => {
+  it('all 7 Gemini model descriptors have capabilities.grounding === true', () => {
+    expect(geminiModelDescriptors).toHaveLength(7)
+    for (const desc of geminiModelDescriptors) {
+      expect(desc.capabilities?.grounding).toBe(true)
+    }
   })
 })

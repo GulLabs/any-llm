@@ -167,7 +167,7 @@ describe('geminiModelDescriptors — Batch 2b fields', () => {
     expect(found!.provider).toBe('google')
     expect(found!.capabilities?.reasoningApi).toBe('level')
     expect(found!.capabilities?.sampling).toBe('fixed')
-    expect(found!.capabilities?.grounding).toBeUndefined()
+    expect(found!.capabilities?.grounding).toBe(true)
     expect(found!.capabilities?.caching).toEqual({ explicit: true, minTokens: 4096 })
   })
 })

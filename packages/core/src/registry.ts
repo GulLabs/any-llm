@@ -257,6 +257,14 @@ export function makeGeminiConfigValidator(opts: {
  * Derived from the {@link GEMINI_PRICING} snapshot and the adapter's reasoning
  * detection (`gemini-2.5*` and `gemini-3*` both support thinkingConfig).
  * Extend or replace via `ClientConfig.modelRegistry`.
+ *
+ * Grounding support:
+ * Google Search grounding is supported on all Gemini 2.5 and 3.x models listed
+ * here.  Enable it by passing `{ googleSearch: {} }` in
+ * `config.providerOptions.google.tools`.  Note: grounding is mutually exclusive
+ * with structured output (`output.schema`) — the adapter enforces this at call
+ * time with a `bad_request` LlmError.  postbuzz uses grounding primarily with
+ * gemini-3.1-flash-lite and gemini-3.5-flash.
  */
 export const geminiModelDescriptors: ModelDescriptor[] = [
   // ── Gemini 2.5 series — thinkingBudget API, tunable sampling ────────────
@@ -271,6 +279,7 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       reasoningApi: 'budget',
       sampling: 'tunable',
       caching: { explicit: true, minTokens: 2048 },
+      grounding: true,
     },
     configJsonSchema: makeGeminiConfigSchema({ sampling: 'tunable' }),
     validateConfig: makeGeminiConfigValidator({ sampling: 'tunable' }),
@@ -285,6 +294,7 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       reasoningApi: 'budget',
       sampling: 'tunable',
       caching: { explicit: true, minTokens: 2048 },
+      grounding: true,
     },
     configJsonSchema: makeGeminiConfigSchema({ sampling: 'tunable' }),
     validateConfig: makeGeminiConfigValidator({ sampling: 'tunable' }),
@@ -299,6 +309,7 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       reasoningApi: 'budget',
       sampling: 'tunable',
       caching: { explicit: true, minTokens: 2048 },
+      grounding: true,
     },
     configJsonSchema: makeGeminiConfigSchema({ sampling: 'tunable' }),
     validateConfig: makeGeminiConfigValidator({ sampling: 'tunable' }),
@@ -316,6 +327,7 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       reasoningApi: 'level',
       sampling: 'fixed',
       caching: { explicit: true, minTokens: 4096 },
+      grounding: true,
     },
     configJsonSchema: makeGeminiConfigSchema({ sampling: 'fixed' }),
     validateConfig: makeGeminiConfigValidator({ sampling: 'fixed' }),
@@ -330,6 +342,7 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       reasoningApi: 'level',
       sampling: 'fixed',
       caching: { explicit: true, minTokens: 4096 },
+      grounding: true,
     },
     configJsonSchema: makeGeminiConfigSchema({ sampling: 'fixed' }),
     validateConfig: makeGeminiConfigValidator({ sampling: 'fixed' }),
@@ -344,6 +357,7 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       reasoningApi: 'level',
       sampling: 'fixed',
       caching: { explicit: true, minTokens: 4096 },
+      grounding: true,
     },
     configJsonSchema: makeGeminiConfigSchema({ sampling: 'fixed' }),
     validateConfig: makeGeminiConfigValidator({ sampling: 'fixed' }),
@@ -358,6 +372,7 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       reasoningApi: 'level',
       sampling: 'fixed',
       caching: { explicit: true, minTokens: 4096 },
+      grounding: true,
     },
     configJsonSchema: makeGeminiConfigSchema({ sampling: 'fixed' }),
     validateConfig: makeGeminiConfigValidator({ sampling: 'fixed' }),

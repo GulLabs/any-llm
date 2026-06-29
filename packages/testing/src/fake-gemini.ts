@@ -38,6 +38,8 @@ export interface GeminiCandidateLike {
    * e.g. `'STOP'`, `'MAX_TOKENS'`, `'SAFETY'`, `'OTHER'`.
    */
   finishReason?: string
+  /** Grounding metadata returned when Google Search grounding is active. */
+  groundingMetadata?: unknown
 }
 
 /**
@@ -120,6 +122,11 @@ export interface FakeGeminiResponseOpts {
   finishReason?: string
   modelVersion?: string
   responseId?: string
+  /**
+   * Optional grounding metadata to attach to the candidate.
+   * Pass a plain object, e.g. `{ webSearchQueries: ['q1'], groundingChunks: [] }`.
+   */
+  groundingMetadata?: unknown
 }
 
 /**
@@ -149,6 +156,7 @@ export function fakeGeminiResponse(opts: FakeGeminiResponseOpts = {}): GeminiRes
   const candidate: GeminiCandidateLike = {
     content: { parts },
     ...(opts.finishReason !== undefined ? { finishReason: opts.finishReason } : {}),
+    ...(opts.groundingMetadata !== undefined ? { groundingMetadata: opts.groundingMetadata } : {}),
   }
 
   // Build usage metadata — only include defined fields to satisfy

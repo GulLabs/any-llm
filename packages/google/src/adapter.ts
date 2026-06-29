@@ -21,7 +21,7 @@ import type {
   Part,
 } from '@gullabs/core'
 import type { ZodTypeAny } from 'zod'
-import { buildGoogleClient, FLEX_DEFAULT_TIMEOUT_MS } from './client.js'
+import { buildGoogleClient, FLEX_DEFAULT_TIMEOUT_MS, TRANSPORT_TIMEOUT_BUFFER_MS } from './client.js'
 import type {
   GeminiClientLike,
   GeminiGenerateConfig,
@@ -391,6 +391,28 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       }
 
       // ------------------------------------------------------------------
+      // 5b. Grounding ↔ structured-output conflict guard
+      //     Tools arrive via providerOptions.google; check after the merge.
+      // ------------------------------------------------------------------
+      const configAsAny = config as { tools?: unknown[] }
+      const groundingRequested =
+        Array.isArray(configAsAny.tools) &&
+        configAsAny.tools.some((t): boolean => {
+          if (t !== null && typeof t === 'object') {
+            const tool = t as Record<string, unknown>
+            return 'googleSearch' in tool || 'googleSearchRetrieval' in tool
+          }
+          return false
+        })
+
+      if (groundingRequested && req.outputSchema !== undefined) {
+        throw new LlmError(
+          'Grounding (googleSearch) cannot be combined with structured output (output.schema) on Gemini; choose one.',
+          { kind: 'bad_request', retryable: false },
+        )
+      }
+
+      // ------------------------------------------------------------------
       // 6. AbortSignal passthrough
       // Real SDK: GenerateContentConfig.abortSignal (in config, NOT in params)
       // ------------------------------------------------------------------
@@ -402,24 +424,41 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       // 7. Transport timeout — set httpOptions.timeout so the @google/genai
       //    HTTP transport does NOT preempt the AbortSignal hard ceiling.
       //
-      //    Policy:
-      //    - timeoutMs is set     → transport timeout = timeoutMs
-      //      (the AbortSignal fires at the same deadline; transport timeout
-      //       just prevents the SDK from killing the request earlier)
-      //    - serviceTier 'flex', no timeoutMs → FLEX_DEFAULT_TIMEOUT_MS (15 min)
-      //    - standard, no timeoutMs          → no forced timeout (SDK default)
+      //    Policy (precedence, highest first):
+      //    1. Caller-supplied httpOptions via providerOptions.google.httpOptions
+      //       WIN unconditionally; any extra fields are also preserved.
+      //    2. timeoutMs is set → computed transport timeout = timeoutMs +
+      //       TRANSPORT_TIMEOUT_BUFFER_MS so the engine's AbortSignal (hard
+      //       ceiling at timeoutMs) always fires before the SDK transport timer.
+      //    3. serviceTier 'flex', no timeoutMs → FLEX_DEFAULT_TIMEOUT_MS (no
+      //       buffer; there is no engine AbortSignal deadline in this case).
+      //    4. standard, no timeoutMs → no forced timeout (SDK default).
       //
-      //    exactOptionalPropertyTypes: only set when defined.
+      //    Merge order: computed timeout first, caller's httpOptions spread on
+      //    top so caller values always win.  Only assign config.httpOptions when
+      //    the merged object is non-empty (exactOptionalPropertyTypes-safe).
       // ------------------------------------------------------------------
-      const transportTimeoutMs: number | undefined =
+
+      // Capture caller-supplied httpOptions BEFORE we overwrite.
+      // These arrived via Object.assign(config, googleOpts) above and may
+      // include a caller timeout and/or other httpOptions fields.
+      const callerHttpOptions = config.httpOptions as Record<string, unknown> | undefined
+
+      const computedTimeoutMs: number | undefined =
         genConfig.timeoutMs !== undefined
-          ? genConfig.timeoutMs
+          ? genConfig.timeoutMs + TRANSPORT_TIMEOUT_BUFFER_MS
           : genConfig.serviceTier === 'flex'
             ? FLEX_DEFAULT_TIMEOUT_MS
             : undefined
 
-      if (transportTimeoutMs !== undefined) {
-        config.httpOptions = { timeout: transportTimeoutMs }
+      // Merge: our computed timeout is the base; caller wins on top.
+      const mergedHttpOptions: Record<string, unknown> = {
+        ...(computedTimeoutMs !== undefined ? { timeout: computedTimeoutMs } : {}),
+        ...callerHttpOptions,
+      }
+
+      if (Object.keys(mergedHttpOptions).length > 0) {
+        config.httpOptions = mergedHttpOptions as { timeout?: number }
       }
 
       // ------------------------------------------------------------------
@@ -534,9 +573,20 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
         ...(response.responseId !== undefined
           ? { responseId: response.responseId }
           : {}),
-        ...(response.promptFeedback !== undefined
-          ? { providerMetadata: response.promptFeedback as unknown as JsonValue }
-          : {}),
+        // Build providerMetadata — merge promptFeedback + groundingMetadata when present.
+        ...((): { providerMetadata: JsonValue } | Record<string, never> => {
+          const pf = response.promptFeedback
+          const gm = candidate.groundingMetadata
+          if (pf === undefined && gm === undefined) return {}
+          const meta: { [k: string]: JsonValue } = {}
+          if (pf !== undefined) {
+            meta['promptFeedback'] = pf as unknown as JsonValue
+          }
+          if (gm !== undefined) {
+            meta['groundingMetadata'] = gm as unknown as JsonValue
+          }
+          return { providerMetadata: meta as JsonValue }
+        })(),
       }
 
       return result
