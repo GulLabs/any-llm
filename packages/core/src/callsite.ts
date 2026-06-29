@@ -9,7 +9,7 @@
  * @module
  */
 
-import type { ZodType } from 'zod'
+import type { StandardSchemaV1 } from './standard-schema.js'
 import type { GenConfig } from './types.js'
 
 // ---------------------------------------------------------------------------
@@ -19,8 +19,8 @@ import type { GenConfig } from './types.js'
 /**
  * A reusable prompt template that bundles model, schema, and gen-config.
  *
- * @typeParam S - Zod schema type for structured output.  Defaults to `ZodType`
- *   (unstructured — no Zod validation, `output` will be `undefined`).
+ * @typeParam S - Standard Schema type for structured output.  Defaults to `StandardSchemaV1`
+ *   (unstructured — no validation, `output` will be `undefined`).
  *
  * @example
  * ```ts
@@ -33,7 +33,7 @@ import type { GenConfig } from './types.js'
  * })
  * ```
  */
-export interface CallSite<S extends ZodType = ZodType> {
+export interface CallSite<S extends StandardSchemaV1 = StandardSchemaV1> {
   /**
    * Stable identifier for this call site.
    * Persisted as `callSiteId` on every record for grouping/attribution.
@@ -45,7 +45,7 @@ export interface CallSite<S extends ZodType = ZodType> {
    */
   model: string
   /**
-   * Zod schema for structured output.
+   * Standard Schema for structured output.
    * When present, the engine validates `rawStructured` from the adapter and
    * exposes the typed result as `LlmResult.output`.
    */
@@ -96,6 +96,6 @@ export interface CallSite<S extends ZodType = ZodType> {
  * })
  * ```
  */
-export function defineCallSite<S extends ZodType>(opts: CallSite<S>): CallSite<S> {
+export function defineCallSite<S extends StandardSchemaV1>(opts: CallSite<S>): CallSite<S> {
   return opts
 }

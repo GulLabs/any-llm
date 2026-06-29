@@ -13,13 +13,20 @@ import { z } from 'zod'
 import {
   createClient,
   geminiPricingSource,
+  createModelRegistry,
   LlmError,
+  retryMiddleware,
 } from './index.js'
 import type {
   AdapterResult,
+  AdapterCtx,
+  ProviderAdapter,
+  ResolvedRequest,
   Usage,
   Telemetry,
   Logger,
+  CallStartEvent,
+  CallSuccessEvent,
 } from './index.js'
 import {
   FakeAdapter,
@@ -115,6 +122,12 @@ describe('engine — success path', () => {
     expect(rec.model).toBe('gemini-2.5-pro')
     expect(rec.inputTokens).toBe(100)
     expect(rec.outputTokens).toBe(20)
+
+    // result.callId and result.attemptId must match the persisted record
+    expect(result.callId).toBe('call_1')
+    expect(result.attemptId).toBe('attempt_1')
+    expect(result.callId).toBe(rec.callId)
+    expect(result.attemptId).toBe(rec.attemptId)
   })
 
   it('cost on result === cost on record (single source of truth)', async () => {
@@ -1034,5 +1047,280 @@ describe('engine — providerOptions deep-merge (Finding 3)', () => {
     const google = capturedConfigs[0]?.config.providerOptions?.['google'] as Record<string, unknown>
     // Array is last-write-wins, not merged.
     expect(google['tags']).toEqual(['x'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 12. pricingFamily routing
+// ---------------------------------------------------------------------------
+
+describe('engine — pricingFamily routing', () => {
+  it('pricingFamily on descriptor routes pricing to the family key', async () => {
+    // Use a model string that has no pricing entry of its own, but whose
+    // descriptor has pricingFamily pointing to 'gemini-2.5-pro' which IS priced.
+    const customRegistry = createModelRegistry([
+      {
+        id: 'my-custom-model',
+        provider: 'google',
+        pricingFamily: 'gemini-2.5-pro',
+        capabilities: { reasoning: false },
+      },
+    ])
+    const sink = new RecordingSink()
+    const client = createClient({
+      adapters: [new FakeAdapter('google', makeSuccessResult())],
+      auth: AUTH,
+      pricing: PRICING,
+      sink,
+      clock: new FakeClock(),
+      ids: new FakeIds(),
+      modelRegistry: customRegistry,
+    })
+
+    await client.generate({
+      model: 'my-custom-model',
+      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+    })
+
+    const rec = sink.records[0]!
+    // The record's model is the actual model string, not the pricingFamily.
+    expect(rec.model).toBe('my-custom-model')
+    // Cost should be computed (not null) because pricingFamily → 'gemini-2.5-pro' IS priced.
+    expect(rec.costMicroUsd).not.toBeNull()
+    expect(rec.pricingVersion).toBeDefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Standard Schema — engine validation path
+// ---------------------------------------------------------------------------
+
+describe('engine — Standard Schema validation (non-Zod)', () => {
+  /**
+   * A minimal hand-rolled Standard Schema v1 object.
+   * Validates that value is an object with a numeric `score` field.
+   */
+  function makeScoreSchema() {
+    return {
+      '~standard': {
+        version: 1 as const,
+        vendor: 'custom',
+        validate(value: unknown) {
+          if (
+            value !== null &&
+            typeof value === 'object' &&
+            'score' in value &&
+            typeof (value as Record<string, unknown>)['score'] === 'number'
+          ) {
+            return { value: value as { score: number } }
+          }
+          return { issues: [{ message: 'Expected object with numeric score' }] }
+        },
+        types: undefined as undefined,
+      },
+    }
+  }
+
+  it('validates structured output via ~standard.validate() and returns typed output', async () => {
+    const schema = makeScoreSchema()
+    const { client } = makeClient({
+      adapters: [
+        new FakeAdapter('google', makeSuccessResult({ rawStructured: { score: 42 } })),
+      ],
+    })
+
+    const result = await client.generate({
+      model: 'gemini-2.5-pro',
+      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Score?' }] }],
+      output: { schema },
+    })
+
+    expect(result.output).toEqual({ score: 42 })
+  })
+
+  it('throws parse_error when ~standard.validate() returns issues', async () => {
+    const schema = makeScoreSchema()
+    const { client } = makeClient({
+      adapters: [
+        new FakeAdapter('google', makeSuccessResult({ rawStructured: { wrong: 'data' } })),
+      ],
+    })
+
+    await expect(
+      client.generate({
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Score?' }] }],
+        output: { schema },
+      }),
+    ).rejects.toThrow(LlmError)
+
+    try {
+      await client.generate({
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Score?' }] }],
+        output: { schema },
+      })
+    } catch (err) {
+      expect(err).toBeInstanceOf(LlmError)
+      expect((err as LlmError).kind).toBe('parse_error')
+      expect((err as LlmError).message).toContain('Expected object with numeric score')
+    }
+  })
+
+  it('supports async validate() returning a Promise', async () => {
+    // Standard Schema allows validate() to return a Promise.
+    const asyncSchema = {
+      '~standard': {
+        version: 1 as const,
+        vendor: 'async-validator',
+        validate: async (value: unknown) => {
+          // Simulate async validation
+          await Promise.resolve()
+          if (value !== null && typeof value === 'object' && 'ok' in value) {
+            return { value: value as { ok: boolean } }
+          }
+          return { issues: [{ message: 'Expected object with ok field' }] }
+        },
+        types: undefined as undefined,
+      },
+    }
+
+    const { client } = makeClient({
+      adapters: [
+        new FakeAdapter('google', makeSuccessResult({ rawStructured: { ok: true } })),
+      ],
+    })
+
+    const result = await client.generate({
+      model: 'gemini-2.5-pro',
+      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'ok?' }] }],
+      output: { schema: asyncSchema },
+    })
+
+    expect(result.output).toEqual({ ok: true })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Reconcile loop: callId / attemptId / telemetry event types
+// ---------------------------------------------------------------------------
+
+describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
+  it('result.callId and result.attemptId match the persisted record', async () => {
+    const { client, sink } = makeClient()
+    const result = await client.generate({
+      model: 'gemini-2.5-pro',
+      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+    })
+    const rec = sink.last()!
+    expect(result.callId).toBe(rec.callId)
+    expect(result.attemptId).toBe(rec.attemptId)
+    expect(result.callId).toBeTypeOf('string')
+    expect(result.attemptId).toBeTypeOf('string')
+  })
+
+  it('with retry: callId is stable, result.attemptId is the succeeding attempt id', async () => {
+    let callCount = 0
+    const flakyAdapter: ProviderAdapter = {
+      id: 'google',
+      async run(_req: ResolvedRequest, _ctx: AdapterCtx): Promise<AdapterResult> {
+        callCount++
+        if (callCount === 1) {
+          throw new LlmError('transient', { kind: 'server', retryable: true })
+        }
+        return makeSuccessResult()
+      },
+    }
+
+    const sink = new RecordingSink()
+    const ids = new FakeIds()
+    const client = createClient({
+      adapters: [flakyAdapter],
+      auth: AUTH,
+      pricing: PRICING,
+      sink,
+      clock: new FakeClock(),
+      ids,
+      middleware: [retryMiddleware({ maxAttempts: 2, baseDelayMs: 0 })],
+    })
+
+    const result = await client.generate({
+      model: 'gemini-2.5-pro',
+      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+    })
+
+    // Two records written: one for the failed attempt, one for the success
+    expect(sink.records).toHaveLength(2)
+    const failedRecord = sink.records[0]!
+    const successRecord = sink.records[1]!
+    expect(successRecord.status).toBe('ok')
+
+    // callId is stable across both attempts
+    expect(result.callId).toBe(failedRecord.callId)
+    expect(result.callId).toBe(successRecord.callId)
+
+    // result.attemptId is the SUCCEEDING attempt (second record)
+    expect(result.attemptId).toBe(successRecord.attemptId)
+    // And it differs from the first (failed) attempt
+    expect(result.attemptId).not.toBe(failedRecord.attemptId)
+  })
+
+  it('error path: thrown LlmError carries callId and attemptId matching the error record', async () => {
+    const adapterErr = new LlmError('fail', { kind: 'server', retryable: false })
+    const adapter = new FakeAdapter('google', adapterErr)
+    const sink = new RecordingSink()
+    const client = createClient({
+      adapters: [adapter],
+      auth: AUTH,
+      pricing: PRICING,
+      sink,
+      clock: new FakeClock(),
+      ids: new FakeIds(),
+    })
+
+    let caughtErr: LlmError | undefined
+    try {
+      await client.generate({
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      })
+    } catch (e) {
+      caughtErr = e as LlmError
+    }
+
+    expect(caughtErr).toBeInstanceOf(LlmError)
+    expect(caughtErr!.callId).toBe('call_1')
+    expect(caughtErr!.callId).toBe(sink.last()!.callId)
+    expect(caughtErr!.attemptId).toBeTypeOf('string')
+    expect(caughtErr!.attemptId).toBe(sink.last()!.attemptId)
+  })
+
+  it('telemetry events carry metadata, callId, and model', async () => {
+    const startEvents: CallStartEvent[] = []
+    const successEvents: CallSuccessEvent[] = []
+    const telemetry: Telemetry = {
+      onStart: (e) => { startEvents.push(e) },
+      onSuccess: (e) => { successEvents.push(e) },
+    }
+
+    const { client } = makeClient({ telemetry })
+
+    await client.generate({
+      model: 'gemini-2.5-pro',
+      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      metadata: { tenantId: 'acme', traceId: 'trace-99' },
+    })
+
+    expect(startEvents).toHaveLength(1)
+    expect(startEvents[0]!.callId).toBeTypeOf('string')
+    expect(startEvents[0]!.model).toBe('gemini-2.5-pro')
+    expect(startEvents[0]!.metadata).toEqual({ tenantId: 'acme', traceId: 'trace-99' })
+
+    expect(successEvents).toHaveLength(1)
+    expect(successEvents[0]!.callId).toBe(startEvents[0]!.callId)
+    expect(successEvents[0]!.model).toBe('gemini-2.5-pro')
+    expect(successEvents[0]!.metadata).toEqual({ tenantId: 'acme', traceId: 'trace-99' })
+    expect(successEvents[0]!.usage).toBeDefined()
+    expect(successEvents[0]!.latencyMs).toBeGreaterThanOrEqual(0)
   })
 })

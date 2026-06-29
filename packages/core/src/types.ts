@@ -7,7 +7,7 @@
  * @module
  */
 
-import type { ZodType } from 'zod'
+import type { StandardSchemaV1 } from './standard-schema.js'
 
 // ---------------------------------------------------------------------------
 // Primitive JSON value (used throughout for open / forward-compat lanes)
@@ -106,10 +106,10 @@ export interface GenConfig {
 /**
  * A request to an LLM.
  *
- * @typeParam S - The Zod schema type for structured output.
- *   Defaults to `ZodType` (the base class) when unspecified.
+ * @typeParam S - Standard Schema type for structured output.
+ *   Defaults to `StandardSchemaV1` (the base interface) when unspecified.
  */
-export interface LlmRequest<S extends ZodType = ZodType> {
+export interface LlmRequest<S extends StandardSchemaV1 = StandardSchemaV1> {
   /**
    * Routing key — the engine maps this to a provider adapter.
    * v1 resolves `gemini-*`; unknown models throw `LlmError('bad_request')`.
@@ -121,7 +121,7 @@ export interface LlmRequest<S extends ZodType = ZodType> {
   messages: Message[]
   /**
    * When present, the adapter requests structured JSON output and the engine
-   * Zod-validates the raw response against `schema`.
+   * validates the raw response against `schema` via the Standard Schema protocol.
    */
   output?: { schema: S }
   /** Generation configuration; merged over library defaults and call-site defaults. */
@@ -234,12 +234,12 @@ export interface Cost {
 /**
  * The value returned by a successful (or partially-successful) LLM call.
  *
- * @typeParam T - The inferred output type from the Zod schema, if any.
+ * @typeParam T - The inferred output type from the Standard Schema, if any.
  */
-export interface LlmResult<T> {
+export interface LlmResult<T = unknown> {
   /**
    * Validated structured output.
-   * Present only when `request.output.schema` was supplied and Zod validation
+   * Present only when `request.output.schema` was supplied and schema validation
    * succeeded.  Absent on plain-text or failed-parse calls.
    */
   output?: T
@@ -278,4 +278,17 @@ export interface LlmResult<T> {
    * Stored as JsonValue to avoid a hard coupling to provider-specific types.
    */
   providerMetadata?: JsonValue
+  /**
+   * Library-assigned stable identifier for this logical call.
+   * Use this to correlate the result with the persisted `LlmCallRecord`
+   * (same `callId` on the record) and with provider logs.
+   */
+  callId: string
+  /**
+   * Library-assigned identifier for the specific attempt that produced this
+   * result.  With retries, this is the SUCCESSFUL attempt's id — distinct
+   * from earlier attempts that failed.  Matches the persisted record's
+   * `attemptId` when the sink write succeeds (the sink is fail-open).
+   */
+  attemptId: string
 }

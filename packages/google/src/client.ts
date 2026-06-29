@@ -182,19 +182,18 @@ export interface GeminiClientLike {
  *
  * @param auth - API key or Vertex credentials.
  */
-export function buildGoogleClient(auth: AuthMaterial): GeminiClientLike {
+export async function buildGoogleClient(auth: AuthMaterial): Promise<GeminiClientLike> {
   // Import the real SDK — only called at runtime when no client is injected.
   // The cast is safe: GeminiGenerateParams is a structural subset of
   // GenerateContentParameters; GeminiResponseShape is a subset of
   // GenerateContentResponse.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { GoogleGenAI } = require('@google/genai') as typeof import('@google/genai')
+  const { GoogleGenAI } = await import('@google/genai')
 
   const options =
     'apiKey' in auth
       ? { apiKey: auth.apiKey }
       : {
-          // VERIFY: Vertex auth with @google/genai v1.52+
+          // Vertex auth is handled automatically by @google/genai when GOOGLE_CLOUD_PROJECT and credentials are set (requires SDK v1.52+)
           // GoogleGenAIOptions uses vertexai:true + project + location for Vertex AI.
           vertexai: true,
           project: auth.vertex.project,

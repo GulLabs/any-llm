@@ -34,6 +34,40 @@ export type FakeAdapterEntry =
   | Error
   | Record<string, unknown>
 
+/**
+ * Internal discriminated-union queue entry.
+ * Normalised at enqueue time so `run()` never mis-classifies a plain-object
+ * error that happens to carry a `usage` key (e.g. `{ status: 429, usage: null }`).
+ */
+type QueueEntry =
+  | { kind: 'result'; result: AdapterResult }
+  | { kind: 'throw'; error: unknown }
+
+/**
+ * Normalise a public {@link FakeAdapterEntry} into an internal {@link QueueEntry}.
+ *
+ * An entry is a genuine {@link AdapterResult} only when **both**:
+ * - `model` is a non-empty string, and
+ * - `usage` is a non-null object.
+ *
+ * Everything else (including `Error` instances and plain HTTP-style objects
+ * such as `{ status: 429, usage: null }`) is treated as a throw.
+ */
+function normalizeEntry(entry: FakeAdapterEntry): QueueEntry {
+  if (entry instanceof Error) {
+    return { kind: 'throw', error: entry }
+  }
+  const e = entry as Record<string, unknown>
+  if (
+    typeof e['model'] === 'string' &&
+    typeof e['usage'] === 'object' &&
+    e['usage'] !== null
+  ) {
+    return { kind: 'result', result: entry as AdapterResult }
+  }
+  return { kind: 'throw', error: entry }
+}
+
 // ---------------------------------------------------------------------------
 // FakeAdapter
 // ---------------------------------------------------------------------------
@@ -66,7 +100,7 @@ export class FakeAdapter implements ProviderAdapter {
   /** All {@link ResolvedRequest} objects received by this adapter, in order. */
   readonly calls: ResolvedRequest[] = []
 
-  private readonly _entries: FakeAdapterEntry[]
+  private readonly _entries: QueueEntry[]
 
   /**
    * Optional artificial delay before returning/throwing, in milliseconds.
@@ -86,7 +120,8 @@ export class FakeAdapter implements ProviderAdapter {
     opts?: { delayMs?: number },
   ) {
     this.id = id
-    this._entries = Array.isArray(entries) ? entries : [entries]
+    const raw = Array.isArray(entries) ? entries : [entries]
+    this._entries = raw.map(normalizeEntry)
     this._delayMs = opts?.delayMs ?? 0
   }
 
@@ -99,20 +134,18 @@ export class FakeAdapter implements ProviderAdapter {
 
     // Pick entry: sequential, clamped to last when exhausted.
     const idx = Math.min(this.calls.length - 1, this._entries.length - 1)
-    const entry: FakeAdapterEntry | undefined = this._entries[idx]
+    const entry: QueueEntry | undefined = this._entries[idx]
 
     if (entry === undefined) {
       // Should never happen since _entries is guaranteed non-empty.
       throw new Error('FakeAdapter: no entries configured')
     }
 
-    // If it looks like an AdapterResult (has the required `usage` field), return it.
-    // Otherwise throw it (covers Error instances and plain-object HTTP-style errors).
-    if (!(entry instanceof Error) && 'usage' in entry) {
-      return entry as AdapterResult
+    if (entry.kind === 'result') {
+      return entry.result
     }
 
-    throw entry
+    throw entry.error
   }
 }
 

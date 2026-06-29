@@ -7,7 +7,7 @@
  * @module
  */
 
-import { LlmError, classifyError } from '@gullabs/core'
+import { LlmError, classifyError, assertNever } from '@gullabs/core'
 import type {
   ProviderAdapter,
   ResolvedRequest,
@@ -140,7 +140,7 @@ export interface GeminiAdapterOptions {
    * simulate construction failures (e.g. bad credentials) without importing
    * the real `@google/genai` SDK.  Never set this in production code.
    */
-  _clientFactory?: (auth: AuthMaterial) => GeminiClientLike
+  _clientFactory?: (auth: AuthMaterial) => GeminiClientLike | Promise<GeminiClientLike>
 }
 
 // ---------------------------------------------------------------------------
@@ -207,10 +207,9 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       // ------------------------------------------------------------------
       const reasoning = genConfig.reasoning
       if (reasoning !== undefined) {
-        const is25Model = /^gemini-2\.5/.test(model)
-        const is3xModel = /^gemini-3/.test(model)
+        const reasoningApi = req.modelDescriptor?.capabilities?.reasoningApi
 
-        if (is25Model) {
+        if (reasoningApi === 'budget') {
           // gemini-2.5* → thinkingBudget
           const budget =
             reasoning.budgetTokens !== undefined
@@ -231,7 +230,7 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
               details: 'budgetTokens takes precedence over effort for thinkingBudget',
             })
           }
-        } else if (is3xModel) {
+        } else if (reasoningApi === 'level') {
           // gemini-3.* → thinkingLevel
           // Real SDK ThinkingLevel enum: "LOW" | "MEDIUM" | "HIGH" | "MINIMAL"
           let thinkingLevel: string | undefined
@@ -249,6 +248,8 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
               case 'high':
                 thinkingLevel = 'HIGH'
                 break
+              default:
+                assertNever(reasoning.effort)
             }
           }
 
@@ -266,7 +267,7 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
             ...(reasoning.includeThoughts === true ? { includeThoughts: true } : {}),
           }
         } else {
-          // Unknown model generation — emit unsupported warning
+          // No descriptor or descriptor has no reasoningApi — emit unsupported warning.
           warnings.push({
             type: 'reasoning-mapping',
             quality: 'unsupported',
@@ -283,16 +284,31 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
         outputSchemaRequested = true
         config.responseMimeType = 'application/json'
 
-        const geminiSchema = zodToGeminiSchema(req.outputSchema as ZodTypeAny)
-        if (geminiSchema !== undefined) {
-          config.responseSchema = geminiSchema
+        if (req.outputSchema['~standard'].vendor === 'zod') {
+          // Legitimate vendor-specific cast: we've confirmed this is a Zod schema,
+          // so casting to ZodTypeAny for the Zod-specific converter is safe.
+          const geminiSchema = zodToGeminiSchema(req.outputSchema as ZodTypeAny)
+          if (geminiSchema !== undefined) {
+            config.responseSchema = geminiSchema
+          } else {
+            warnings.push({
+              type: 'unsupported-setting',
+              setting: 'output.schema',
+              details:
+                'Could not convert Zod schema to Gemini responseSchema; ' +
+                'proceeding with responseMimeType only. Engine will still validate.',
+            })
+          }
         } else {
+          // Non-Zod schema: native provider schema enforcement is unavailable.
+          // The engine still validates output via Standard Schema, so correctness
+          // is preserved — only the provider-side enforcement optimization is skipped.
           warnings.push({
-            type: 'unsupported-setting',
-            setting: 'output.schema',
-            details:
-              'Could not convert Zod schema to Gemini responseSchema; ' +
-              'proceeding with responseMimeType only. Engine will still Zod-validate.',
+            type: 'other',
+            message:
+              `Native Gemini responseSchema conversion is not available for vendor ` +
+              `"${req.outputSchema['~standard'].vendor}"; ` +
+              `proceeding with responseMimeType only. Engine will validate output client-side via Standard Schema.`,
           })
         }
       }
@@ -331,7 +347,7 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       try {
         const buildClient = opts?._clientFactory ?? buildGoogleClient
         const client: GeminiClientLike =
-          opts?.client !== undefined ? opts.client : buildClient(ctx.auth)
+          opts?.client !== undefined ? opts.client : await buildClient(ctx.auth)
         response = await client.models.generateContent(params)
       } catch (rawErr) {
         // Classify SDK errors → LlmError
@@ -411,12 +427,6 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       const usage = mapUsage(response.usageMetadata)
       const finishReason = mapFinishReason(candidate.finishReason)
 
-      // Build provider metadata (forward-compat blob).
-      const providerMetadata: JsonValue =
-        response.promptFeedback !== undefined
-          ? (response.promptFeedback as unknown as JsonValue)
-          : undefined as unknown as JsonValue
-
       const result: AdapterResult = {
         model,
         usage,
@@ -436,7 +446,6 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
           : {}),
       }
 
-      void providerMetadata // used above in the spread
       return result
     },
   }

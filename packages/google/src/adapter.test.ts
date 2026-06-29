@@ -189,6 +189,10 @@ describe('reasoning mapping', () => {
     await adapter.run(
       makeResolvedReq({
         model: 'gemini-2.5-pro',
+        modelDescriptor: {
+          id: 'gemini-2.5-pro', provider: 'google',
+          capabilities: { reasoning: true, structuredOutput: true, reasoningApi: 'budget' },
+        },
         config: {
           serviceTier: 'flex',
           reasoning: { effort: 'high' },
@@ -210,6 +214,10 @@ describe('reasoning mapping', () => {
     await adapter.run(
       makeResolvedReq({
         model: 'gemini-2.5-flash',
+        modelDescriptor: {
+          id: 'gemini-2.5-flash', provider: 'google',
+          capabilities: { reasoning: true, structuredOutput: true, reasoningApi: 'budget' },
+        },
         config: {
           serviceTier: 'flex',
           reasoning: { budgetTokens: 4096 },
@@ -231,6 +239,10 @@ describe('reasoning mapping', () => {
     await adapter.run(
       makeResolvedReq({
         model: 'gemini-2.5-pro',
+        modelDescriptor: {
+          id: 'gemini-2.5-pro', provider: 'google',
+          capabilities: { reasoning: true, structuredOutput: true, reasoningApi: 'budget' },
+        },
         config: { serviceTier: 'flex', reasoning: { effort: 'none' } },
       }),
       FAKE_CTX,
@@ -249,6 +261,10 @@ describe('reasoning mapping', () => {
     await adapter.run(
       makeResolvedReq({
         model: 'gemini-3.0-pro',
+        modelDescriptor: {
+          id: 'gemini-3.0-pro', provider: 'google',
+          capabilities: { reasoning: true, reasoningApi: 'level' },
+        },
         config: {
           serviceTier: 'flex',
           reasoning: { effort: 'high' },
@@ -270,6 +286,10 @@ describe('reasoning mapping', () => {
     await adapter.run(
       makeResolvedReq({
         model: 'gemini-3.5-pro',
+        modelDescriptor: {
+          id: 'gemini-3.5-pro', provider: 'google',
+          capabilities: { reasoning: true, reasoningApi: 'level' },
+        },
         config: { serviceTier: 'flex', reasoning: { effort: 'low' } },
       }),
       FAKE_CTX,
@@ -288,6 +308,10 @@ describe('reasoning mapping', () => {
     const result = await adapter.run(
       makeResolvedReq({
         model: 'gemini-3.0-ultra',
+        modelDescriptor: {
+          id: 'gemini-3.0-ultra', provider: 'google',
+          capabilities: { reasoning: true, reasoningApi: 'level' },
+        },
         config: { serviceTier: 'flex', reasoning: { budgetTokens: 1000 } },
       }),
       FAKE_CTX,
@@ -312,6 +336,10 @@ describe('reasoning mapping', () => {
     const result = await adapter.run(
       makeResolvedReq({
         model: 'gemini-2.5-pro',
+        modelDescriptor: {
+          id: 'gemini-2.5-pro', provider: 'google',
+          capabilities: { reasoning: true, structuredOutput: true, reasoningApi: 'budget' },
+        },
         config: { serviceTier: 'flex', reasoning: { includeThoughts: true } },
       }),
       FAKE_CTX,
@@ -328,6 +356,10 @@ describe('reasoning mapping', () => {
     await adapter.run(
       makeResolvedReq({
         model: 'gemini-2.5-pro',
+        modelDescriptor: {
+          id: 'gemini-2.5-pro', provider: 'google',
+          capabilities: { reasoning: true, structuredOutput: true, reasoningApi: 'budget' },
+        },
         config: { serviceTier: 'flex', reasoning: { includeThoughts: true } },
       }),
       FAKE_CTX,
@@ -963,5 +995,121 @@ describe('full-stack integration', () => {
     // Error record should still be persisted (fail-closed call, fail-open sink)
     expect(sink.records).toHaveLength(1)
     expect(sink.last()?.status).toBe('content_filter')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Standard Schema — non-Zod vendor path
+// ---------------------------------------------------------------------------
+
+describe('Standard Schema — non-Zod vendor (e.g. valibot)', () => {
+  /**
+   * A hand-rolled Standard Schema v1 object with vendor 'valibot'.
+   * Validates that the value has a `name` property of type string.
+   */
+  function makeCustomSchema<T extends { name: string }>(): import('@gullabs/core').StandardSchemaV1<T, T> {
+    return {
+      '~standard': {
+        version: 1 as const,
+        vendor: 'valibot',
+        validate(value: unknown) {
+          if (
+            value !== null &&
+            typeof value === 'object' &&
+            'name' in value &&
+            typeof (value as Record<string, unknown>)['name'] === 'string'
+          ) {
+            return { value: value as T }
+          }
+          return { issues: [{ message: 'Expected object with string name' }] }
+        },
+        types: undefined,
+      },
+    }
+  }
+
+  it('emits a warning when vendor is not zod and skips Gemini native responseSchema', async () => {
+    const schema = makeCustomSchema<{ name: string }>()
+    const client = makeFakeGemini(
+      fakeGeminiResponse({ text: JSON.stringify({ name: 'Alice' }) }),
+    )
+
+    const adapter = geminiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({ outputSchema: schema }),
+      FAKE_CTX,
+    )
+
+    // The adapter should warn that native schema enforcement was skipped.
+    const schemaWarning = result.warnings.find(
+      (w) => w.type === 'other' && 'message' in w && w.message.includes('valibot'),
+    )
+    expect(schemaWarning).toBeDefined()
+    expect(schemaWarning?.type).toBe('other')
+
+    // rawStructured should be populated (adapter still parses JSON).
+    expect(result.rawStructured).toEqual({ name: 'Alice' })
+  })
+
+  it('engine validates output via Standard Schema for non-Zod vendor', async () => {
+    const schema = makeCustomSchema<{ name: string }>()
+    const client = makeFakeGemini(
+      fakeGeminiResponse({ text: JSON.stringify({ name: 'Bob' }) }),
+    )
+
+    // Use createClient to test the full engine validation path.
+    const llmClient = createClient({
+      adapters: [geminiAdapter({ client })],
+      auth: fakeAuth({ apiKey: 'test-key' }),
+      pricing: geminiPricingSource(),
+    })
+
+    const result = await llmClient.generate({
+      model: 'gemini-2.5-pro',
+      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Name?' }] }],
+      output: { schema },
+    })
+
+    // Engine validated and returned the typed output.
+    expect(result.output).toEqual({ name: 'Bob' })
+    // Warning about skipped native schema should propagate to result.
+    const schemaWarning = result.warnings.find(
+      (w) => w.type === 'other' && 'message' in w && w.message.includes('valibot'),
+    )
+    expect(schemaWarning).toBeDefined()
+  })
+
+  it('engine throws parse_error when non-Zod Standard Schema validation fails', async () => {
+    const schema = makeCustomSchema<{ name: string }>()
+    const client = makeFakeGemini(
+      // Return invalid JSON (missing the name field).
+      fakeGeminiResponse({ text: JSON.stringify({ wrong: 'field' }) }),
+    )
+
+    const llmClient = createClient({
+      adapters: [geminiAdapter({ client })],
+      auth: fakeAuth({ apiKey: 'test-key' }),
+      pricing: geminiPricingSource(),
+    })
+
+    await expect(
+      llmClient.generate({
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Name?' }] }],
+        output: { schema },
+      }),
+    ).rejects.toThrow(LlmError)
+
+    // Verify the error kind
+    try {
+      await llmClient.generate({
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Name?' }] }],
+        output: { schema },
+      })
+    } catch (err) {
+      expect(err).toBeInstanceOf(LlmError)
+      expect((err as LlmError).kind).toBe('parse_error')
+    }
   })
 })

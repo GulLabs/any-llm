@@ -4,7 +4,7 @@
  * @example
  * ```ts
  * import { geminiAdapter } from '@gullabs/google'
- * import { createClient, geminiPricingSource } from '@gullabs/core'
+ * import { createClient, geminiPricingSource, envAuth } from '@gullabs/core'
  *
  * const client = createClient({
  *   adapters: [geminiAdapter()],

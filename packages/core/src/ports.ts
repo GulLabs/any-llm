@@ -5,16 +5,17 @@
  * expressed as an interface here.  Host applications implement whichever
  * ports they need; adapters implement {@link ProviderAdapter}.
  *
- * Deferred ports (not in v1 scope): `RateLimiter`, `Redactor`, `BlobStore`,
+ * Deferred ports (not in v1 scope): `Redactor`, `BlobStore`,
  * `ConfigSource`, `FileStore`, streaming `stream()`.
  *
  * @module
  */
 
-import type { ZodType } from 'zod'
-import type { JsonValue, Usage, FinishReason, Warning, Message, GenConfig } from './types.js'
+import type { StandardSchemaV1 } from './standard-schema.js'
+import type { JsonValue, Usage, FinishReason, Warning, Message, GenConfig, LlmResult, CallMetadata, Cost } from './types.js'
 import type { LlmCallRecord } from './record.js'
-import type { LlmError } from './errors.js'
+import type { LlmError, LlmErrorKind } from './errors.js'
+import type { ModelDescriptor } from './registry.js'
 
 // ---------------------------------------------------------------------------
 // Adapter seam
@@ -32,11 +33,11 @@ export interface ResolvedRequest {
   /** Conversation history with rendered content. */
   messages: Message[]
   /**
-   * Zod schema for structured output.
-   * The adapter uses this to set the provider-specific response schema;
-   * validation is performed by the engine, not the adapter.
+   * Standard Schema for structured output. The adapter uses this to set the
+   * provider-specific response schema (if its vendor is recognized); the engine
+   * owns validation via `schema['~standard'].validate()`.
    */
-  outputSchema?: ZodType
+  outputSchema?: StandardSchemaV1
   /**
    * Merged generation config.
    * `serviceTier` is always present (defaulted to `'flex'` by the engine).
@@ -44,6 +45,13 @@ export interface ResolvedRequest {
   config: Required<Pick<GenConfig, 'serviceTier'>> & GenConfig
   /** Propagated abort signal (timeout + caller cancel merged). */
   signal?: AbortSignal
+  /**
+   * Registry descriptor for the resolved model, if available.
+   * Adapters use this to drive model-specific behaviour (e.g. which
+   * thinkingConfig API variant to use) without hard-coding model-string
+   * heuristics.
+   */
+  modelDescriptor?: ModelDescriptor
 }
 
 /**
@@ -67,7 +75,7 @@ export interface AdapterCtx {
 export interface AdapterResult {
   /**
    * Raw structured output from the provider.
-   * The engine will Zod-validate this against `request.outputSchema`.
+   * The engine will Standard-Schema-validate this against `request.outputSchema`.
    * `unknown` so the adapter is not coupled to any schema library.
    */
   rawStructured?: unknown
@@ -119,6 +127,89 @@ export interface ProviderAdapter {
    * @throws {@link LlmError} — adapters must classify SDK errors before throwing.
    */
   run(req: ResolvedRequest, ctx: AdapterCtx): Promise<AdapterResult>
+}
+
+// ---------------------------------------------------------------------------
+// Rate-limiter port
+// ---------------------------------------------------------------------------
+
+/**
+ * A function that MUST be called exactly once to signal the end of the
+ * rate-limited window for a single acquired slot.
+ *
+ * The engine guarantees `Release` is called on every exit path (success and
+ * error) after a successful {@link RateLimiter.acquire}.  Implementations that
+ * track concurrency use it to free the slot; implementations based on a
+ * pre-send wait (e.g. Upstash token bucket) may treat it as a no-op.
+ * Note: if a timeout or caller-abort fires while the adapter is still running
+ * (because the adapter ignores `ctx.signal`), the engine calls `Release` as
+ * soon as the cancellation race rejects — which may be BEFORE the underlying
+ * provider request actually stops.  Concurrency-slot accuracy therefore depends
+ * on adapters honoring the abort signal cooperatively.
+ */
+export type Release = () => void
+
+/**
+ * Pre-send pacing / backpressure seam.
+ *
+ * The engine calls {@link acquire} **before** invoking the provider adapter,
+ * so the limiter can delay or block the call until the provider's rate limit
+ * allows it.  This is PRE-SEND backpressure, not a post-hoc check — callers
+ * may wait arbitrarily long inside `acquire`.
+ *
+ * ## Key format
+ * The engine builds keys as `"${provider}:${model}"` (e.g. `"google:gemini-2.5-pro"`).
+ * Rate limits are per-provider+model because providers enforce quotas per model,
+ * and a single instance may call multiple models concurrently.
+ *
+ * ## Signal
+ * If the caller (or the engine timeout) fires the `signal` while a call is
+ * waiting inside `acquire`, the implementation MUST reject with an appropriate
+ * error.  The engine's `classifyError` will map an `AbortError` to
+ * `kind: 'aborted'` and a timeout error to `kind: 'timeout'`, so no special
+ * classification is required in the limiter itself.
+ *
+ * ## Release contract
+ * `acquire` resolves to a {@link Release} function that MUST be called exactly
+ * once on every exit path (success or error) after a successful acquire.  The
+ * engine guarantees this.  A broken (throwing) Release is swallowed by the
+ * engine so it does not mask the real result or error.
+ *
+ * ## Not fail-open
+ * Unlike sinks and telemetry, a rejection from `acquire` **propagates** — the
+ * whole point of this port is to be able to refuse or delay calls.  Do not
+ * catch errors from `acquire`.
+ *
+ * ## Canonical implementations
+ *
+ * **Upstash-Redis token bucket** (distributed, multi-machine):
+ * The wait and quota logic live inside `acquire`; `Release` is a no-op because
+ * the bucket is decremented atomically before the call proceeds.  A single
+ * `@gullabs/rate-limiter-upstash` package would wrap the Upstash REST API
+ * and implement this interface.  No Upstash/Redis dependency belongs in core.
+ *
+ * **Temporal host**:
+ * Temporal task-queue rate limiting (via `maxConcurrentActivityTaskExecutors`
+ * and workflow `RateLimitInterceptor`) gates execution upstream, so the engine
+ * running inside a Temporal activity typically uses the no-op
+ * `NOOP_RATE_LIMITER` — the seam is satisfied trivially.
+ *
+ * **In-process concurrency cap** (tests / single-node):
+ * Use `inMemoryRateLimiter` from `@gullabs/core` to enforce a per-key
+ * concurrency limit without any network dependency.
+ */
+export interface RateLimiter {
+  /**
+   * Block until the caller is cleared to send a request, then resolve a
+   * {@link Release} function.
+   *
+   * @param key    - Per-provider+model key: `"${provider}:${model}"`.
+   * @param signal - Combined abort signal from the engine (caller + timeout).
+   *                 If it fires while waiting, reject immediately.
+   * @returns A {@link Release} that MUST be called exactly once after the
+   *          acquire resolves, on every exit path.
+   */
+  acquire(key: string, signal?: AbortSignal): Promise<Release>
 }
 
 // ---------------------------------------------------------------------------
@@ -227,29 +318,171 @@ export interface Logger {
 }
 
 /**
+ * Event emitted when a logical LLM call begins (before any attempt).
+ *
+ * @remarks
+ * `metadata` carries the caller's domain anchors as high-cardinality attributes.
+ * Suitable for log fields and OTel span tags; do NOT promote arbitrary keys to
+ * metric labels (cardinality risk).
+ */
+export interface CallStartEvent {
+  /** Stable call identifier (matches persisted record). */
+  callId: string
+  /** Model string as supplied by the caller. */
+  model: string
+  /** Call-site identifier, if the call was made via `runStructured`. */
+  callSiteId?: string
+  /** Caller-supplied domain metadata (opaque; never branch on contents). */
+  metadata: CallMetadata
+}
+
+/**
+ * Event emitted after a successful LLM call (post-sink, post-retry if any).
+ *
+ * @remarks
+ * `metadata` carries the caller's domain anchors as high-cardinality attributes.
+ * Suitable for log fields and OTel span tags; do NOT promote arbitrary keys to
+ * metric labels (cardinality risk).
+ */
+export interface CallSuccessEvent {
+  /** Stable call identifier (matches persisted record). */
+  callId: string
+  /** Attempt identifier of the successful attempt. */
+  attemptId: string
+  /** Model string as supplied by the caller. */
+  model: string
+  /** Call-site identifier, if the call was made via `runStructured`. */
+  callSiteId?: string
+  /** Caller-supplied domain metadata (opaque; never branch on contents). */
+  metadata: CallMetadata
+  /** Wall-clock time from call start to success, in milliseconds. */
+  latencyMs: number
+  /** Token usage for this call. */
+  usage: Usage
+  /** Cost in micro-USD (absent when model is not in the pricing table). */
+  cost?: Cost
+}
+
+/**
+ * Event emitted when a logical LLM call fails (after all retries exhausted).
+ *
+ * @remarks
+ * `metadata` carries the caller's domain anchors as high-cardinality attributes.
+ * Suitable for log fields and OTel span tags; do NOT promote arbitrary keys to
+ * metric labels (cardinality risk).
+ */
+export interface CallErrorEvent {
+  /** Stable call identifier (matches persisted record). */
+  callId: string
+  /**
+   * Attempt identifier of the last failing attempt.
+   * Absent when a middleware threw before any attempt ran (no attempt executed,
+   * so there is nothing to reference). When set, identifies the attempt that
+   * ran; the sink is fail-open so the persisted row may be absent if the
+   * write failed.
+   */
+  attemptId?: string
+  /** Model string as supplied by the caller. */
+  model: string
+  /** Call-site identifier, if the call was made via `runStructured`. */
+  callSiteId?: string
+  /** Caller-supplied domain metadata (opaque; never branch on contents). */
+  metadata: CallMetadata
+  /** Wall-clock time from call start to final failure, in milliseconds. */
+  latencyMs: number
+  /** The error kind that caused the failure. */
+  errorKind: LlmErrorKind
+  /** Whether the error was considered retryable. */
+  retryable: boolean
+}
+
+/**
  * Optional observability hook for Sentry / PostHog / OpenTelemetry integration.
  *
  * All methods are optional so hosts can implement only what they need.
  * Telemetry failures are swallowed by the engine (fail-open).
+ *
+ * @remarks
+ * Events fire once per logical call (not per retry attempt). The `metadata`
+ * field on each event carries caller domain anchors as high-cardinality
+ * attributes — suitable for log fields and OTel span tags, but implementers
+ * MUST NOT promote arbitrary metadata keys to metric labels (cardinality risk).
  */
 export interface Telemetry {
   /**
-   * Called immediately before the adapter is invoked.
+   * Called immediately before the middleware chain runs (once per logical call).
    * May return an opaque span handle that is forwarded to `onSuccess` / `onError`.
    */
-  onStart?(e: object): unknown
+  onStart?(e: CallStartEvent): unknown
   /**
    * Called after a successful call (adapter returned, record persisted).
-   * @param e - Summary event object.
+   * @param e - Success event with usage, cost, and latency.
    * @param span - The opaque span returned by `onStart`, if any.
    */
-  onSuccess?(e: object, span?: unknown): void
+  onSuccess?(e: CallSuccessEvent, span?: unknown): void
   /**
-   * Called when the call throws an `LlmError`.
-   * @param e - Error event object including `kind` and `retryable`.
+   * Called when the call throws an `LlmError` (after all retries exhausted).
+   * @param e - Error event including `kind` and `retryable`.
    * @param span - The opaque span returned by `onStart`, if any.
    */
-  onError?(e: object, span?: unknown): void
+  onError?(e: CallErrorEvent, span?: unknown): void
+}
+
+// ---------------------------------------------------------------------------
+// Middleware seam
+// ---------------------------------------------------------------------------
+
+/**
+ * Engine execution context passed through the middleware chain.
+ *
+ * Contains only the stable, call-level fields every middleware needs.
+ * The `signal` here is the raw caller abort signal — NOT the per-attempt
+ * combined (caller + timeout) signal.  The engine adds the timeout signal
+ * inside `runAttempt` for each attempt independently.
+ */
+export interface EngineCtx {
+  /** Unique ID for this logical call (stable across retries). */
+  callId: string
+  /** Time source injected from the client config. */
+  clock: Clock
+  /** Structured logger injected from the client config. */
+  logger: Logger
+  /** Caller-supplied abort signal (does NOT include per-attempt timeouts). */
+  signal?: AbortSignal
+}
+
+/**
+ * The innermost handler in the middleware chain.
+ *
+ * The engine's `runAttempt` function satisfies this type.  Each invocation
+ * generates a fresh `attemptId` and sinks exactly one record.
+ */
+export type Handler = (req: ResolvedRequest, ctx: EngineCtx) => Promise<LlmResult>
+
+/**
+ * A unit of logic that wraps the call chain.
+ *
+ * Middleware is composed outermost-first: the first element in the array is
+ * the first to receive the request and the last to see the response.
+ *
+ * Calling `next(req, ctx)` zero times short-circuits the chain.
+ * Calling it once is the normal passthrough.
+ * Calling it multiple times (with or without delay) implements retry patterns.
+ */
+export interface Middleware {
+  /**
+   * Stable, unique identifier for this middleware.
+   * Validated for uniqueness at `createClient` construction time.
+   */
+  id: string
+  /**
+   * Intercept a request.  Call `next(req, ctx)` to proceed to the next layer.
+   *
+   * @param req - The resolved request (may be forwarded or modified).
+   * @param ctx - Stable call-level context (callId, clock, logger, signal).
+   * @param next - The next handler in the chain; the innermost is `runAttempt`.
+   */
+  intercept(req: ResolvedRequest, ctx: EngineCtx, next: Handler): Promise<LlmResult>
 }
 
 // ---------------------------------------------------------------------------

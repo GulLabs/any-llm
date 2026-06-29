@@ -10,6 +10,7 @@
 
 import type { JsonValue, Usage, FinishReason, Warning, GenConfig, Cost } from './types.js'
 import type { LlmErrorKind, LlmError } from './errors.js'
+import { assertNever } from './assert.js'
 
 // ---------------------------------------------------------------------------
 // Record interface
@@ -199,8 +200,14 @@ function errorKindToStatus(kind: LlmErrorKind): LlmCallRecord['status'] {
       return 'aborted'
     case 'content_filter':
       return 'content_filter'
-    default:
+    case 'invalid_auth':
+    case 'rate_limited':
+    case 'server':
+    case 'bad_request':
+    case 'unknown':
       return 'api_error'
+    default:
+      return assertNever(kind)
   }
 }
 
@@ -302,6 +309,23 @@ function sanitizeDetails(
 }
 
 // ---------------------------------------------------------------------------
+// Token clamping helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Clamps a single token count to a finite non-negative value.
+ *
+ * Returns `{ value: 0, changed: true }` when the input is non-finite or
+ * negative, pushing a warning.  Returns `{ value: val, changed: false }` when
+ * the value is already valid.
+ */
+function clampToken(name: string, val: number, warnings: Warning[]): { value: number; changed: boolean } {
+  if (Number.isFinite(val) && val >= 0) return { value: val, changed: false }
+  warnings.push({ type: 'other', message: `${name} (${String(val)}) is non-finite or negative; clamped to 0` })
+  return { value: 0, changed: true }
+}
+
+// ---------------------------------------------------------------------------
 // Usage invariant sanitizer
 // ---------------------------------------------------------------------------
 
@@ -341,50 +365,29 @@ function sanitizeUsage(usage: Usage): SanitizeUsageResult {
   // Policy (fail-open): clamp + warn, never throw.  The GROSS subset checks
   // below use the clamped values so that downstream cost math never sees NaN.
   // ------------------------------------------------------------------
-  let inputTokens = usage.inputTokens
-  let outputTokens = usage.outputTokens
-
-  // `isFinite` coerces its argument to number; covers both NaN and ±Infinity.
+  // `clampToken` uses Number.isFinite (no coercion) and checks val >= 0.
   // We intentionally check the runtime value even though TypeScript says `number`
   // because malformed adapter output can sneak in undefined/NaN via a cast.
-  if (!isFinite(inputTokens) || inputTokens < 0) {
-    warnings.push({
-      type: 'other',
-      message: `inputTokens (${String(inputTokens)}) is non-finite or negative; clamped to 0`,
-    })
-    inputTokens = 0
-    needsRebuild = true
-  }
+  const inputResult = clampToken('inputTokens', usage.inputTokens, warnings)
+  let inputTokens = inputResult.value
+  if (inputResult.changed) needsRebuild = true
 
-  if (!isFinite(outputTokens) || outputTokens < 0) {
-    warnings.push({
-      type: 'other',
-      message: `outputTokens (${String(outputTokens)}) is non-finite or negative; clamped to 0`,
-    })
-    outputTokens = 0
-    needsRebuild = true
-  }
+  const outputResult = clampToken('outputTokens', usage.outputTokens, warnings)
+  let outputTokens = outputResult.value
+  if (outputResult.changed) needsRebuild = true
 
   let cachedInputTokens = usage.cachedInputTokens
   let thinkingTokens = usage.thinkingTokens
 
   // Clamp non-finite or negative SUBSET token counts to 0 before GROSS check.
-  if (cachedInputTokens !== undefined && (!isFinite(cachedInputTokens) || cachedInputTokens < 0)) {
-    warnings.push({
-      type: 'other',
-      message: `cachedInputTokens (${String(cachedInputTokens)}) is non-finite or negative; clamped to 0`,
-    })
-    cachedInputTokens = 0
-    needsRebuild = true
+  if (cachedInputTokens !== undefined) {
+    const r = clampToken('cachedInputTokens', cachedInputTokens, warnings)
+    if (r.changed) { cachedInputTokens = r.value; needsRebuild = true }
   }
 
-  if (thinkingTokens !== undefined && (!isFinite(thinkingTokens) || thinkingTokens < 0)) {
-    warnings.push({
-      type: 'other',
-      message: `thinkingTokens (${String(thinkingTokens)}) is non-finite or negative; clamped to 0`,
-    })
-    thinkingTokens = 0
-    needsRebuild = true
+  if (thinkingTokens !== undefined) {
+    const r = clampToken('thinkingTokens', thinkingTokens, warnings)
+    if (r.changed) { thinkingTokens = r.value; needsRebuild = true }
   }
 
   // ------------------------------------------------------------------

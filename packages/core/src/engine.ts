@@ -11,11 +11,14 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import type { ZodType } from 'zod'
+import type { StandardSchemaV1 } from './standard-schema.js'
 import { LlmError, classifyError } from './errors.js'
 import { buildRecord, normalizeUsage } from './record.js'
+import type { ModelRegistry } from './registry.js'
+import { defaultGeminiRegistry } from './registry.js'
 import type {
   ProviderAdapter,
+  AdapterResult,
   AuthProvider,
   PricingSource,
   UsageSink,
@@ -23,8 +26,16 @@ import type {
   IdGenerator,
   Logger,
   Telemetry,
+  RateLimiter,
+  Release,
   ResolvedRequest,
   AdapterCtx,
+  Middleware,
+  EngineCtx,
+  Handler,
+  CallStartEvent,
+  CallSuccessEvent,
+  CallErrorEvent,
 } from './ports.js'
 import type {
   LlmRequest,
@@ -83,6 +94,16 @@ export interface ClientConfig {
    */
   telemetry?: Telemetry
   /**
+   * Pre-send pacing / backpressure implementation.
+   *
+   * Called with key `"${provider}:${model}"` before the adapter is invoked.
+   * A rejection from `acquire` propagates (NOT fail-open) — the call fails.
+   *
+   * Defaults to a no-op limiter ({@link NOOP_RATE_LIMITER}) that resolves
+   * immediately with a no-op Release.
+   */
+  rateLimiter?: RateLimiter
+  /**
    * Library-level generation defaults.
    * Merged under call-site config and per-call config (lowest priority).
    */
@@ -95,6 +116,29 @@ export interface ClientConfig {
    * `LlmError('bad_request')`.
    */
   route?(model: string, adapters: ProviderAdapter[]): ProviderAdapter
+  /**
+   * Model registry used to derive the provider from a model string.
+   * Defaults to {@link defaultGeminiRegistry} (all models in the Gemini
+   * pricing snapshot).  Supply a custom registry to add new models or
+   * override provider mappings without forking the library.
+   */
+  modelRegistry?: ModelRegistry
+  /**
+   * Ordered middleware stack applied to every call, outermost-first.
+   *
+   * The first element is the outermost (first to receive the request, last to
+   * see the response).  The engine's `runAttempt` function is the innermost
+   * handler.
+   *
+   * Each middleware's `id` must be unique across the array; `createClient`
+   * throws `LlmError('bad_request')` on duplicates.
+   *
+   * @example
+   * ```ts
+   * middleware: [retryMiddleware({ maxAttempts: 3 })]
+   * ```
+   */
+  middleware?: Middleware[]
 }
 
 /**
@@ -131,10 +175,10 @@ export interface Client {
    *
    * @returns A typed {@link LlmResult} on success; throws {@link LlmError} on failure.
    */
-  generate<S extends ZodType>(
+  generate<S extends StandardSchemaV1>(
     request: LlmRequest<S>,
     opts?: GenerateOptions,
-  ): Promise<LlmResult<S['_output']>>
+  ): Promise<LlmResult<StandardSchemaV1.InferOutput<S>>>
 
   /**
    * Execute an LLM call described by a {@link CallSite} with optional
@@ -148,11 +192,11 @@ export interface Client {
    *
    * @returns A typed {@link LlmResult} with `output` typed to the call-site schema.
    */
-  runStructured<S extends ZodType>(
+  runStructured<S extends StandardSchemaV1>(
     callSite: CallSite<S>,
     vars?: Record<string, string>,
     opts?: RunStructuredOptions,
-  ): Promise<LlmResult<S['_output']>>
+  ): Promise<LlmResult<StandardSchemaV1.InferOutput<S>>>
 }
 
 // ---------------------------------------------------------------------------
@@ -166,6 +210,16 @@ const NOOP_LOGGER: Logger = {
 }
 
 const NOOP_TELEMETRY: Telemetry = {}
+
+/**
+ * A no-op {@link RateLimiter} that resolves immediately with a no-op Release.
+ * Used when no `rateLimiter` is configured in {@link ClientConfig}.
+ */
+const NOOP_RATE_LIMITER: RateLimiter = {
+  async acquire(_key: string, _signal?: AbortSignal): Promise<Release> {
+    return () => {}
+  },
+}
 
 const DEFAULT_IDS: IdGenerator = {
   callId: () => randomUUID(),
@@ -275,34 +329,40 @@ function deepMergeConfig(...configs: Array<GenConfig | undefined>): GenConfig {
 /**
  * Merges multiple AbortSignals into a single signal that fires when any input
  * fires.  Immediately resolved if any input is already aborted.
+ * Returns both the merged signal and a cleanup function that removes all
+ * registered event listeners to prevent leaks.
  */
-function mergeSignals(signals: AbortSignal[]): AbortSignal {
+function mergeSignals(signals: AbortSignal[]): { signal: AbortSignal; cleanup(): void } {
   const controller = new AbortController()
+  const cleanups: Array<() => void> = []
   for (const sig of signals) {
     if (sig.aborted) {
       controller.abort(sig.reason)
-      return controller.signal
+      return { signal: controller.signal, cleanup() {} }
     }
-    sig.addEventListener(
-      'abort',
-      () => { controller.abort(sig.reason) },
-      { once: true },
-    )
+    const handler = () => { controller.abort(sig.reason) }
+    sig.addEventListener('abort', handler, { once: true })
+    cleanups.push(() => sig.removeEventListener('abort', handler))
   }
-  return controller.signal
+  return {
+    signal: controller.signal,
+    cleanup() {
+      for (const fn of cleanups) fn()
+    },
+  }
 }
 
 /**
  * Derives the provider identifier from a model string for routing and records.
  *
- * | Model prefix   | Provider   |
- * |----------------|------------|
- * | `gemini-*`     | `'google'` |
- * | `provider/…`   | `provider` |
- * | (other)        | `'unknown'`|
+ * Resolution order:
+ * 1. Registry descriptor — uses `descriptor.provider` when found.
+ * 2. `provider/model` slash convention → `provider`.
+ * 3. `'unknown'` when nothing matches.
  */
-function deriveProvider(model: string): string {
-  if (model.startsWith('gemini')) return 'google'
+function deriveProvider(model: string, registry: ModelRegistry): string {
+  const descriptor = registry.resolve(model)
+  if (descriptor !== undefined) return descriptor.provider
   const slash = model.indexOf('/')
   if (slash > 0) return model.slice(0, slash)
   return 'unknown'
@@ -310,11 +370,16 @@ function deriveProvider(model: string): string {
 
 /**
  * Default router: use the single adapter when only one is configured; otherwise
- * match by derived provider from the model string.
+ * match by derived provider from the model string using the prebuilt adapter map.
  *
  * @throws {@link LlmError} `'bad_request'` when no matching adapter is found.
  */
-function defaultRoute(model: string, adapters: ProviderAdapter[]): ProviderAdapter {
+function defaultRoute(
+  model: string,
+  adapters: ProviderAdapter[],
+  adapterMap: Map<string, ProviderAdapter>,
+  registry: ModelRegistry,
+): ProviderAdapter {
   if (adapters.length === 0) {
     throw new LlmError('No adapters configured', {
       kind: 'bad_request',
@@ -324,8 +389,8 @@ function defaultRoute(model: string, adapters: ProviderAdapter[]): ProviderAdapt
   if (adapters.length === 1) {
     return adapters[0]!
   }
-  const provider = deriveProvider(model)
-  const found = adapters.find((a) => a.id === provider)
+  const provider = deriveProvider(model, registry)
+  const found = adapterMap.get(provider)
   if (found === undefined) {
     throw new LlmError(
       `No adapter found for model "${model}" (derived provider: "${provider}")`,
@@ -333,6 +398,289 @@ function defaultRoute(model: string, adapters: ProviderAdapter[]): ProviderAdapt
     )
   }
   return found
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline helper: cancellation race
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds the cancellation scaffolding for a single pipeline invocation.
+ *
+ * Returns:
+ *  - `raceParts`      — rejection promises to include in every `Promise.race`.
+ *  - `combinedSignal` — merged abort signal forwarded to the adapter.
+ *  - `cleanup()`      — idempotent; clears the timer and removes the
+ *                       caller-abort listener.  Safe to call on both the
+ *                       success path and the catch block.
+ *
+ * Invariant A (timeout-beats-abort microtask ordering):
+ *   The timeout `setTimeout` callback rejects the timeout promise BEFORE
+ *   calling `timeoutController.abort()`.  This guarantees `kind:'timeout'`
+ *   wins `Promise.race` even against a synchronously-aborting adapter.
+ *   Do not reorder the two operations inside the timer callback.
+ */
+function buildCancellationRace(
+  callerSignal: AbortSignal | undefined,
+  timeoutMs: number | undefined,
+): { raceParts: Array<Promise<never>>; combinedSignal: AbortSignal | undefined; cleanup(): void } {
+  const raceParts: Array<Promise<never>> = []
+
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let callerAbortCleanup: (() => void) | undefined
+
+  // ── (a) Caller-abort race promise ────────────────────────────────────────
+  // adapter.run() is raced against a rejection promise that fires when
+  // callerSignal fires, ensuring caller cancellation always terminates the
+  // call even if the adapter ignores ctx.signal.  Already-aborted signals
+  // are handled synchronously via a pre-rejected promise.
+  if (callerSignal !== undefined) {
+    if (callerSignal.aborted) {
+      // Already aborted — pre-rejected promise settles the race immediately.
+      raceParts.push(
+        Promise.reject<never>(
+          new LlmError('Request aborted by caller', {
+            kind: 'aborted',
+            retryable: false,
+            ...(callerSignal.reason !== undefined
+              ? { cause: callerSignal.reason as unknown }
+              : {}),
+          }),
+        ),
+      )
+    } else {
+      // Not yet aborted — create a promise that rejects when the signal fires.
+      let abortRejectFn!: (err: LlmError) => void
+      const abortPromise = new Promise<never>((_, reject) => {
+        abortRejectFn = reject
+      })
+      const abortHandler = () => {
+        abortRejectFn(
+          new LlmError('Request aborted by caller', {
+            kind: 'aborted',
+            retryable: false,
+            ...(callerSignal.reason !== undefined
+              ? { cause: callerSignal.reason as unknown }
+              : {}),
+          }),
+        )
+      }
+      callerSignal.addEventListener('abort', abortHandler, { once: true })
+      callerAbortCleanup = () =>
+        callerSignal.removeEventListener('abort', abortHandler)
+      raceParts.push(abortPromise)
+    }
+  }
+
+  // ── (b) Timeout race promise ──────────────────────────────────────────────
+  // Determinism guarantee (Finding 2 / Invariant A):
+  //   The timeout promise rejects BEFORE its AbortController is fired.
+  //   This means even a signal-aware adapter that throws AbortError
+  //   synchronously on the abort signal cannot win the race with kind:'aborted'
+  //   when the real cause was a timeout.
+  let timeoutController: AbortController | undefined
+  if (timeoutMs !== undefined) {
+    timeoutController = new AbortController()
+    const ms = timeoutMs
+    let timeoutRejectFn!: (err: LlmError) => void
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutRejectFn = reject
+    })
+    timer = setTimeout(() => {
+      // REJECT FIRST — schedules the 'timeout' LlmError into the microtask
+      // queue before the abort signal fires.  This guarantees 'timeout' wins
+      // Promise.race even when the adapter rejects synchronously on abort.
+      timeoutRejectFn(
+        new LlmError(`Request timed out after ${ms}ms`, {
+          kind: 'timeout',
+          retryable: true,
+        }),
+      )
+      // Abort AFTER scheduling the rejection — cooperative adapters stop early.
+      timeoutController!.abort()
+    }, ms)
+    raceParts.push(timeoutPromise)
+  }
+
+  // Build combined signal for cooperative adapters (caller + timeout merged).
+  const signalParts: AbortSignal[] = []
+  if (callerSignal !== undefined) signalParts.push(callerSignal)
+  if (timeoutController !== undefined) signalParts.push(timeoutController.signal)
+
+  let mergedSignalCleanup: (() => void) | undefined
+  const combinedSignal: AbortSignal | undefined =
+    signalParts.length === 0
+      ? undefined
+      : signalParts.length === 1
+        ? signalParts[0]
+        : (() => {
+            const merged = mergeSignals(signalParts)
+            mergedSignalCleanup = merged.cleanup
+            return merged.signal
+          })()
+
+  // Idempotent cleanup — safe to call on both success and error paths.
+  function cleanup(): void {
+    if (timer !== undefined) {
+      clearTimeout(timer)
+      timer = undefined
+    }
+    callerAbortCleanup?.()
+    callerAbortCleanup = undefined
+    mergedSignalCleanup?.()
+    mergedSignalCleanup = undefined
+  }
+
+  return { raceParts, combinedSignal, cleanup }
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline helper: record builders
+// ---------------------------------------------------------------------------
+
+/** Resolved config type used throughout the pipeline. */
+type ResolvedConfig = Required<Pick<GenConfig, 'serviceTier'>> & GenConfig
+
+/**
+ * Assembles the {@link LlmCallRecord} for the success path (Step 10).
+ */
+function buildSuccessRecord(
+  callId: string,
+  attemptId: string,
+  callSiteId: string | undefined,
+  provider: string,
+  model: string,
+  metadata: CallMetadata | undefined,
+  resolvedConfig: ResolvedConfig,
+  adapterResult: AdapterResult,
+  normalizedUsage: Usage,
+  cost: Cost | undefined,
+  allWarnings: Warning[],
+  latencyMs: number,
+  startMs: number,
+): ReturnType<typeof buildRecord> {
+  return buildRecord({
+    callId,
+    attemptId,
+    ...(callSiteId !== undefined ? { callSiteId } : {}),
+    provider,
+    model,
+    ...(adapterResult.modelVersion !== undefined
+      ? { modelVersion: adapterResult.modelVersion }
+      : {}),
+    ...(adapterResult.responseId !== undefined
+      ? { responseId: adapterResult.responseId }
+      : {}),
+    serviceTier: resolvedConfig.serviceTier,
+    usage: normalizedUsage,
+    ...(cost !== undefined ? { cost } : {}),
+    latencyMs,
+    status: 'ok',
+    ...(adapterResult.finishReason !== undefined
+      ? { finishReason: adapterResult.finishReason }
+      : {}),
+    warnings: allWarnings,
+    generationConfig: resolvedConfig,
+    metadata: metadata ?? {},
+    createdAt: new Date(startMs).toISOString(),
+    ...(adapterResult.reasoningText !== undefined
+      ? { reasoningText: adapterResult.reasoningText }
+      : {}),
+    ...(adapterResult.providerMetadata !== undefined
+      ? { providerMetadata: adapterResult.providerMetadata }
+      : {}),
+  })
+}
+
+/**
+ * Assembles the {@link LlmCallRecord} for the error path (catch block postmortem).
+ */
+function buildErrorRecord(
+  callId: string,
+  attemptId: string,
+  callSiteId: string | undefined,
+  provider: string,
+  model: string,
+  metadata: CallMetadata | undefined,
+  resolvedConfig: ResolvedConfig,
+  usage: Usage,
+  latencyMs: number,
+  startMs: number,
+  err: LlmError,
+): ReturnType<typeof buildRecord> {
+  return buildRecord({
+    callId,
+    attemptId,
+    ...(callSiteId !== undefined ? { callSiteId } : {}),
+    provider,
+    model,
+    usage,
+    latencyMs,
+    // buildRecord overrides status from error.kind via errorKindToStatus.
+    status: 'api_error',
+    generationConfig: resolvedConfig,
+    metadata: metadata ?? {},
+    createdAt: new Date(startMs).toISOString(),
+    error: err,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline helper: fail-open sink write
+// ---------------------------------------------------------------------------
+
+/**
+ * Writes `record` to `sink` if a sink is configured.
+ * Failures are logged and swallowed (fail-open) — a broken sink must never
+ * fail the LLM call.
+ */
+async function recordToSink(
+  sink: UsageSink | undefined,
+  record: ReturnType<typeof buildRecord>,
+  logger: Logger,
+  callId: string,
+): Promise<void> {
+  if (sink !== undefined) {
+    try {
+      await sink.record(record)
+    } catch (sinkErr) {
+      logger.error({ callId, error: String(sinkErr) }, 'llm.call.sink.failed')
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Internal helper: attach call context to errors (idempotent)
+// ---------------------------------------------------------------------------
+
+/**
+ * Attaches `callId` and `attemptId` to an `LlmError` if not already set.
+ *
+ * `LlmError` fields are `readonly` at the TypeScript level (compile-time only).
+ * We use `Object.defineProperty` to set them at runtime when they were not
+ * supplied to the constructor — which is the case for errors thrown by adapters
+ * before the engine had a chance to enrich them.
+ *
+ * This helper is idempotent: if either field is already set, it is left as-is.
+ */
+function attachCallContext(
+  err: LlmError,
+  ctx: { callId: string; attemptId?: string },
+): void {
+  if (err.callId === undefined) {
+    Object.defineProperty(err, 'callId', {
+      value: ctx.callId,
+      enumerable: true,
+      configurable: true,
+    })
+  }
+  if (ctx.attemptId !== undefined && err.attemptId === undefined) {
+    Object.defineProperty(err, 'attemptId', {
+      value: ctx.attemptId,
+      enumerable: true,
+      configurable: true,
+    })
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -366,8 +714,40 @@ export function createClient(config: ClientConfig): Client {
   const ids: IdGenerator = config.ids ?? DEFAULT_IDS
   const logger: Logger = config.logger ?? NOOP_LOGGER
   const telemetry: Telemetry = config.telemetry ?? NOOP_TELEMETRY
+  const rateLimiter: RateLimiter = config.rateLimiter ?? NOOP_RATE_LIMITER
   const libDefaults: GenConfig = config.defaults ?? {}
-  const routeFn = config.route ?? defaultRoute
+  const registry: ModelRegistry = config.modelRegistry ?? defaultGeminiRegistry
+
+  // Build O(1) adapter map at construction time — also detects duplicate ids.
+  const adapterMap = new Map<string, ProviderAdapter>()
+  for (const a of adapters) {
+    if (adapterMap.has(a.id)) {
+      throw new LlmError(`Duplicate adapter id "${a.id}"`, {
+        kind: 'bad_request',
+        retryable: false,
+      })
+    }
+    adapterMap.set(a.id, a)
+  }
+
+  // Validate middleware IDs are unique.
+  if (config.middleware !== undefined && config.middleware.length > 0) {
+    const seenIds = new Set<string>()
+    for (const mw of config.middleware) {
+      if (seenIds.has(mw.id)) {
+        throw new LlmError(`Duplicate middleware id "${mw.id}"`, {
+          kind: 'bad_request',
+          retryable: false,
+        })
+      }
+      seenIds.add(mw.id)
+    }
+  }
+
+  const routeFn =
+    config.route ??
+    ((model: string, adpts: ProviderAdapter[]) =>
+      defaultRoute(model, adpts, adapterMap, registry))
 
   // -------------------------------------------------------------------------
   // Core pipeline (shared by generate + runStructured)
@@ -382,347 +762,325 @@ export function createClient(config: ClientConfig): Client {
   //   The record is ALWAYS attempted, even when the adapter was never reached.
   // -------------------------------------------------------------------------
 
-  async function runPipeline<S extends ZodType>(
+  async function runPipeline<S extends StandardSchemaV1>(
     request: LlmRequest<S>,
-    resolvedConfig: Required<Pick<GenConfig, 'serviceTier'>> & GenConfig,
+    resolvedConfig: ResolvedConfig,
     callSiteId: string | undefined,
     callerSignal: AbortSignal | undefined,
-  ): Promise<LlmResult<S['_output']>> {
-    const startMs = clock.now()
-
-    // Step 3: IDs
+  ): Promise<LlmResult<StandardSchemaV1.InferOutput<S>>> {
+    // ── (a) Call-level prologue ────────────────────────────────────────────
+    // ONE callId per logical call.  ONE onStart.  ONE log-start entry.
+    // These fire before the middleware chain runs (including any retry logic).
+    const callStartMs = clock.now()
     const callId = ids.callId()
-    const attemptId = ids.attemptId()
 
-    // Step 4: telemetry.onStart + logger
+    // lastAttemptId is assigned ONLY when runAttempt actually begins.
+    // It stays undefined if a middleware throws before next() is called.
+    let lastAttemptId: string | undefined
+
     let span: unknown
     try {
-      span = telemetry.onStart?.({
+      const startEvent: CallStartEvent = {
         callId,
-        attemptId,
         model: request.model,
-        callSiteId,
-      })
+        metadata: request.metadata ?? {},
+        ...(callSiteId !== undefined ? { callSiteId } : {}),
+      }
+      span = telemetry.onStart?.(startEvent)
     } catch { /* telemetry failures are always swallowed */ }
 
-    logger.info(
-      { callId, attemptId, model: request.model, callSiteId },
-      'llm.call.start',
-    )
+    logger.info({ callId, model: request.model, callSiteId, metadata: request.metadata ?? {} }, 'llm.call.start')
 
-    // Track progressive state for the error-path record builder.
-    let provider = deriveProvider(request.model)
-    let normalizedResult: { usage: Usage; warnings: Warning[] } | undefined
-    let cost: Cost | undefined
-    let timer: ReturnType<typeof setTimeout> | undefined
-    // Cleanup thunk for the caller-abort listener — called on every exit path.
-    let callerAbortCleanup: (() => void) | undefined
+    // Build the pre-resolved request for the middleware chain.
+    // The per-attempt signal is NOT included here — each attempt builds its
+    // own combined (caller + timeout) signal inside runAttempt.
+    const descriptor = registry.resolve(request.model)
+    const preResolvedReq: ResolvedRequest = {
+      model: request.model,
+      messages: request.messages,
+      config: resolvedConfig,
+      ...(request.system !== undefined ? { system: request.system } : {}),
+      ...(request.output?.schema !== undefined
+        ? { outputSchema: request.output.schema }
+        : {}),
+      ...(descriptor !== undefined ? { modelDescriptor: descriptor } : {}),
+    }
 
-    try {
-      // Step 5: Resolve adapter (may throw LlmError 'bad_request')
-      const adapter = routeFn(request.model, adapters)
-      provider = adapter.id
+    // EngineCtx carries stable call-level state.  ctx.signal is the raw
+    // caller signal (no timeout component) — the timeout is added per-attempt.
+    const engineCtx: EngineCtx = {
+      callId,
+      clock,
+      logger,
+      ...(callerSignal !== undefined ? { signal: callerSignal } : {}),
+    }
 
-      // Step 6: Auth
-      const authMaterial = await auth.credentials(provider)
+    // ── (b) runAttempt — the innermost Handler ─────────────────────────────
+    //
+    // Generates a FRESH attemptId on every invocation.
+    // Does: route → auth → acquire → adapter.run → normalize → validate →
+    //        cost → buildRecord → sink → return.
+    // The cancellation race and rate-limiter acquire/release live here so
+    // each retry gets its own independent timeout window.
+    //
+    // Errors: classify → build error record → sink (fail-open) → rethrow.
+    // The call-level telemetry.onError and logger.error are fired by the
+    // epilogue after the chain settles, NOT here.
+    async function runAttempt(req: ResolvedRequest, ctx: EngineCtx): Promise<LlmResult<StandardSchemaV1.InferOutput<S>>> {
+      const attemptStartMs = ctx.clock.now()
+      // Generate a fresh attemptId on every invocation.
+      // Assign to lastAttemptId so the call-level epilogue can reference it.
+      const attemptId = ids.attemptId()
+      lastAttemptId = attemptId
 
-      // ── Cancellation setup ─────────────────────────────────────────────────
-      // adapter.run() is raced against two independent rejection promises:
-      //
-      //   (a) Caller-abort  — rejects LlmError('aborted') when callerSignal fires,
-      //       ensuring caller cancellation always terminates the call even if the
-      //       adapter ignores ctx.signal.  Already-aborted signals are handled
-      //       synchronously via a pre-rejected promise.
-      //
-      //   (b) Timeout       — rejects LlmError('timeout') when the timer fires.
-      //
-      // Determinism guarantee (Finding 2):
-      //   The timeout promise rejects BEFORE its AbortController is fired.
-      //   This means even a signal-aware adapter that throws AbortError
-      //   synchronously on the abort signal cannot win the race with kind:'aborted'
-      //   when the real cause was a timeout.
-      //
-      // Cleanup: clearTimeout + callerAbortCleanup are called on EVERY exit path
-      // (success and error) to prevent timer and event-listener leaks.
-      //
-      // The combined signal is still forwarded to the adapter so cooperative
-      // adapters can stop early (best-effort).
+      // Track progressive state for the error-path record builder.
+      let provider = deriveProvider(req.model, registry)
+      let normalizedResult: { usage: Usage; warnings: Warning[] } | undefined
+      let cost: Cost | undefined
+      // Release function returned by rateLimiter.acquire — called on every exit path.
+      let release: Release | undefined
+      // Cancellation cleanup — idempotent; safe to call on both paths.
+      let cleanup: () => void = () => {}
 
-      const raceParts: Array<Promise<never>> = []
+      try {
+        // Step 5: Resolve adapter (may throw LlmError 'bad_request')
+        const adapter = routeFn(req.model, adapters)
+        provider = adapter.id
 
-      // (a) Caller-abort race promise.
-      if (callerSignal !== undefined) {
-        if (callerSignal.aborted) {
-          // Already aborted — pre-rejected promise settles the race immediately.
-          raceParts.push(
-            Promise.reject<never>(
-              new LlmError('Request aborted by caller', {
-                kind: 'aborted',
-                retryable: false,
-                ...(callerSignal.reason !== undefined
-                  ? { cause: callerSignal.reason as unknown }
-                  : {}),
-              }),
-            ),
-          )
-        } else {
-          // Not yet aborted — create a promise that rejects when the signal fires.
-          let abortRejectFn!: (err: LlmError) => void
-          const abortPromise = new Promise<never>((_, reject) => {
-            abortRejectFn = reject
-          })
-          const abortHandler = () => {
-            abortRejectFn(
-              new LlmError('Request aborted by caller', {
-                kind: 'aborted',
-                retryable: false,
-                ...(callerSignal.reason !== undefined
-                  ? { cause: callerSignal.reason as unknown }
-                  : {}),
-              }),
+        // Step 6: Auth
+        const authMaterial = await auth.credentials(provider)
+
+        // ── Per-attempt cancellation setup ──────────────────────────────────
+        // adapter.run() is raced against two independent rejection promises:
+        //
+        //   (a) Caller-abort  — rejects LlmError('aborted') when ctx.signal fires.
+        //   (b) Timeout       — rejects LlmError('timeout') when the timer fires.
+        //
+        // Each attempt gets its own timeout window (independent of how long
+        // prior attempts / retry backoffs took).
+        //
+        // Invariant A (timeout-beats-abort microtask ordering): the timeout
+        // promise rejects BEFORE its AbortController is fired — guaranteed by
+        // buildCancellationRace.  Do not reorder.
+        const cancellation = buildCancellationRace(ctx.signal, req.config.timeoutMs)
+        cleanup = cancellation.cleanup
+        const { raceParts, combinedSignal } = cancellation
+
+        // Step 6b: Rate-limiter acquire — PRE-SEND backpressure.
+        const acquirePromise = rateLimiter.acquire(`${provider}:${req.model}`, combinedSignal)
+        release =
+          raceParts.length > 0
+            ? await Promise.race([acquirePromise, ...raceParts])
+            : await acquirePromise
+
+        // Step 6c: Build adapter-specific request (with the combined signal)
+        // and the AdapterCtx.
+        const adapterReq: ResolvedRequest = combinedSignal !== undefined
+          ? { ...req, signal: combinedSignal }
+          : req
+
+        const adapterCtx: AdapterCtx = {
+          auth: authMaterial,
+          logger: ctx.logger,
+          ...(combinedSignal !== undefined ? { signal: combinedSignal } : {}),
+        }
+
+        // Step 7: Run adapter — raced against all cancellation promises.
+        const runPromise = adapter.run(adapterReq, adapterCtx)
+        const adapterResult =
+          raceParts.length > 0
+            ? await Promise.race([runPromise, ...raceParts])
+            : await runPromise
+
+        // Cleanup on success path (idempotent).
+        cleanup()
+        // Release the rate-limiter slot — swallow errors so a broken Release
+        // cannot mask the successful result.
+        try { release?.() } catch { /* intentionally swallowed */ }
+        release = undefined
+
+        // Step 7b: Normalize usage ONCE.
+        normalizedResult = normalizeUsage(adapterResult.usage)
+
+        // Step 8: Validate structured output (terminal on failure).
+        let output: StandardSchemaV1.InferOutput<S> | undefined
+        if (req.outputSchema !== undefined) {
+          const schema = req.outputSchema
+          // Standard Schema: validate() may return sync or async — await handles both.
+          const validateResult = await schema['~standard'].validate(adapterResult.rawStructured)
+          if (validateResult.issues !== undefined) {
+            const message = validateResult.issues
+              .map((issue) => issue.message)
+              .join('; ')
+            throw new LlmError(
+              `Structured output validation failed: ${message}`,
+              { kind: 'parse_error', retryable: false, cause: validateResult.issues },
             )
           }
-          callerSignal.addEventListener('abort', abortHandler, { once: true })
-          callerAbortCleanup = () =>
-            callerSignal.removeEventListener('abort', abortHandler)
-          raceParts.push(abortPromise)
+          output = validateResult.value as StandardSchemaV1.InferOutput<S>
         }
-      }
 
-      // (b) Timeout race promise.
-      let timeoutController: AbortController | undefined
-      if (resolvedConfig.timeoutMs !== undefined) {
-        timeoutController = new AbortController()
-        const ms = resolvedConfig.timeoutMs
-        let timeoutRejectFn!: (err: LlmError) => void
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          timeoutRejectFn = reject
-        })
-        timer = setTimeout(() => {
-          // REJECT FIRST — schedules the 'timeout' LlmError into the microtask
-          // queue before the abort signal fires.  This guarantees 'timeout' wins
-          // Promise.race even when the adapter rejects synchronously on abort.
-          timeoutRejectFn(
-            new LlmError(`Request timed out after ${ms}ms`, {
-              kind: 'timeout',
-              retryable: true,
-            }),
-          )
-          // Abort AFTER scheduling the rejection — cooperative adapters stop early.
-          timeoutController!.abort()
-        }, ms)
-        raceParts.push(timeoutPromise)
-      }
-
-      // Build combined signal for cooperative adapters (caller + timeout merged).
-      const signalParts: AbortSignal[] = []
-      if (callerSignal !== undefined) signalParts.push(callerSignal)
-      if (timeoutController !== undefined) signalParts.push(timeoutController.signal)
-
-      const combinedSignal: AbortSignal | undefined =
-        signalParts.length === 0
-          ? undefined
-          : signalParts.length === 1
-            ? signalParts[0]
-            : mergeSignals(signalParts)
-
-      // Step 6b: Build ResolvedRequest and AdapterCtx.
-      const resolved: ResolvedRequest = {
-        model: request.model,
-        messages: request.messages,
-        config: resolvedConfig,
-        ...(request.system !== undefined ? { system: request.system } : {}),
-        ...(request.output?.schema !== undefined
-          ? { outputSchema: request.output.schema }
-          : {}),
-        ...(combinedSignal !== undefined ? { signal: combinedSignal } : {}),
-      }
-
-      const ctx: AdapterCtx = {
-        auth: authMaterial,
-        logger,
-        ...(combinedSignal !== undefined ? { signal: combinedSignal } : {}),
-      }
-
-      // Step 7: Run adapter — raced against all cancellation promises.
-      const runPromise = adapter.run(resolved, ctx)
-      const adapterResult =
-        raceParts.length > 0
-          ? await Promise.race([runPromise, ...raceParts])
-          : await runPromise
-
-      // Clean up on success path.
-      if (timer !== undefined) {
-        clearTimeout(timer)
-        timer = undefined
-      }
-      callerAbortCleanup?.()
-      callerAbortCleanup = undefined
-
-      // Step 7b: Normalize usage ONCE.
-      normalizedResult = normalizeUsage(adapterResult.usage)
-
-      // Step 8: Validate structured output (terminal on failure).
-      let output: S['_output'] | undefined
-      if (request.output?.schema !== undefined) {
-        const parseResult = request.output.schema.safeParse(adapterResult.rawStructured)
-        if (!parseResult.success) {
-          throw new LlmError(
-            `Structured output validation failed: ${parseResult.error.message}`,
-            { kind: 'parse_error', retryable: false, cause: parseResult.error },
-          )
+        // Step 9: Cost — fail-open (never fail the call for costing).
+        const costWarnings: Warning[] = []
+        try {
+          const pricingKey = req.modelDescriptor?.pricingFamily ?? req.model
+          cost = pricing.price(pricingKey, normalizedResult.usage, resolvedConfig.serviceTier)
+        } catch (costErr) {
+          costWarnings.push({
+            type: 'other',
+            message: `Cost computation failed: ${String(costErr)}`,
+          })
+          ctx.logger.warn({ callId: ctx.callId, error: String(costErr) }, 'llm.call.cost.failed')
         }
-        output = parseResult.data as S['_output']
-      }
 
-      // Step 9: Cost — fail-open (never fail the call for costing).
-      const costWarnings: Warning[] = []
-      try {
-        cost = pricing.price(
-          request.model,
+        // Collect all warnings (adapter + normalize + cost).
+        const allWarnings: Warning[] = [
+          ...adapterResult.warnings,
+          ...normalizedResult.warnings,
+          ...costWarnings,
+        ]
+
+        // Step 10: Build LlmCallRecord.
+        const latencyMs = ctx.clock.now() - attemptStartMs
+        const record = buildSuccessRecord(
+          ctx.callId,
+          attemptId,
+          callSiteId,
+          provider,
+          req.model,
+          request.metadata,
+          resolvedConfig,
+          adapterResult,
           normalizedResult.usage,
-          resolvedConfig.serviceTier,
+          cost,
+          allWarnings,
+          latencyMs,
+          attemptStartMs,
         )
-      } catch (costErr) {
-        costWarnings.push({
-          type: 'other',
-          message: `Cost computation failed: ${String(costErr)}`,
-        })
-        logger.warn({ callId, error: String(costErr) }, 'llm.call.cost.failed')
-      }
 
-      // Collect all warnings (adapter + normalize + cost).
-      const allWarnings: Warning[] = [
-        ...adapterResult.warnings,
-        ...normalizedResult.warnings,
-        ...costWarnings,
-      ]
+        // Step 11: Sink — fail-open.
+        await recordToSink(sink, record, ctx.logger, ctx.callId)
 
-      // Step 10: Build LlmCallRecord.
-      const latencyMs = clock.now() - startMs
-      const record = buildRecord({
-        callId,
-        attemptId,
-        ...(callSiteId !== undefined ? { callSiteId } : {}),
-        provider,
-        model: request.model,
-        ...(adapterResult.modelVersion !== undefined
-          ? { modelVersion: adapterResult.modelVersion }
-          : {}),
-        ...(adapterResult.responseId !== undefined
-          ? { responseId: adapterResult.responseId }
-          : {}),
-        serviceTier: resolvedConfig.serviceTier,
-        usage: normalizedResult.usage,
-        ...(cost !== undefined ? { cost } : {}),
-        latencyMs,
-        status: 'ok',
-        ...(adapterResult.finishReason !== undefined
-          ? { finishReason: adapterResult.finishReason }
-          : {}),
-        warnings: allWarnings,
-        generationConfig: resolvedConfig,
-        metadata: request.metadata ?? {},
-        createdAt: new Date(startMs).toISOString(),
-        ...(adapterResult.reasoningText !== undefined
-          ? { reasoningText: adapterResult.reasoningText }
-          : {}),
-        ...(adapterResult.providerMetadata !== undefined
-          ? { providerMetadata: adapterResult.providerMetadata }
-          : {}),
-      })
-
-      // Step 11: Sink — fail-open.
-      if (sink !== undefined) {
-        try {
-          await sink.record(record)
-        } catch (sinkErr) {
-          logger.error({ callId, error: String(sinkErr) }, 'llm.call.sink.failed')
+        // Step 12: Return LlmResult.
+        const result: LlmResult<StandardSchemaV1.InferOutput<S>> = {
+          callId: ctx.callId,
+          attemptId,
+          usage: normalizedResult.usage,
+          model: adapterResult.model,
+          latencyMs,
+          warnings: allWarnings,
+          ...(output !== undefined ? { output } : {}),
+          ...(adapterResult.text !== undefined ? { text: adapterResult.text } : {}),
+          ...(adapterResult.reasoningText !== undefined
+            ? { reasoningText: adapterResult.reasoningText }
+            : {}),
+          ...(cost !== undefined ? { cost } : {}),
+          ...(adapterResult.modelVersion !== undefined
+            ? { modelVersion: adapterResult.modelVersion }
+            : {}),
+          ...(adapterResult.finishReason !== undefined
+            ? { finishReason: adapterResult.finishReason }
+            : {}),
+          ...(adapterResult.responseId !== undefined
+            ? { responseId: adapterResult.responseId }
+            : {}),
+          ...(adapterResult.providerMetadata !== undefined
+            ? { providerMetadata: adapterResult.providerMetadata }
+            : {}),
         }
-      }
+        return result
 
-      // Step 12: telemetry.onSuccess + logger.
+      } catch (rawErr) {
+        // Invariant B: cleanup on every error path.
+        cleanup()
+        try { release?.() } catch { /* intentionally swallowed */ }
+        release = undefined
+
+        // Classify error (LlmError passes through unchanged).
+        const err = classifyError(rawErr)
+
+        // Build postmortem record with whatever we know.
+        const latencyMs = ctx.clock.now() - attemptStartMs
+        const errorRecord = buildErrorRecord(
+          ctx.callId,
+          attemptId,
+          callSiteId,
+          provider,
+          req.model,
+          request.metadata,
+          resolvedConfig,
+          normalizedResult?.usage ?? EMPTY_USAGE,
+          latencyMs,
+          attemptStartMs,
+          err,
+        )
+
+        // Sink error record — fail-open.
+        await recordToSink(sink, errorRecord, ctx.logger, ctx.callId)
+
+        // Enrich the error with call context (idempotent — does not overwrite
+        // if already set, e.g. by an outer middleware).
+        attachCallContext(err, { callId: ctx.callId, attemptId })
+
+        // Rethrow: the call-level epilogue (or retry middleware) handles
+        // the final fate of this error.
+        throw err
+      }
+    }
+
+    // ── Compose the middleware chain ───────────────────────────────────────
+    // middleware[0] is outermost; runAttempt is innermost (reduceRight folds
+    // from right so index-0 wraps everything else).
+    const middlewareList = config.middleware ?? []
+    const chain: Handler = middlewareList.reduceRight(
+      (next: Handler, mw: Middleware): Handler =>
+        (req, ctx) => mw.intercept(req, ctx, next),
+      runAttempt as Handler,
+    )
+
+    // ── (c) Execute the chain with call-level epilogue ─────────────────────
+    // telemetry.onSuccess / onError and the call-level logger events fire
+    // ONCE here, after the chain (including any retry middleware) settles.
+    try {
+      const result = await chain(preResolvedReq, engineCtx)
+      const latencyMs = clock.now() - callStartMs
       try {
-        telemetry.onSuccess?.({ callId, latencyMs, model: request.model }, span)
+        const successEvent: CallSuccessEvent = {
+          callId,
+          attemptId: result.attemptId,
+          model: request.model,
+          metadata: request.metadata ?? {},
+          latencyMs,
+          usage: result.usage,
+          ...(result.cost !== undefined ? { cost: result.cost } : {}),
+          ...(callSiteId !== undefined ? { callSiteId } : {}),
+        }
+        telemetry.onSuccess?.(successEvent, span)
       } catch { /* swallowed */ }
-      logger.info({ callId, latencyMs }, 'llm.call.success')
-
-      // Step 13: Return LlmResult.
-      const result: LlmResult<S['_output']> = {
-        usage: normalizedResult.usage,
-        model: adapterResult.model,
-        latencyMs,
-        warnings: allWarnings,
-        ...(output !== undefined ? { output } : {}),
-        ...(adapterResult.text !== undefined ? { text: adapterResult.text } : {}),
-        ...(adapterResult.reasoningText !== undefined
-          ? { reasoningText: adapterResult.reasoningText }
-          : {}),
-        ...(cost !== undefined ? { cost } : {}),
-        ...(adapterResult.modelVersion !== undefined
-          ? { modelVersion: adapterResult.modelVersion }
-          : {}),
-        ...(adapterResult.finishReason !== undefined
-          ? { finishReason: adapterResult.finishReason }
-          : {}),
-        ...(adapterResult.responseId !== undefined
-          ? { responseId: adapterResult.responseId }
-          : {}),
-        ...(adapterResult.providerMetadata !== undefined
-          ? { providerMetadata: adapterResult.providerMetadata }
-          : {}),
-      }
-      return result
-
+      logger.info({ callId, latencyMs, metadata: request.metadata ?? {} }, 'llm.call.success')
+      return result as LlmResult<StandardSchemaV1.InferOutput<S>>
     } catch (rawErr) {
-      // Always clear the timer and remove the caller-abort listener on any exit path.
-      if (timer !== undefined) {
-        clearTimeout(timer)
-        timer = undefined
-      }
-      callerAbortCleanup?.()
-      callerAbortCleanup = undefined
-
-      // Classify error (LlmError passes through unchanged).
       const err = classifyError(rawErr)
-
-      // Build postmortem record with whatever we know.
-      const latencyMs = clock.now() - startMs
-      const errorUsage = normalizedResult?.usage ?? EMPTY_USAGE
-      const errorRecord = buildRecord({
-        callId,
-        attemptId,
-        ...(callSiteId !== undefined ? { callSiteId } : {}),
-        provider,
-        model: request.model,
-        usage: errorUsage,
-        latencyMs,
-        // buildRecord overrides status from error.kind via errorKindToStatus.
-        status: 'api_error',
-        generationConfig: resolvedConfig,
-        metadata: request.metadata ?? {},
-        createdAt: new Date(startMs).toISOString(),
-        error: err,
-      })
-
-      // Sink error record — fail-open.
-      if (sink !== undefined) {
-        try {
-          await sink.record(errorRecord)
-        } catch (sinkErr) {
-          logger.error({ callId, error: String(sinkErr) }, 'llm.call.sink.failed')
-        }
-      }
-
-      // Telemetry + logger — fail-open.
+      // Ensure the error carries call context (idempotent — runAttempt already
+      // calls attachCallContext, but middleware-thrown errors may not have it).
+      // Only stamp attemptId when a real attempt ran (lastAttemptId is defined).
+      attachCallContext(err, { callId, ...(lastAttemptId !== undefined ? { attemptId: lastAttemptId } : {}) })
+      const latencyMs = clock.now() - callStartMs
       try {
-        telemetry.onError?.(
-          { callId, errorKind: err.kind, latencyMs, model: request.model },
-          span,
-        )
+        const attemptIdForEvent = err.attemptId ?? lastAttemptId
+        const errorEvent: CallErrorEvent = {
+          callId,
+          model: request.model,
+          metadata: request.metadata ?? {},
+          latencyMs,
+          errorKind: err.kind,
+          retryable: err.retryable,
+          ...(callSiteId !== undefined ? { callSiteId } : {}),
+          ...(attemptIdForEvent !== undefined ? { attemptId: attemptIdForEvent } : {}),
+        }
+        telemetry.onError?.(errorEvent, span)
       } catch { /* swallowed */ }
-      logger.error({ callId, errorKind: err.kind, latencyMs }, 'llm.call.error')
-
+      logger.error({ callId, errorKind: err.kind, latencyMs, metadata: request.metadata ?? {} }, 'llm.call.error')
       throw err
     }
   }
@@ -732,29 +1090,29 @@ export function createClient(config: ClientConfig): Client {
   // -------------------------------------------------------------------------
 
   return {
-    async generate<S extends ZodType>(
+    async generate<S extends StandardSchemaV1>(
       request: LlmRequest<S>,
       opts?: GenerateOptions,
-    ): Promise<LlmResult<S['_output']>> {
+    ): Promise<LlmResult<StandardSchemaV1.InferOutput<S>>> {
       // Config resolution: libDefaults → request.config
       const merged = deepMergeConfig(libDefaults, request.config)
       const serviceTier = merged.serviceTier ?? 'flex'
-      const resolvedConfig: Required<Pick<GenConfig, 'serviceTier'>> & GenConfig = {
+      const resolvedConfig: ResolvedConfig = {
         ...merged,
         serviceTier,
       }
       return runPipeline<S>(request, resolvedConfig, undefined, opts?.signal)
     },
 
-    async runStructured<S extends ZodType>(
+    async runStructured<S extends StandardSchemaV1>(
       callSite: CallSite<S>,
       vars?: Record<string, string>,
       opts?: RunStructuredOptions,
-    ): Promise<LlmResult<S['_output']>> {
+    ): Promise<LlmResult<StandardSchemaV1.InferOutput<S>>> {
       // Config resolution: libDefaults → callSite.config → opts.config
       const merged = deepMergeConfig(libDefaults, callSite.config, opts?.config)
       const serviceTier = merged.serviceTier ?? 'flex'
-      const resolvedConfig: Required<Pick<GenConfig, 'serviceTier'>> & GenConfig = {
+      const resolvedConfig: ResolvedConfig = {
         ...merged,
         serviceTier,
       }

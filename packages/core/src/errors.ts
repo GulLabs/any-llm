@@ -22,7 +22,7 @@
  * - `'aborted'`         — caller cancelled via `AbortSignal`.
  * - `'bad_request'`     — 400/422; the request itself is malformed.
  * - `'content_filter'`  — provider refused output for safety reasons.
- * - `'parse_error'`     — Zod validation failed on structured output; terminal.
+ * - `'parse_error'`     — schema validation failed on structured output; terminal.
  * - `'unknown'`         — uncategorised; inspect `cause` for details.
  */
 export type LlmErrorKind =
@@ -59,6 +59,10 @@ export interface LlmErrorOptions {
   provider?: string
   /** The underlying error that caused this one. */
   cause?: unknown
+  /** Library call ID at the time of the error. */
+  callId?: string
+  /** Library attempt ID at the time of the error. */
+  attemptId?: string
 }
 
 /**
@@ -94,6 +98,10 @@ export class LlmError extends Error {
    * Overrides the standard `Error.cause` to accept `unknown` (not just `Error`).
    */
   override readonly cause?: unknown
+  /** The call ID from the engine at the time of failure. */
+  readonly callId?: string
+  /** The attempt ID from the engine at the time of failure. */
+  readonly attemptId?: string
 
   constructor(message: string, options: LlmErrorOptions) {
     super(message)
@@ -113,6 +121,12 @@ export class LlmError extends Error {
     }
     if (options.cause !== undefined) {
       this.cause = options.cause
+    }
+    if (options.callId !== undefined) {
+      this.callId = options.callId
+    }
+    if (options.attemptId !== undefined) {
+      this.attemptId = options.attemptId
     }
 
     // Maintain a proper prototype chain in transpiled ES5 environments.

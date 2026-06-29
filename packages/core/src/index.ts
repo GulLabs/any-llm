@@ -8,6 +8,12 @@
  * @module
  */
 
+// Standard Schema
+import type { StandardSchemaV1 } from './standard-schema.js'
+export type { StandardSchemaV1 }
+/** Infer the output type of a Standard Schema. */
+export type InferOutput<S extends StandardSchemaV1> = StandardSchemaV1.InferOutput<S>
+
 // Core types
 export type {
   JsonValue,
@@ -42,6 +48,16 @@ export type {
   IdGenerator,
   Logger,
   Telemetry,
+  // Telemetry event types
+  CallStartEvent,
+  CallSuccessEvent,
+  CallErrorEvent,
+  RateLimiter,
+  Release,
+  // Middleware seam
+  EngineCtx,
+  Handler,
+  Middleware,
 } from './ports.js'
 
 // Record
@@ -64,9 +80,31 @@ export type {
 } from './engine.js'
 export { createClient } from './engine.js'
 
+// Model registry
+export type { ModelDescriptor, ModelRegistry } from './registry.js'
+export {
+  createModelRegistry,
+  geminiModelDescriptors,
+  defaultGeminiRegistry,
+} from './registry.js'
+
 // Call site
 export type { CallSite } from './callsite.js'
 export { defineCallSite } from './callsite.js'
+
+// In-memory rate limiter (production-ready, dependency-free)
+export { inMemoryRateLimiter } from './rate-limiter.js'
+export type { InMemoryRateLimiterOptions } from './rate-limiter.js'
+
+// Retry middleware
+export type { RetryPolicy } from './retry.js'
+export { retryMiddleware, computeBackoffMs } from './retry.js'
+
+// Utilities
+export { assertNever } from './assert.js'
+
+// Auth helpers
+export { envAuth } from './auth.js'
 
 /** Library version — kept in sync with `package.json`. */
 export const VERSION = '0.0.0'
