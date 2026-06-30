@@ -1,6 +1,6 @@
 # @gullabs/core
 
-The provider-agnostic heart of any-llm. Contains all types, port interfaces, the engine pipeline, call-site definitions, cost computation, and the persisted record builder. Has no provider dependencies — only `zod` as a peer.
+The provider-agnostic heart of any-llm. Contains all types, port interfaces, the engine pipeline, call-site definitions, cost computation, and the persisted record builder. Has no provider dependencies.
 
 ## Key exports
 
@@ -18,7 +18,6 @@ Port interfaces you implement: `ProviderAdapter`, `UsageSink`, `PricingSource`, 
 
 ```ts
 import { createClient, geminiPricingSource, defineCallSite } from '@gullabs/core'
-import { z } from 'zod'
 
 const client = createClient({
   adapters: [myAdapter],
@@ -29,7 +28,11 @@ const client = createClient({
 const callSite = defineCallSite({
   id: 'summarise',
   model: 'gemini-2.5-flash',
-  schema: z.object({ summary: z.string() }),
+  jsonSchema: {
+    type: 'object',
+    properties: { summary: { type: 'string' } },
+    required: ['summary'],
+  },
   userTemplate: 'Summarise: {{text}}',
   config: { reasoning: { includeThoughts: true } },
 })
@@ -42,7 +45,8 @@ const result = await client.runStructured(
     auth: { apiKey: 'YOUR_KEY' },
   },
 )
-// result.output   — Zod-validated
+// result.output   — JSON-parsed; caller validates
+// result.outputParsed — true when JSON.parse succeeded
 // result.usage    — { inputTokens, outputTokens, thinkingTokens, cachedInputTokens }
 // result.cost     — { microUsd, pricingVersion, details: { input, cached, output } }
 // result.reasoningText — thought summary if includeThoughts was set
@@ -94,6 +98,12 @@ Every call attempt is persisted via `UsageSink.record(r: LlmCallRecord)`. The si
 idempotent on `r.attemptId`. Key traceability fields: `callId` (stable across retries),
 `attemptId`, `attemptNumber` (1-based), `latencyMs`, token counts, `costMicroUsd`, `errorKind`,
 and `metadata` (host-supplied, stored verbatim).
+
+If a request includes `idempotencyKey`, attempt 1 uses that exact value as `attemptId`. In-process
+library retries suffix later attempts (`key:2`, `key:3`, ...), so callers should correlate the final
+outcome from `result.attemptId` or `LlmError.attemptId`. Temporal-owned activity retries that call
+the library fresh each time keep the pre-minted key on attempt 1 and deduplicate only at the ledger
+sink.
 
 ### Redaction
 

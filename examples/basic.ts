@@ -10,7 +10,6 @@
  * Run with:  pnpm example
  */
 
-import { z } from 'zod'
 import { createClient, geminiPricingSource, defineCallSite } from '@gullabs/core'
 import { geminiAdapter } from '@gullabs/google'
 import {
@@ -22,19 +21,23 @@ import {
 } from '@gullabs/testing'
 
 // ---------------------------------------------------------------------------
-// 1. Define the output schema
+// 1. Define the output JSON Schema hint
 // ---------------------------------------------------------------------------
 
-const ReviewSchema = z.object({
-  rating: z.number().int().min(1).max(5),
-  summary: z.string(),
-})
+const ReviewJsonSchema = {
+  type: 'object',
+  properties: {
+    rating: { type: 'number' },
+    summary: { type: 'string' },
+  },
+  required: ['rating', 'summary'],
+} as const
 
 // ---------------------------------------------------------------------------
 // 2. Build a fake Gemini client (no network — scripted response)
 //    The response includes:
 //      - a thought part (thought: true) → captured as reasoningText
-//      - a JSON text part matching ReviewSchema → validated by the engine
+//      - a JSON text part matching ReviewJsonSchema → parsed by the adapter
 //      - usageMetadata with thoughtsTokenCount → captured as thinkingTokens
 // ---------------------------------------------------------------------------
 
@@ -77,13 +80,13 @@ const client = createClient({
 })
 
 // ---------------------------------------------------------------------------
-// 4. Define a call site — reusable prompt template with schema + reasoning
+// 4. Define a call site — reusable prompt template with JSON Schema + reasoning
 // ---------------------------------------------------------------------------
 
 const codeReview = defineCallSite({
   id: 'code-review',
   model: 'gemini-2.5-flash',
-  schema: ReviewSchema,
+  jsonSchema: ReviewJsonSchema,
   system: 'You are a senior code reviewer. Be concise and fair.',
   userTemplate: 'Review this code change:\n\n```diff\n{{diff}}\n```',
   config: {
@@ -108,8 +111,9 @@ console.log('\n========================================')
 console.log('  any-llm  —  examples/basic.ts output')
 console.log('========================================\n')
 
-console.log('Structured output (Zod-validated):')
+console.log('Structured output (JSON-parsed; caller validates):')
 console.log(result.output)
+console.log('outputParsed:', result.outputParsed)
 
 console.log('\nToken usage (GROSS convention):')
 console.log({

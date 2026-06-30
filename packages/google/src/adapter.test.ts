@@ -8,11 +8,12 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { z } from 'zod'
 import {
   LlmError,
   createClient,
   geminiPricingSource,
+  retryMiddleware,
+  gemmaModelDescriptors,
   geminiModelDescriptors,
 } from '@gullabs/core'
 import type { ResolvedRequest, AdapterCtx } from '@gullabs/core'
@@ -25,7 +26,7 @@ import {
   RecordingSink,
 } from '@gullabs/testing'
 import { geminiAdapter } from './adapter.js'
-import { zodToGeminiSchema } from './schema.js'
+import { isGeminiCapacityError } from './flex-fallback.js'
 import { FLEX_DEFAULT_TIMEOUT_MS } from './client.js'
 import type { GeminiClientLike, GeminiResponseShape } from './client.js'
 
@@ -196,6 +197,201 @@ describe('service tier', () => {
     const call = client.calls[0] as { config?: { serviceTier?: string } }
     expect(call?.config?.serviceTier).toBe('standard')
   })
+
+  it('omits serviceTier without warning when the model descriptor has no supported service tiers and no explicit tier is requested', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+    const gemma = gemmaModelDescriptors.find((d) => d.id === 'gemma-4-31b-it')!
+
+    // Cast to bypass the type requirement — we're testing the adapter path where
+    // serviceTier is absent at runtime (the engine always sets it, but the adapter
+    // must handle the undefined case gracefully without warning).
+    const result = await adapter.run(
+      makeResolvedReq({
+        model: 'gemma-4-31b-it',
+        modelDescriptor: gemma,
+        config: {} as ResolvedRequest['config'],
+      }),
+      FAKE_CTX,
+    )
+
+    const call = client.calls[0] as { config?: { serviceTier?: string } }
+    expect(call?.config?.serviceTier).toBeUndefined()
+    expect(result.warnings).toEqual([])
+  })
+
+  it('throws LlmError bad_request when explicitly requesting a tier the model does not support', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          model: 'google-standard-only-model',
+          modelDescriptor: {
+            id: 'google-standard-only-model',
+            provider: 'google',
+            capabilities: { serviceTiers: ['standard'] },
+          },
+          config: { serviceTier: 'flex' },
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request', retryable: false })
+  })
+
+  it('throws LlmError bad_request when explicitly requesting serviceTier on a model that declares no serviceTiers', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+    const gemma = gemmaModelDescriptors.find((d) => d.id === 'gemma-4-31b-it')!
+
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          model: 'gemma-4-31b-it',
+          modelDescriptor: gemma,
+          config: { serviceTier: 'flex' },
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request', retryable: false })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 2b. Flex fallback
+// ---------------------------------------------------------------------------
+
+describe('flex fallback', () => {
+  it('classifies only 503 server errors and capacity-flavored 429s as fallbackable', () => {
+    expect(
+      isGeminiCapacityError(
+        new LlmError('unavailable', {
+          kind: 'server',
+          retryable: true,
+          httpStatus: 503,
+        }),
+      ),
+    ).toBe(true)
+    expect(
+      isGeminiCapacityError(
+        new LlmError('internal error', {
+          kind: 'server',
+          retryable: true,
+          httpStatus: 500,
+        }),
+      ),
+    ).toBe(false)
+    expect(
+      isGeminiCapacityError(
+        new LlmError('shared capacity is overloaded', {
+          kind: 'rate_limited',
+          retryable: true,
+          httpStatus: 429,
+        }),
+      ),
+    ).toBe(true)
+    expect(
+      isGeminiCapacityError(
+        new LlmError('quota exceeded for project billing account', {
+          kind: 'rate_limited',
+          retryable: true,
+          httpStatus: 429,
+        }),
+      ),
+    ).toBe(false)
+  })
+
+  it('falls back from flex 503 capacity error to one standard attempt', async () => {
+    let callCount = 0
+    const client = makeFakeGemini(() => {
+      callCount++
+      if (callCount === 1) {
+        throw { status: 503, message: 'no capacity available' }
+      }
+      return fakeGeminiResponse({ text: 'ok' })
+    })
+    const adapter = geminiAdapter({ client })
+
+    const result = await adapter.run(
+      makeResolvedReq({ config: { serviceTier: 'flex' } }),
+      FAKE_CTX,
+    )
+
+    expect(result.servedServiceTier).toBe('standard')
+    expect(client.calls).toHaveLength(2)
+    expect(
+      (client.calls[0] as { config?: { serviceTier?: string } }).config?.serviceTier,
+    ).toBe('flex')
+    expect(
+      (client.calls[1] as { config?: { serviceTier?: string } }).config?.serviceTier,
+    ).toBe('standard')
+  })
+
+  it('does not fall back when flexFallback is false', async () => {
+    const client = makeFakeGemini(() => {
+      throw { status: 503, message: 'no capacity available' }
+    })
+    const adapter = geminiAdapter({ client })
+
+    await expect(
+      adapter.run(
+        makeResolvedReq({ config: { serviceTier: 'flex', flexFallback: false } }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'server', servedServiceTier: 'flex' })
+    expect(client.calls).toHaveLength(1)
+  })
+
+  it('keeps retries pinned to standard after adapter fallback failure', async () => {
+    let dispatchCount = 0
+    const fakeClient = makeFakeGemini((params) => {
+      dispatchCount++
+      const serviceTier = (params as { config?: { serviceTier?: string } }).config
+        ?.serviceTier
+      if (dispatchCount === 1) {
+        expect(serviceTier).toBe('flex')
+        throw { status: 503, message: 'no capacity available' }
+      }
+      if (dispatchCount === 2) {
+        expect(serviceTier).toBe('standard')
+        throw { status: 503, message: 'standard transient' }
+      }
+      expect(serviceTier).toBe('standard')
+      return fakeGeminiResponse({ text: 'ok' })
+    })
+    const sink = new RecordingSink()
+    const llmClient = createClient({
+      adapters: [geminiAdapter({ client: fakeClient })],
+      pricing: geminiPricingSource(),
+      sink,
+      clock: new FakeClock(),
+      ids: new FakeIds(),
+      middleware: [
+        retryMiddleware(
+          { maxAttempts: 2, baseDelayMs: 0 },
+          { sleep: async () => {}, random: () => 0, now: () => 0 },
+        ),
+      ],
+    })
+
+    const result = await llmClient.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
+        config: { serviceTier: 'flex' },
+      },
+      { auth: { apiKey: 'test-key' } },
+    )
+
+    expect(fakeClient.calls).toHaveLength(3)
+    expect(result.servedServiceTier).toBe('standard')
+    expect(sink.records).toHaveLength(2)
+    expect(sink.records[0]!.servedServiceTier).toBe('standard')
+    expect(sink.records[0]!.status).toBe('api_error')
+    expect(sink.records[1]!.servedServiceTier).toBe('standard')
+    expect(sink.records[1]!.status).toBe('ok')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -217,6 +413,7 @@ describe('reasoning mapping', () => {
             reasoning: true,
             structuredOutput: true,
             reasoningApi: 'budget',
+            serviceTiers: ['flex', 'standard'],
           },
         },
         config: {
@@ -247,6 +444,7 @@ describe('reasoning mapping', () => {
             reasoning: true,
             structuredOutput: true,
             reasoningApi: 'budget',
+            serviceTiers: ['flex', 'standard'],
           },
         },
         config: {
@@ -277,6 +475,7 @@ describe('reasoning mapping', () => {
             reasoning: true,
             structuredOutput: true,
             reasoningApi: 'budget',
+            serviceTiers: ['flex', 'standard'],
           },
         },
         config: { serviceTier: 'flex', reasoning: { effort: 'none' } },
@@ -300,7 +499,11 @@ describe('reasoning mapping', () => {
         modelDescriptor: {
           id: 'gemini-3.0-pro',
           provider: 'google',
-          capabilities: { reasoning: true, reasoningApi: 'level' },
+          capabilities: {
+            reasoning: true,
+            reasoningApi: 'level',
+            serviceTiers: ['flex', 'standard'],
+          },
         },
         config: {
           serviceTier: 'flex',
@@ -326,7 +529,11 @@ describe('reasoning mapping', () => {
         modelDescriptor: {
           id: 'gemini-3.5-pro',
           provider: 'google',
-          capabilities: { reasoning: true, reasoningApi: 'level' },
+          capabilities: {
+            reasoning: true,
+            reasoningApi: 'level',
+            serviceTiers: ['flex', 'standard'],
+          },
         },
         config: { serviceTier: 'flex', reasoning: { effort: 'low' } },
       }),
@@ -339,26 +546,56 @@ describe('reasoning mapping', () => {
     expect(call?.config?.thinkingConfig?.thinkingLevel).toBe('LOW')
   })
 
-  it('emits reasoning-mapping warning for gemini-3.x with budgetTokens', async () => {
+  it('throws LlmError bad_request for gemini-3.x with budgetTokens', async () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
 
-    const result = await adapter.run(
-      makeResolvedReq({
-        model: 'gemini-3.0-ultra',
-        modelDescriptor: {
-          id: 'gemini-3.0-ultra',
-          provider: 'google',
-          capabilities: { reasoning: true, reasoningApi: 'level' },
-        },
-        config: { serviceTier: 'flex', reasoning: { budgetTokens: 1000 } },
-      }),
-      FAKE_CTX,
-    )
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          model: 'gemini-3.0-ultra',
+          modelDescriptor: {
+            id: 'gemini-3.0-ultra',
+            provider: 'google',
+            capabilities: {
+              reasoning: true,
+              reasoningApi: 'level',
+              serviceTiers: ['flex', 'standard'],
+            },
+          },
+          config: { serviceTier: 'flex', reasoning: { budgetTokens: 1000 } },
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request', retryable: false })
+  })
 
-    expect(result.warnings).toContainEqual(
-      expect.objectContaining({ type: 'reasoning-mapping', quality: 'approximate' }),
-    )
+  it('throws LlmError bad_request when both effort and budgetTokens are provided', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          model: 'gemini-2.5-pro',
+          modelDescriptor: {
+            id: 'gemini-2.5-pro',
+            provider: 'google',
+            capabilities: {
+              reasoning: true,
+              structuredOutput: true,
+              reasoningApi: 'budget',
+              serviceTiers: ['flex', 'standard'],
+            },
+          },
+          config: {
+            serviceTier: 'flex',
+            reasoning: { effort: 'high', budgetTokens: 4096 },
+          },
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request', retryable: false })
   })
 
   it('captures reasoningText from thought parts when includeThoughts=true', async () => {
@@ -382,6 +619,7 @@ describe('reasoning mapping', () => {
             reasoning: true,
             structuredOutput: true,
             reasoningApi: 'budget',
+            serviceTiers: ['flex', 'standard'],
           },
         },
         config: { serviceTier: 'flex', reasoning: { includeThoughts: true } },
@@ -409,6 +647,7 @@ describe('reasoning mapping', () => {
             reasoning: true,
             structuredOutput: true,
             reasoningApi: 'budget',
+            serviceTiers: ['flex', 'standard'],
           },
         },
         config: { serviceTier: 'flex', reasoning: { includeThoughts: true } },
@@ -422,21 +661,19 @@ describe('reasoning mapping', () => {
     expect(call?.config?.thinkingConfig?.includeThoughts).toBe(true)
   })
 
-  it('emits reasoning-mapping:unsupported for unknown model generation', async () => {
+  it('throws LlmError bad_request when reasoning is requested for a model without reasoningApi', async () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
 
-    const result = await adapter.run(
-      makeResolvedReq({
-        model: 'gemini-future-model',
-        config: { serviceTier: 'flex', reasoning: { effort: 'medium' } },
-      }),
-      FAKE_CTX,
-    )
-
-    expect(result.warnings).toContainEqual(
-      expect.objectContaining({ type: 'reasoning-mapping', quality: 'unsupported' }),
-    )
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          model: 'gemini-future-model',
+          config: { serviceTier: 'flex', reasoning: { effort: 'medium' } },
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request', retryable: false })
   })
 })
 
@@ -446,26 +683,33 @@ describe('reasoning mapping', () => {
 
 describe('structured output', () => {
   it('sets responseMimeType=application/json for structured requests', async () => {
-    const schema = z.object({ name: z.string() })
     const client = makeFakeGemini(
       fakeGeminiResponse({ structuredJson: '{"name":"Alice"}' }),
     )
     const adapter = geminiAdapter({ client })
 
-    await adapter.run(makeResolvedReq({ outputSchema: schema }), FAKE_CTX)
+    await adapter.run(
+      makeResolvedReq({
+        outputJsonSchema: { type: 'object', additionalProperties: true },
+      }),
+      FAKE_CTX,
+    )
 
     const call = client.calls[0] as { config?: { responseMimeType?: string } }
     expect(call?.config?.responseMimeType).toBe('application/json')
   })
 
-  it('produces a responseSchema from a simple Zod object', async () => {
-    const schema = z.object({ name: z.string(), age: z.number() })
+  it('forwards JSON Schema directly as responseSchema', async () => {
+    const jsonSchema = {
+      type: 'object',
+      properties: { name: { type: 'string' }, age: { type: 'number' } },
+    }
     const client = makeFakeGemini(
       fakeGeminiResponse({ structuredJson: '{"name":"Alice","age":30}' }),
     )
     const adapter = geminiAdapter({ client })
 
-    await adapter.run(makeResolvedReq({ outputSchema: schema }), FAKE_CTX)
+    await adapter.run(makeResolvedReq({ outputJsonSchema: jsonSchema }), FAKE_CTX)
 
     const call = client.calls[0] as {
       config?: {
@@ -477,135 +721,69 @@ describe('structured output', () => {
     expect(call?.config?.responseSchema?.properties?.['age']?.type).toBe('number')
   })
 
+  it('skips responseMimeType and responseSchema when native structured output is disabled', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ structuredJson: '{"pass":true}' }))
+    const adapter = geminiAdapter({ client })
+    // Use a synthetic descriptor with nativeStructuredOutput: false to test the
+    // skip-native-schema path. The real gemma-4-26b-a4b-it now has
+    // nativeStructuredOutput: true (verified against the live API).
+    const syntheticNoNativeOutput = {
+      id: 'gemma-4-26b-a4b-it',
+      provider: 'google',
+      capabilities: {
+        structuredOutput: true,
+        nativeStructuredOutput: false,
+        vision: true,
+        sampling: 'tunable' as const,
+        serviceTiers: ['flex', 'standard'] as ['flex', 'standard'],
+      },
+    }
+
+    const result = await adapter.run(
+      makeResolvedReq({
+        model: 'gemma-4-26b-a4b-it',
+        modelDescriptor: syntheticNoNativeOutput,
+        outputJsonSchema: { type: 'object', additionalProperties: true },
+      }),
+      FAKE_CTX,
+    )
+
+    const call = client.calls[0] as {
+      config?: { responseMimeType?: string; responseSchema?: unknown }
+    }
+    expect(call?.config?.responseMimeType).toBeUndefined()
+    expect(call?.config?.responseSchema).toBeUndefined()
+    expect(result.rawStructured).toEqual({ pass: true })
+  })
+
   it('parses JSON text into rawStructured', async () => {
-    const schema = z.object({ name: z.string() })
     const client = makeFakeGemini(
       fakeGeminiResponse({ structuredJson: '{"name":"Bob"}' }),
     )
     const adapter = geminiAdapter({ client })
 
-    const result = await adapter.run(makeResolvedReq({ outputSchema: schema }), FAKE_CTX)
+    const result = await adapter.run(
+      makeResolvedReq({
+        outputJsonSchema: { type: 'object', additionalProperties: true },
+      }),
+      FAKE_CTX,
+    )
 
     expect(result.rawStructured).toEqual({ name: 'Bob' })
   })
 
   it('leaves rawStructured undefined on JSON parse failure', async () => {
-    const schema = z.object({ name: z.string() })
     const client = makeFakeGemini(fakeGeminiResponse({ structuredJson: 'not-json' }))
     const adapter = geminiAdapter({ client })
 
-    const result = await adapter.run(makeResolvedReq({ outputSchema: schema }), FAKE_CTX)
+    const result = await adapter.run(
+      makeResolvedReq({
+        outputJsonSchema: { type: 'object', additionalProperties: true },
+      }),
+      FAKE_CTX,
+    )
 
     expect(result.rawStructured).toBeUndefined()
-  })
-
-  it('emits unsupported-setting warning when schema cannot be converted', async () => {
-    // ZodFunction is not supported by zodToGeminiSchema
-    const schema = z.function()
-    const client = makeFakeGemini(fakeGeminiResponse({ text: '{}' }))
-    const adapter = geminiAdapter({ client })
-
-    const result = await adapter.run(makeResolvedReq({ outputSchema: schema }), FAKE_CTX)
-
-    expect(result.warnings).toContainEqual(
-      expect.objectContaining({ type: 'unsupported-setting', setting: 'output.schema' }),
-    )
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 5. zodToGeminiSchema unit tests
-// ---------------------------------------------------------------------------
-
-describe('zodToGeminiSchema', () => {
-  it('converts z.string() to {type:"string"}', () => {
-    expect(zodToGeminiSchema(z.string())).toEqual({ type: 'string' })
-  })
-
-  it('converts z.number() to {type:"number"}', () => {
-    expect(zodToGeminiSchema(z.number())).toEqual({ type: 'number' })
-  })
-
-  it('converts z.number().int() to {type:"integer"}', () => {
-    expect(zodToGeminiSchema(z.number().int())).toEqual({ type: 'integer' })
-  })
-
-  it('converts z.boolean() to {type:"boolean"}', () => {
-    expect(zodToGeminiSchema(z.boolean())).toEqual({ type: 'boolean' })
-  })
-
-  it('converts z.array(z.string()) to {type:"array",items:{type:"string"}}', () => {
-    expect(zodToGeminiSchema(z.array(z.string()))).toEqual({
-      type: 'array',
-      items: { type: 'string' },
-    })
-  })
-
-  it('converts z.enum(["a","b"]) to {type:"string",enum:["a","b"]}', () => {
-    expect(zodToGeminiSchema(z.enum(['a', 'b']))).toEqual({
-      type: 'string',
-      enum: ['a', 'b'],
-    })
-  })
-
-  it('converts z.object with required fields', () => {
-    const schema = z.object({ name: z.string(), age: z.number() })
-    const result = zodToGeminiSchema(schema)
-    expect(result).toMatchObject({
-      type: 'object',
-      properties: {
-        name: { type: 'string' },
-        age: { type: 'number' },
-      },
-      required: expect.arrayContaining(['name', 'age']),
-    })
-  })
-
-  it('marks optional fields as non-required', () => {
-    const schema = z.object({ name: z.string(), bio: z.string().optional() })
-    const result = zodToGeminiSchema(schema)
-    expect(result?.required).toContain('name')
-    expect(result?.required).not.toContain('bio')
-  })
-
-  it('marks optional().nullable() fields as non-required (outer ZodNullable must not shadow ZodOptional)', () => {
-    // z.string().optional().nullable() → ZodNullable(ZodOptional(ZodString))
-    // The outer wrapper is ZodNullable; without recursive unwrapping the field
-    // was incorrectly added to required[].
-    const schema = z.object({ field: z.string().optional().nullable() })
-    const result = zodToGeminiSchema(schema)
-    // required is absent (empty) or does not include 'field'.
-    expect(result?.required ?? []).not.toContain('field')
-  })
-
-  it('marks nullable().optional() fields as non-required (outer ZodOptional)', () => {
-    // z.string().nullable().optional() → ZodOptional(ZodNullable(ZodString))
-    const schema = z.object({ field: z.string().nullable().optional() })
-    const result = zodToGeminiSchema(schema)
-    expect(result?.required ?? []).not.toContain('field')
-  })
-
-  it('marks default()-wrapped fields as non-required', () => {
-    // z.string().default('x') → ZodDefault(ZodString)
-    const schema = z.object({ field: z.string().default('fallback') })
-    const result = zodToGeminiSchema(schema)
-    expect(result?.required ?? []).not.toContain('field')
-  })
-
-  it('converts z.nullable(z.string()) to {type:"string",nullable:true}', () => {
-    expect(zodToGeminiSchema(z.string().nullable())).toEqual({
-      type: 'string',
-      nullable: true,
-    })
-  })
-
-  it('returns undefined for unsupported schema (ZodFunction)', () => {
-    expect(zodToGeminiSchema(z.function())).toBeUndefined()
-  })
-
-  it('propagates description', () => {
-    const result = zodToGeminiSchema(z.string().describe('The user name'))
-    expect(result?.description).toBe('The user name')
   })
 })
 
@@ -816,6 +994,37 @@ describe('providerOptions.google passthrough', () => {
     // providerOptions spread last, so it wins
     expect(call?.config?.serviceTier).toBe('standard')
   })
+
+  it('passes Gemini safetySettings through providerOptions.google', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    const safetySettings = [
+      {
+        category: 'HARM_CATEGORY_HATE_SPEECH',
+        threshold: 'BLOCK_MEDIUM_AND_ABOVE',
+      },
+      {
+        category: 'HARM_CATEGORY_HARASSMENT',
+        threshold: 'BLOCK_ONLY_HIGH',
+      },
+    ]
+
+    await adapter.run(
+      makeResolvedReq({
+        config: {
+          serviceTier: 'flex',
+          providerOptions: {
+            google: { safetySettings },
+          },
+        },
+      }),
+      FAKE_CTX,
+    )
+
+    const call = client.calls[0] as { config?: { safetySettings?: unknown } }
+    expect(call?.config?.safetySettings).toEqual(safetySettings)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -902,9 +1111,7 @@ describe('message role mapping', () => {
 
 describe('AbortSignal passthrough', () => {
   it('passes the signal to config.abortSignal unchanged on the standard-tier path', async () => {
-    // Use serviceTier:'standard' (or any path where timeoutMs is set) so the adapter
-    // passes ctx.signal through directly without wrapping it in AbortSignal.any.
-    // FIX A-2 only arms a combined signal on the flex-default path (flex + no timeoutMs).
+    // Standard default timeout composes its own timeout signal with the caller signal.
     const controller = new AbortController()
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
@@ -915,7 +1122,8 @@ describe('AbortSignal passthrough', () => {
     )
 
     const call = client.calls[0] as { config?: { abortSignal?: AbortSignal } }
-    expect(call?.config?.abortSignal).toBe(controller.signal)
+    expect(call?.config?.abortSignal).toBeInstanceOf(AbortSignal)
+    expect(call?.config?.abortSignal).not.toBe(controller.signal)
   })
 
   it('passes the signal to config.abortSignal unchanged when timeoutMs is set (engine handles timer)', async () => {
@@ -942,8 +1150,6 @@ describe('AbortSignal passthrough', () => {
 
 describe('full-stack integration', () => {
   it('end-to-end: generate structured call → correct usage + cost + record', async () => {
-    const schema = z.object({ answer: z.string(), confidence: z.number() })
-
     // Script the fake client to return a response with thought tokens
     const fakeClient = makeFakeGemini(
       fakeGeminiResponse({
@@ -983,7 +1189,7 @@ describe('full-stack integration', () => {
             parts: [{ kind: 'text', text: 'What is the capital of France?' }],
           },
         ],
-        output: { schema },
+        output: { jsonSchema: { type: 'object', additionalProperties: true } },
         config: {
           serviceTier: 'flex',
           reasoning: { includeThoughts: true, budgetTokens: 4096 },
@@ -1064,61 +1270,38 @@ describe('full-stack integration', () => {
 // Standard Schema — non-Zod vendor path
 // ---------------------------------------------------------------------------
 
-describe('Standard Schema — non-Zod vendor (e.g. valibot)', () => {
-  /**
-   * A hand-rolled Standard Schema v1 object with vendor 'valibot'.
-   * Validates that the value has a `name` property of type string.
-   */
-  function makeCustomSchema<
-    T extends { name: string },
-  >(): import('@gullabs/core').StandardSchemaV1<T, T> {
-    return {
-      '~standard': {
-        version: 1 as const,
-        vendor: 'valibot',
-        validate(value: unknown) {
-          if (
-            value !== null &&
-            typeof value === 'object' &&
-            'name' in value &&
-            typeof (value as Record<string, unknown>)['name'] === 'string'
-          ) {
-            return { value: value as T }
-          }
-          return { issues: [{ message: 'Expected object with string name' }] }
-        },
-        types: undefined,
-      },
-    }
-  }
-
-  it('emits a warning when vendor is not zod and skips Gemini native responseSchema', async () => {
-    const schema = makeCustomSchema<{ name: string }>()
+describe('JSON Schema structured output', () => {
+  it('does not emit schema-conversion warnings', async () => {
     const client = makeFakeGemini(
       fakeGeminiResponse({ text: JSON.stringify({ name: 'Alice' }) }),
     )
 
     const adapter = geminiAdapter({ client })
-    const result = await adapter.run(makeResolvedReq({ outputSchema: schema }), FAKE_CTX)
-
-    // The adapter should warn that native schema enforcement was skipped.
-    const schemaWarning = result.warnings.find(
-      (w) => w.type === 'other' && 'message' in w && w.message.includes('valibot'),
+    const result = await adapter.run(
+      makeResolvedReq({
+        outputJsonSchema: { type: 'object', additionalProperties: true },
+      }),
+      FAKE_CTX,
     )
-    expect(schemaWarning).toBeDefined()
-    expect(schemaWarning?.type).toBe('other')
 
-    // rawStructured should be populated (adapter still parses JSON).
+    // No warning emitted — JSON Schema is forwarded directly.
+    const schemaWarning = result.warnings.find(
+      (w) =>
+        w.type === 'other' &&
+        'message' in w &&
+        (w as { message: string }).message.includes('valibot'),
+    )
+    expect(schemaWarning).toBeUndefined()
+
+    // rawStructured should still be populated (adapter still parses JSON).
     expect(result.rawStructured).toEqual({ name: 'Alice' })
   })
 
-  it('engine validates output via Standard Schema for non-Zod vendor', async () => {
-    const schema = makeCustomSchema<{ name: string }>()
+  it('engine returns parsed output without client-side schema validation', async () => {
     const client = makeFakeGemini(
       fakeGeminiResponse({ text: JSON.stringify({ name: 'Bob' }) }),
     )
 
-    // Use createClient to test the full engine validation path.
     const llmClient = createClient({
       adapters: [geminiAdapter({ client })],
       pricing: geminiPricingSource(),
@@ -1128,24 +1311,17 @@ describe('Standard Schema — non-Zod vendor (e.g. valibot)', () => {
       {
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Name?' }] }],
-        output: { schema },
+        output: { jsonSchema: { type: 'object', additionalProperties: true } },
       },
       { auth: { apiKey: 'test-key' } },
     )
 
-    // Engine validated and returned the typed output.
     expect(result.output).toEqual({ name: 'Bob' })
-    // Warning about skipped native schema should propagate to result.
-    const schemaWarning = result.warnings.find(
-      (w) => w.type === 'other' && 'message' in w && w.message.includes('valibot'),
-    )
-    expect(schemaWarning).toBeDefined()
+    expect(result.outputParsed).toBe(true)
   })
 
-  it('engine throws parse_error when non-Zod Standard Schema validation fails', async () => {
-    const schema = makeCustomSchema<{ name: string }>()
+  it('engine does not throw when parsed output mismatches the JSON Schema hint', async () => {
     const client = makeFakeGemini(
-      // Return invalid JSON (missing the name field).
       fakeGeminiResponse({ text: JSON.stringify({ wrong: 'field' }) }),
     )
 
@@ -1154,31 +1330,17 @@ describe('Standard Schema — non-Zod vendor (e.g. valibot)', () => {
       pricing: geminiPricingSource(),
     })
 
-    await expect(
-      llmClient.generate(
-        {
-          model: 'gemini-2.5-pro',
-          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Name?' }] }],
-          output: { schema },
-        },
-        { auth: { apiKey: 'test-key' } },
-      ),
-    ).rejects.toThrow(LlmError)
+    const result = await llmClient.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Name?' }] }],
+        output: { jsonSchema: { type: 'object', additionalProperties: true } },
+      },
+      { auth: { apiKey: 'test-key' } },
+    )
 
-    // Verify the error kind
-    try {
-      await llmClient.generate(
-        {
-          model: 'gemini-2.5-pro',
-          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Name?' }] }],
-          output: { schema },
-        },
-        { auth: { apiKey: 'test-key' } },
-      )
-    } catch (err) {
-      expect(err).toBeInstanceOf(LlmError)
-      expect((err as LlmError).kind).toBe('parse_error')
-    }
+    expect(result.output).toEqual({ wrong: 'field' })
+    expect(result.outputParsed).toBe(true)
   })
 })
 
@@ -1304,7 +1466,7 @@ describe('multimodal part mapping', () => {
       const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
       const adapter = geminiAdapter({ client })
 
-      const result = await adapter.run(
+      await adapter.run(
         makeResolvedReq({
           messages: [
             {
@@ -1325,9 +1487,6 @@ describe('multimodal part mapping', () => {
 
       const parts = getContents(client.calls[0])[0]!.parts
       expect(parts[0]).toMatchObject({ mediaResolution: { level: expected } })
-      expect(
-        result.warnings.filter((w) => w.type === 'unsupported-setting'),
-      ).toHaveLength(0)
     },
   )
 
@@ -1341,7 +1500,7 @@ describe('multimodal part mapping', () => {
       const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
       const adapter = geminiAdapter({ client })
 
-      const result = await adapter.run(
+      await adapter.run(
         makeResolvedReq({
           messages: [
             {
@@ -1362,9 +1521,6 @@ describe('multimodal part mapping', () => {
 
       const parts = getContents(client.calls[0])[0]!.parts
       expect(parts[0]).toMatchObject({ mediaResolution: { level: expected } })
-      expect(
-        result.warnings.filter((w) => w.type === 'unsupported-setting'),
-      ).toHaveLength(0)
     },
   )
 
@@ -1440,14 +1596,14 @@ describe('transport timeout (httpOptions.timeout)', () => {
     expect(call?.config?.httpOptions?.timeout).toBe(1_500_000)
   })
 
-  it('does NOT set httpOptions.timeout when serviceTier is standard and no timeoutMs', async () => {
+  it('sets STANDARD_DEFAULT_TIMEOUT_MS when serviceTier is standard and no timeoutMs', async () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
 
     await adapter.run(makeResolvedReq({ config: { serviceTier: 'standard' } }), FAKE_CTX)
 
     const call = client.calls[0] as { config?: { httpOptions?: { timeout?: number } } }
-    expect(call?.config?.httpOptions).toBeUndefined()
+    expect(call?.config?.httpOptions?.timeout).toBe(300_000)
   })
 
   it('uses timeoutMs + buffer (not FLEX_DEFAULT) when both timeoutMs and flex are set', async () => {
@@ -1499,15 +1655,14 @@ describe('transport timeout (httpOptions.timeout)', () => {
 // ---------------------------------------------------------------------------
 
 describe('grounding — conflict guard', () => {
-  it('rejects with LlmError bad_request when googleSearch tool + outputSchema both present', async () => {
-    const schema = z.object({ answer: z.string() })
+  it('rejects with LlmError bad_request when googleSearch tool + outputJsonSchema both present', async () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
 
     const err = await adapter
       .run(
         makeResolvedReq({
-          outputSchema: schema,
+          outputJsonSchema: { type: 'object', additionalProperties: true },
           config: {
             serviceTier: 'flex',
             providerOptions: { google: { tools: [{ googleSearch: {} }] } },
@@ -1523,15 +1678,14 @@ describe('grounding — conflict guard', () => {
     expect((err as LlmError).message).toMatch(/grounding.*structured output/i)
   })
 
-  it('rejects with LlmError bad_request when googleSearchRetrieval tool + outputSchema both present', async () => {
-    const schema = z.object({ answer: z.string() })
+  it('rejects with LlmError bad_request when googleSearchRetrieval tool + outputJsonSchema both present', async () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
 
     await expect(
       adapter.run(
         makeResolvedReq({
-          outputSchema: schema,
+          outputJsonSchema: { type: 'object', additionalProperties: true },
           config: {
             serviceTier: 'flex',
             providerOptions: { google: { tools: [{ googleSearchRetrieval: {} }] } },
@@ -1543,7 +1697,6 @@ describe('grounding — conflict guard', () => {
   })
 
   it('audit record is persisted when grounding+schema conflict throws (full-stack)', async () => {
-    const schema = z.object({ answer: z.string() })
     const fakeClient = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const sink = new RecordingSink()
 
@@ -1558,7 +1711,7 @@ describe('grounding — conflict guard', () => {
         {
           model: 'gemini-2.5-pro',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
-          output: { schema },
+          output: { jsonSchema: { type: 'object', additionalProperties: true } },
           config: {
             providerOptions: { google: { tools: [{ googleSearch: {} }] } },
           },
@@ -1572,7 +1725,7 @@ describe('grounding — conflict guard', () => {
     expect(sink.last()?.errorKind).toBe('bad_request')
   })
 
-  it('succeeds when googleSearch tool is present WITHOUT outputSchema', async () => {
+  it('succeeds when googleSearch tool is present WITHOUT outputJsonSchema', async () => {
     const fakeGrounding = {
       webSearchQueries: ['what is the capital of France?'],
       groundingChunks: [],
@@ -1707,48 +1860,37 @@ describe('grounding — registry capabilities', () => {
 // ---------------------------------------------------------------------------
 
 describe('fixed-sampling invariant re-assertion after providerOptions merge', () => {
-  it('strips temperature/topP/topK from providerOptions.google for a fixed-sampling model and emits a warning', async () => {
+  it('throws LlmError bad_request when providerOptions.google supplies sampling params for a fixed-sampling model', async () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
 
-    const result = await adapter.run(
-      {
-        model: 'gemini-3.5-flash',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
-        config: {
-          serviceTier: 'flex',
-          providerOptions: {
-            google: { temperature: 0.9, topP: 0.8, topK: 40 },
+    await expect(
+      adapter.run(
+        {
+          model: 'gemini-3.5-flash',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
+          config: {
+            serviceTier: 'flex',
+            providerOptions: {
+              google: { temperature: 0.9, topP: 0.8, topK: 40 },
+            },
+          },
+          modelDescriptor: {
+            id: 'gemini-3.5-flash',
+            provider: 'google',
+            pricingFamily: 'gemini-3.5-flash',
+            capabilities: {
+              reasoning: true,
+              structuredOutput: true,
+              reasoningApi: 'level',
+              sampling: 'fixed',
+              serviceTiers: ['flex', 'standard'],
+            },
           },
         },
-        modelDescriptor: {
-          id: 'gemini-3.5-flash',
-          provider: 'google',
-          pricingFamily: 'gemini-3.5-flash',
-          capabilities: {
-            reasoning: true,
-            structuredOutput: true,
-            reasoningApi: 'level',
-            sampling: 'fixed',
-          },
-        },
-      },
-      FAKE_CTX,
-    )
-
-    // SDK must NOT receive sampling parameters
-    const call = client.calls[0] as {
-      config?: { temperature?: number; topP?: number; topK?: number }
-    }
-    expect(call?.config?.temperature).toBeUndefined()
-    expect(call?.config?.topP).toBeUndefined()
-    expect(call?.config?.topK).toBeUndefined()
-
-    // A warning must be surfaced
-    expect(result.warnings.length).toBeGreaterThanOrEqual(1)
-    const samplingWarning = result.warnings.find((w) => w.type === 'unsupported-setting')
-    expect(samplingWarning).toBeDefined()
-    expect((samplingWarning as { setting?: string }).setting).toContain('temperature')
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request', retryable: false })
   })
 
   it('keeps providerOptions temperature for a tunable-sampling model (gemini-2.5-pro)', async () => {
@@ -1774,6 +1916,7 @@ describe('fixed-sampling invariant re-assertion after providerOptions merge', ()
             structuredOutput: true,
             reasoningApi: 'budget',
             sampling: 'tunable',
+            serviceTiers: ['flex', 'standard'],
           },
         },
       },

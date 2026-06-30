@@ -10,14 +10,13 @@
  *   3. Weird finishReason strings → valid FinishReason or 'other'.
  *   4. Thought-only parts → reasoningText present, text absent.
  *   5. Empty / missing parts → adapter does not throw.
- *   6. Non-JSON text with schema → rawStructured absent → engine parse_error.
+ *   6. Non-JSON text with schema → rawStructured absent → outputParsed false.
  *   7. Injected HTTP errors → classified to correct LlmErrorKind.
  *
  * @module
  */
 
 import { describe, it, expect } from 'vitest'
-import { z } from 'zod'
 import { LlmError, createClient, geminiPricingSource } from '@gullabs/core'
 import type { ResolvedRequest, AdapterCtx, FinishReason } from '@gullabs/core'
 import {
@@ -558,10 +557,10 @@ describe('adapter-stress: empty parts', () => {
 })
 
 // ---------------------------------------------------------------------------
-// INVARIANT 6: Non-JSON text with schema → engine parse_error
+// INVARIANT 6: Non-JSON text with schema → outputParsed false
 // ---------------------------------------------------------------------------
 
-describe('adapter-stress: non-JSON text + structured output → parse_error', () => {
+describe('adapter-stress: non-JSON text + structured output → outputParsed false', () => {
   const BAD_JSON_TEXTS = [
     'not json at all',
     '{ incomplete',
@@ -572,12 +571,11 @@ describe('adapter-stress: non-JSON text + structured output → parse_error', ()
     '', // empty string → JSON.parse('') throws
   ]
 
-  it('non-JSON text with schema → engine LlmError parse_error (via full pipeline)', async () => {
+  it('non-JSON text with schema → successful call with outputParsed false', async () => {
     const rand = mulberry32(0x55443311)
 
     for (let i = 0; i < BAD_JSON_TEXTS.length; i++) {
       const badText = BAD_JSON_TEXTS[i]!
-      const schema = z.object({ answer: z.number() })
 
       const fakeClient = makeFakeGemini(
         fakeGeminiResponse({
@@ -597,22 +595,22 @@ describe('adapter-stress: non-JSON text + structured output → parse_error', ()
         ids: new FakeIds(),
       })
 
-      await expect(
-        client.generate(
-          {
-            model: 'gemini-2.5-pro',
-            messages: MESSAGES,
-            output: { schema },
-          },
-          { auth: TEST_AUTH },
-        ),
-      ).rejects.toMatchObject({ kind: 'parse_error', retryable: false })
+      const result = await client.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: MESSAGES,
+          output: { jsonSchema: { type: 'object', additionalProperties: true } },
+        },
+        { auth: TEST_AUTH },
+      )
 
       const rec = sink.last()!
       expect(
         rec.status,
-        `iter ${i} (text="${badText.slice(0, 20)}"): record status must be parse_error`,
-      ).toBe('parse_error')
+        `iter ${i} (text="${badText.slice(0, 20)}"): record status must be ok`,
+      ).toBe('ok')
+      expect(result.output).toBeUndefined()
+      expect(result.outputParsed).toBe(false)
 
       // Unused variable suppression
       void rand
@@ -630,9 +628,9 @@ describe('adapter-stress: non-JSON text + structured output → parse_error', ()
 
     const adapter = geminiAdapter({ client: fakeClient })
 
-    // Request WITH outputSchema — adapter will attempt JSON.parse on text
+    // Request WITH outputJsonSchema — adapter will attempt JSON.parse on text
     const req = makeReq({
-      outputSchema: z.object({ answer: z.number() }),
+      outputJsonSchema: { type: 'object', properties: { answer: { type: 'number' } } },
     })
     const result = await adapter.run(req, FAKE_CTX)
 
@@ -642,11 +640,10 @@ describe('adapter-stress: non-JSON text + structured output → parse_error', ()
     expect(result.text).toBe('not json')
   })
 
-  it('valid JSON text with matching schema → rawStructured parsed, engine validates ok', async () => {
+  it('valid JSON text → rawStructured parsed, engine returns output', async () => {
     const rand = mulberry32(0x88776655)
     for (let i = 0; i < 15; i++) {
       const answer = Math.floor(rand() * 10_000)
-      const schema = z.object({ answer: z.number() })
 
       const fakeClient = makeFakeGemini(
         fakeGeminiResponse({
@@ -670,12 +667,13 @@ describe('adapter-stress: non-JSON text + structured output → parse_error', ()
         {
           model: 'gemini-2.5-pro',
           messages: MESSAGES,
-          output: { schema },
+          output: { jsonSchema: { type: 'object', additionalProperties: true } },
         },
         { auth: TEST_AUTH },
       )
 
       expect(result.output).toEqual({ answer })
+      expect(result.outputParsed).toBe(true)
       expect(sink.last()!.status).toBe('ok')
     }
   })

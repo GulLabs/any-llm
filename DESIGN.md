@@ -130,18 +130,17 @@ adapter branches on `req.modelDescriptor?.capabilities?.reasoningApi`:
 - `'budget'` → map `effort` to the `EFFORT_BUDGET` table (`none: 0, low: 1024, medium: 8192,
 high: 24576`); `budgetTokens` overrides `effort` directly.
 - `'level'` → map `effort` to `MINIMAL / LOW / MEDIUM / HIGH`; `budgetTokens` is unsupported
-  and emits a `reasoning-mapping` warning.
-- `undefined` → emit an `unsupported` reasoning-mapping warning; do not set `thinkingConfig`.
+  and throws `LlmError('bad_request')`.
+- `undefined` → throws `LlmError('bad_request')`; do not set `thinkingConfig`.
 
-When both `effort` and `budgetTokens` are set for a `'budget'` model, `budgetTokens` wins and an
-`approximate` warning is emitted.
+When both `effort` and `budgetTokens` are set for a `'budget'` model, `budgetTokens` wins.
 
 ### Structured Output Path
 
-The adapter sets `responseMimeType: 'application/json'` whenever `req.outputSchema` is present.
-`zodToGeminiSchema` converts the Zod schema to a Gemini `responseSchema` object. When the
+The adapter sets `responseMimeType: 'application/json'` whenever `req.outputJsonSchema` is present.
+`JSON Schema forwarding` converts the JSON Schema to a Gemini `responseSchema` object. When the
 conversion returns `undefined` (a Zod construct that has no Gemini equivalent), the adapter
-proceeds with `responseMimeType` alone and emits an `unsupported-setting` warning. The engine
+proceeds with `responseMimeType` alone without warning. The engine
 performs the actual Zod `.safeParse` validation regardless of whether the adapter-level schema
 was sent.
 
@@ -156,7 +155,7 @@ was sent.
 Grounding is requested via `providerOptions.google.tools: [{ googleSearch: {} }]`. The
 `providerOptions.google` object is merged after typed-field mapping; transport/abort scaffolding
 (`abortSignal`, `httpOptions`) is applied afterward, and caller-supplied `httpOptions` still wins. After the merge, the adapter checks whether any tool entry has a
-`googleSearch` or `googleSearchRetrieval` key. If so and `req.outputSchema` is also set, the
+`googleSearch` or `googleSearchRetrieval` key. If so and `req.outputJsonSchema` is also set, the
 adapter throws `LlmError('bad_request', retryable: false)` immediately — Gemini does not support
 grounding combined with `responseSchema`. When grounding is active, `candidate.groundingMetadata`
 is captured alongside `promptFeedback` into `result.providerMetadata`.
@@ -225,10 +224,10 @@ have `sampling: 'fixed'` and reject `temperature`, `topP`, `topK` at call time.
 
 **Grounding.** Requested via `providerOptions.google.tools: [{ googleSearch: {} }]`. The adapter
 captures `candidate.groundingMetadata` into `result.providerMetadata`. Grounding and structured
-output (`output.schema`) are mutually exclusive; the adapter enforces this with a `bad_request`
+output (`output.jsonSchema`) are mutually exclusive; the adapter enforces this with a `bad_request`
 error before the SDK call.
 
-**Flex transport timeout.** The adapter sets `config.httpOptions.timeout` automatically: 900 s for
+**Flex transport timeout.** The adapter sets `config.httpOptions.timeout` automatically: 1 500 s for
 Flex calls without `timeoutMs`, and `timeoutMs + 5 000 ms` when `timeoutMs` is set. Both exported
 as `FLEX_DEFAULT_TIMEOUT_MS` and `TRANSPORT_TIMEOUT_BUFFER_MS`.
 
@@ -265,8 +264,8 @@ idempotent re-runs without hitting the provider. Absent in v1.
 ## Package Scope
 
 The `@gullabs` npm scope is used throughout. The GitHub org is `gullabs`. Provider SDK packages
-(`@google/genai`, `@anthropic-ai/sdk`, `openai`) and `zod` are peer dependencies, not bundled
-dependencies, to avoid duplicate instances in the host's dependency tree.
+(`@google/genai`, `@anthropic-ai/sdk`, `openai`) are peer dependencies, not bundled dependencies,
+to avoid duplicate instances in the host's dependency tree.
 
 Packages:
 

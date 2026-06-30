@@ -6,13 +6,13 @@ Gemini provider adapter for any-llm. A thin mapping layer over `@google/genai` t
 
 ## Key exports
 
-| Export                      | What it is                                                                    |
-| --------------------------- | ----------------------------------------------------------------------------- |
-| `geminiAdapter(opts?)`      | Creates the `ProviderAdapter` for Gemini                                      |
-| `GeminiAdapterOptions`      | `{ client?: GeminiClientLike }` — inject a pre-built or fake client           |
-| `GeminiClientLike`          | Structural interface the adapter depends on (satisfied by real SDK and fakes) |
-| `buildGoogleClient(auth)`   | Builds the real `@google/genai` client from `AuthMaterial`                    |
-| `zodToGeminiSchema(schema)` | Converts a Zod schema to a Gemini `responseSchema` object                     |
+| Export                       | What it is                                                                    |
+| ---------------------------- | ----------------------------------------------------------------------------- |
+| `geminiAdapter(opts?)`       | Creates the `ProviderAdapter` for Gemini                                      |
+| `GeminiAdapterOptions`       | `{ client?: GeminiClientLike }` — inject a pre-built or fake client           |
+| `GeminiClientLike`           | Structural interface the adapter depends on (satisfied by real SDK and fakes) |
+| `buildGoogleClient(auth)`    | Builds the real `@google/genai` client from `AuthMaterial`                    |
+| `isGeminiCapacityError(err)` | Detects Gemini Flex shared-capacity errors for built-in fallback              |
 
 ## Quick example
 
@@ -37,10 +37,30 @@ const result = await client.generate(
 
 ## What it maps
 
-- `serviceTier: 'flex'` → Gemini Flex service tier (default)
+- `serviceTier: 'flex'` → Gemini Flex service tier when the model descriptor supports it
 - `reasoning.includeThoughts` → `thinkingConfig.includeThoughts`; thought parts become `reasoningText`
 - `reasoning.effort` → `thinkingBudget` (gemini-2.5) or `thinkingLevel` (gemini-3.x) with a warning when lossy
-- `output.schema` → `responseMimeType: 'application/json'` + `responseSchema` (Zod-converted)
-- `providerOptions.google.*` → forwarded verbatim to the SDK config
+- `output.jsonSchema` → `responseMimeType: 'application/json'` + verbatim `responseSchema` when native structured output is enabled; the engine returns parsed output and `outputParsed` without validating shape
+- `providerOptions.google.*` → forwarded verbatim to the SDK config, including Gemini `safetySettings`
 - Usage: `promptTokenCount`→`inputTokens`, `candidatesTokenCount`+`thoughtsTokenCount`→`outputTokens` (GROSS)
 - Errors: `401/403`→`invalid_auth`, `429`→`rate_limited`, `5xx`→`server`, timeouts, safety blocks
+
+## Gemma 4
+
+The default registry includes two API-verified Gemma 4 models: `gemma-4-31b-it`
+and `gemma-4-26b-a4b-it`. Both route through this adapter and support:
+
+- **Native structured output** — `responseMimeType` + verbatim `responseSchema` are sent
+  automatically when `output.jsonSchema` is set.
+- **Grounding** — `tools:[{googleSearch:{}}]` via `providerOptions.google`.
+- **Vision** — `inline-media` and `file-uri` multimodal message parts.
+- **Thinking** — `reasoning.effort` maps to `thinkingLevel` (`reasoningApi: 'level'`).
+  Gemma 4 thinking is binary: only `effort: 'none'` (MINIMAL) and `effort: 'high'`
+  (HIGH) are accepted. Passing `effort: 'low'` or `effort: 'medium'` is rejected at
+  validation time with a `bad_request` error because the model only supports MINIMAL
+  and HIGH `thinkingLevel` values. Note: `thinkingBudget` is **not** supported
+  (rejected by the API with HTTP 400).
+- **Tunable sampling** — `temperature`, `topP`, `topK` are accepted.
+
+Gemma 4 models do **not** support Gemini Flex service tier (`serviceTiers` is absent from their
+descriptors) and are unpriced (`cost.microUsd` will be `null`).

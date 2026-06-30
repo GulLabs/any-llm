@@ -158,10 +158,9 @@ Each invocation generates a fresh `attemptId`. Steps:
    replaces non-finite numbers with `0`; emits `Warning` entries for each violation. This
    runs once; the same normalized `Usage` object is used for cost, the result, and the record.
 
-8. **Structured output validation.** When `req.outputSchema` is set, the engine calls
-   `schema['~standard'].validate(adapterResult.rawStructured)`. Failure throws
-   `LlmError('parse_error', retryable: false)` — this is terminal; the error path sinks a
-   record before rethrowing.
+8. **Structured output parsing.** When `req.outputJsonSchema` is set, the adapter JSON-parses
+   provider text into `rawStructured` when possible. The engine returns `output` and
+   `outputParsed`; it never validates shape. Callers own validation, retry, and acceptance policy.
 
 9. **Cost computation.** `pricing.price(pricingKey, usage, serviceTier)` is called inside a
    try/catch. Failure appends an `'other'` warning and logs `llm.call.cost.failed`; the call
@@ -205,7 +204,6 @@ narrow by `kind` or read `retryable` without parsing message strings.
 | `aborted`        | —        | No          | Caller cancelled via `AbortSignal`. Never retried.        |
 | `bad_request`    | 400, 422 | No          | Malformed request; retrying without change will not help. |
 | `content_filter` | —        | No          | Provider refused output for safety reasons.               |
-| `parse_error`    | —        | No          | Zod validation failed on structured output; terminal.     |
 | `unknown`        | other    | No          | Uncategorised; inspect `cause` for details.               |
 
 ### Classification
@@ -268,7 +266,7 @@ retry delay is not counted against the per-attempt timeout.
 
 All three parts accept an optional `mediaResolution?: 'low' | 'medium' | 'high'` hint for
 image/video detail level. The Gemini adapter maps this to `PartMediaResolutionLevel`
-(`MEDIA_RESOLUTION_LOW` / `…_MEDIUM` / `…_HIGH`) and emits an `unsupported-setting` warning
+(`MEDIA_RESOLUTION_LOW` / `…_MEDIUM` / `…_HIGH`) and throws `LlmError('bad_request')`
 when a model cannot honour the hint.
 
 `isTextPart`, `isInlineMediaPart`, and `isFileUriPart` type guards are exported from
@@ -352,6 +350,10 @@ Each descriptor carries:
 - `capabilities.sampling` — `'tunable'` (Gemini 2.5 series) or `'fixed'` (Gemini 3.x series).
 - `capabilities.caching` — `{ explicit: boolean; minTokens: number }`.
 - `capabilities.grounding` — whether the model supports Google Search grounding.
+- `capabilities.nativeStructuredOutput` — whether the adapter may send provider-native
+  `responseMimeType` / `responseSchema` hints for `output.jsonSchema`.
+- `capabilities.vision` / `capabilities.audioInput` — declarative multimodal support flags.
+- `capabilities.serviceTiers` — provider service tiers safe to send to the SDK for this model.
 
 ### Resolution Order
 
@@ -368,9 +370,10 @@ with multiple adapters, an unknown provider throws `LlmError('bad_request')`.
 
 ### Default Registry
 
-`defaultGeminiRegistry` is pre-populated from `geminiModelDescriptors` in `registry.ts`. It
-covers all current Gemini 2.5 and 3.x model families. Hosts supply `ClientConfig.modelRegistry`
-to extend or replace it.
+`defaultGeminiRegistry` is pre-populated from `geminiModelDescriptors` and
+`gemmaModelDescriptors` in `registry.ts`. It covers current Gemini 2.5/3.x model families plus
+two API-verified Gemma 4 models: `gemma-4-31b-it` and `gemma-4-26b-a4b-it`. Hosts supply
+`ClientConfig.modelRegistry` to extend or replace it.
 
 ---
 
@@ -485,7 +488,7 @@ config: {
 
 The `providerOptions.google` object is merged into `GenerateContentConfig` last, after all
 typed-field mapping. After the merge the adapter checks whether any entry in `config.tools`
-contains a `googleSearch` or `googleSearchRetrieval` key. If so and `req.outputSchema` is also
+contains a `googleSearch` or `googleSearchRetrieval` key. If so and `req.outputJsonSchema` is also
 set, the adapter throws `LlmError('bad_request', retryable: false)` — grounding and structured
 output are mutually exclusive at the Gemini API level.
 
@@ -524,7 +527,7 @@ foundation needs to be solid before the surface expands.
 breaking change to the engine.
 
 **Additional providers.** The `ProviderAdapter` port and routing infrastructure are in place for
-Anthropic, OpenAI, and others. v1 ships only the Gemini adapter. Multi-adapter setups work today
+Anthropic, OpenAI, and others. v1 ships the Google adapter for Gemini and Gemma. Multi-adapter setups work today
 with the custom `route` option; the default router handles the single-adapter case.
 
 **Function calling / tool use.** `LlmRequest` does not yet carry a `tools` field. The `Part`

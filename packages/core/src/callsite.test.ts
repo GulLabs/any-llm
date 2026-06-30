@@ -2,13 +2,12 @@
  * Call-site tests for @gullabs/core.
  *
  * Tests defineCallSite + client.runStructured: template rendering, config
- * resolution, schema validation, callSiteId propagation.
+ * resolution, structured-output hint forwarding, callSiteId propagation.
  *
  * @module
  */
 
 import { describe, it, expect } from 'vitest'
-import { z } from 'zod'
 import { createClient, defineCallSite, geminiPricingSource } from './index.js'
 import type { AdapterResult, Usage } from './index.js'
 import { FakeAdapter, FakeClock, FakeIds, RecordingSink } from '@gullabs/testing'
@@ -61,11 +60,10 @@ describe('defineCallSite', () => {
     expect(defineCallSite(opts)).toBe(opts)
   })
 
-  it('is typed: schema inference flows to the call site', () => {
-    const schema = z.object({ count: z.number() })
-    const cs = defineCallSite({ id: 'x', model: 'gemini-2.5-flash', schema })
-    // TypeScript assertion: cs.schema should be the exact schema type
-    expect(cs.schema).toBe(schema)
+  it('preserves jsonSchema on the call site', () => {
+    const jsonSchema = { type: 'object', properties: { count: { type: 'number' } } }
+    const cs = defineCallSite({ id: 'x', model: 'gemini-2.5-flash', jsonSchema })
+    expect(cs.jsonSchema).toBe(jsonSchema)
   })
 })
 
@@ -242,12 +240,12 @@ describe('runStructured — config resolution', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Schema validation via runStructured
+// Structured output via runStructured
 // ---------------------------------------------------------------------------
 
-describe('runStructured — schema validation', () => {
-  it('valid rawStructured → typed output', async () => {
-    const schema = z.object({ label: z.string(), score: z.number() })
+describe('runStructured — structured output', () => {
+  it('valid rawStructured → outputParsed true', async () => {
+    const jsonSchema = { type: 'object', properties: { label: { type: 'string' } } }
     const adapter = new FakeAdapter(
       'google',
       successResult({ rawStructured: { label: 'spam', score: 0.95 } }),
@@ -257,15 +255,16 @@ describe('runStructured — schema validation', () => {
     const cs = defineCallSite({
       id: 'classify',
       model: 'gemini-2.5-flash',
-      schema,
+      jsonSchema,
     })
 
     const result = await client.runStructured(cs, { auth: TEST_AUTH })
     expect(result.output).toEqual({ label: 'spam', score: 0.95 })
+    expect(result.outputParsed).toBe(true)
   })
 
-  it('invalid rawStructured → LlmError parse_error', async () => {
-    const schema = z.object({ label: z.string() })
+  it('shape-mismatching rawStructured still succeeds; caller validates', async () => {
+    const jsonSchema = { type: 'object', properties: { label: { type: 'string' } } }
     const adapter = new FakeAdapter(
       'google',
       successResult({ rawStructured: { label: 123 } }),
@@ -276,15 +275,12 @@ describe('runStructured — schema validation', () => {
     const cs = defineCallSite({
       id: 'classify-bad',
       model: 'gemini-2.5-flash',
-      schema,
+      jsonSchema,
     })
 
-    await expect(client.runStructured(cs, { auth: TEST_AUTH })).rejects.toMatchObject({
-      kind: 'parse_error',
-      retryable: false,
-    })
-
-    // postmortem record written
-    expect(sink.last()!.status).toBe('parse_error')
+    const result = await client.runStructured(cs, { auth: TEST_AUTH })
+    expect(result.output).toEqual({ label: 123 })
+    expect(result.outputParsed).toBe(true)
+    expect(sink.last()!.status).toBe('ok')
   })
 })

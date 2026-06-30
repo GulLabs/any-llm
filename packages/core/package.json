@@ -25,12 +25,6 @@
   "scripts": {
     "build": "tsup"
   },
-  "peerDependencies": {
-    "zod": "^3.23.0 || ^4"
-  },
-  "devDependencies": {
-    "zod": "^3.23.0"
-  },
   "engines": {
     "node": ">=20.9.0"
   },

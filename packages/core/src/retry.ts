@@ -228,6 +228,7 @@ export function retryMiddleware(
       const timeoutMs = req.config.timeoutMs
       const start = nowFn()
       let attempt = 0
+      let pinnedServiceTier: 'flex' | 'standard' | undefined
 
       for (;;) {
         attempt++
@@ -236,7 +237,13 @@ export function retryMiddleware(
         // Build a (possibly shrunk) request for this attempt.  Always stamp
         // attemptNumber so the engine can record/log which attempt this is.
         // When no overall timeout is set only attemptNumber is added.
-        let currentReq: ResolvedRequest = { ...req, attemptNumber: attempt }
+        let currentReq: ResolvedRequest = {
+          ...req,
+          attemptNumber: attempt,
+          ...(pinnedServiceTier !== undefined
+            ? { config: { ...req.config, serviceTier: pinnedServiceTier } }
+            : {}),
+        }
         if (timeoutMs !== undefined) {
           const remaining = timeoutMs - (nowFn() - start)
           if (remaining <= 0) {
@@ -253,9 +260,19 @@ export function retryMiddleware(
         }
 
         try {
-          return await next(currentReq, ctx)
+          const result = await next(currentReq, ctx)
+          if (
+            result.servedServiceTier === 'flex' ||
+            result.servedServiceTier === 'standard'
+          ) {
+            pinnedServiceTier = result.servedServiceTier
+          }
+          return result
         } catch (rawErr) {
           const err = classifyError(rawErr)
+          if (err.servedServiceTier === 'flex' || err.servedServiceTier === 'standard') {
+            pinnedServiceTier = err.servedServiceTier
+          }
 
           // Abort is always terminal — never retry.
           if (err.kind === 'aborted') throw err

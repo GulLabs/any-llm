@@ -26,10 +26,10 @@ export type { GeminiClientLike } from './client.js'
 export {
   buildGoogleClient,
   FLEX_DEFAULT_TIMEOUT_MS,
+  STANDARD_DEFAULT_TIMEOUT_MS,
   TRANSPORT_TIMEOUT_BUFFER_MS,
 } from './client.js'
-export { zodToGeminiSchema } from './schema.js'
-export type { GeminiSchema } from './schema.js'
+export { isGeminiCapacityError } from './flex-fallback.js'
 export type {
   GoogleFileHandle,
   GoogleFileStoreOptions,

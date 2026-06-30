@@ -18,7 +18,6 @@ Reusable test fakes for any-llm. Lets you drive the full engine pipeline — inc
 ## Quick example — end-to-end with fake Gemini client
 
 ```ts
-import { z } from 'zod'
 import { createClient, geminiPricingSource, defineCallSite } from '@gullabs/core'
 import { geminiAdapter } from '@gullabs/google'
 import {
@@ -52,7 +51,11 @@ const client = createClient({
 const callSite = defineCallSite({
   id: 'test',
   model: 'gemini-2.5-flash',
-  schema: z.object({ ok: z.boolean() }),
+  jsonSchema: {
+    type: 'object',
+    properties: { ok: { type: 'boolean' } },
+    required: ['ok'],
+  },
   userTemplate: 'Hello',
   config: { reasoning: { includeThoughts: true } },
 })
@@ -62,6 +65,7 @@ const result = await client.runStructured(callSite, {}, { auth: { apiKey: 'fake'
 
 // Assertions
 console.assert(result.output?.ok === true)
+console.assert(result.outputParsed === true)
 console.assert(result.usage.thinkingTokens === 20)
 console.assert(sink.last()?.status === 'ok')
 ```

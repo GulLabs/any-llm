@@ -8,27 +8,34 @@ The default, batteries-included any-llm client package.
 pnpm add @gullabs/any-llm
 ```
 
-This installs the core engine, Gemini adapter, `@google/genai`, and `zod`.
+This installs the core engine, Gemini adapter, and `@google/genai`.
 
 ## Usage
 
 ```ts
-import { createClient, defineCallSite, geminiAdapter, geminiPricingSource, z } from '@gullabs/any-llm'
+import {
+  createClient,
+  defineCallSite,
+  geminiAdapter,
+  geminiPricingSource,
+} from '@gullabs/any-llm'
 
 const client = createClient({
   adapters: [geminiAdapter()],
   pricing: geminiPricingSource(),
 })
 
-const Summary = z.object({
-  title: z.string(),
-  bullets: z.array(z.string()),
-})
-
 const summarize = defineCallSite({
   id: 'summarize',
   model: 'gemini-2.5-flash',
-  schema: Summary,
+  jsonSchema: {
+    type: 'object',
+    properties: {
+      title: { type: 'string' },
+      bullets: { type: 'array', items: { type: 'string' } },
+    },
+    required: ['title', 'bullets'],
+  },
   userTemplate: 'Summarize this:\n\n{{text}}',
 })
 

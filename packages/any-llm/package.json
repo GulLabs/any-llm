@@ -1,7 +1,7 @@
 {
   "name": "@gullabs/any-llm",
   "version": "0.2.0",
-  "description": "Batteries-included any-llm client for Gemini: engine, adapter, Google SDK, and Zod in one install.",
+  "description": "Batteries-included any-llm client for Gemini: engine, adapter, and Google SDK in one install.",
   "type": "module",
   "license": "Apache-2.0",
   "repository": {
@@ -28,8 +28,7 @@
   "dependencies": {
     "@google/genai": "^1.45.0 || ^2",
     "@gullabs/core": "workspace:*",
-    "@gullabs/google": "workspace:*",
-    "zod": "^3.23.0 || ^4"
+    "@gullabs/google": "workspace:*"
   },
   "engines": {
     "node": ">=20.9.0"

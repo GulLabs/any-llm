@@ -42,8 +42,4 @@ export declare namespace StandardSchemaV1 {
   export type InferInput<Schema extends StandardSchemaV1> = NonNullable<
     Schema['~standard']['types']
   >['input']
-
-  export type InferOutput<Schema extends StandardSchemaV1> = NonNullable<
-    Schema['~standard']['types']
-  >['output']
 }

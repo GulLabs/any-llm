@@ -7,15 +7,16 @@
 
 ## v1 goals (the entire scope)
 
-1. Call **Gemini** with the **Flex** service tier.
+1. Call **Google-hosted models** through `@google/genai` (Gemini with Flex where supported; Gemma
+   without Gemini-only Flex assumptions).
 2. **Record token usage** (input / output / cached / **thinking**).
 3. Capture **thinking** — thinking _token usage_ always; the provider-returned _thought-summary
    text_ when `reasoning.includeThoughts` is set — plus **postmortems** (per-call diagnostics on
    success and failure).
 4. **Track cost** (public Gemini pricing → micro-USD, frozen per record).
 
-Everything else from DESIGN.md is OUT of v1 (no other providers, no streaming, no tools, no
-multimodal, no middleware, no registry). Seams are present; machinery is not.
+Everything else from DESIGN.md is OUT of v1 (no other provider adapters, no streaming, no tools).
+Seams are present; machinery is intentionally small.
 
 ## Non-negotiable invariants
 
@@ -90,7 +91,7 @@ export interface ReasoningIntent {
 
 // ---- result ----
 export interface LlmResult<T> {
-  output?: T // present iff request had output.schema and validation passed
+  output?: T // present iff request had output.jsonSchema and validation passed
   text?: string
   reasoningText?: string // provider thought-summary, present iff includeThoughts requested
   usage: Usage
@@ -104,14 +105,7 @@ export interface LlmResult<T> {
   providerMetadata?: JsonValue // raw provider metadata (grounding/safety/etc.)
 }
 export type FinishReason = 'stop' | 'length' | 'content_filter' | 'other'
-export type Warning =
-  | { type: 'unsupported-setting'; setting: string; details?: string }
-  | {
-      type: 'reasoning-mapping'
-      quality: 'approximate' | 'unsupported'
-      details?: string
-    }
-  | { type: 'other'; message: string }
+export type Warning = { type: 'other'; message: string }
 
 // ---- usage: typed core + open map + raw (forward-compat without migration) ----
 export interface Usage {
@@ -146,7 +140,6 @@ export type LlmErrorKind =
   | 'aborted'
   | 'bad_request'
   | 'content_filter'
-  | 'parse_error'
   | 'unknown'
 export class LlmError extends Error {
   kind: LlmErrorKind
@@ -156,7 +149,7 @@ export class LlmError extends Error {
   provider?: string
   cause?: unknown
 }
-// adapters classify raw SDK errors → LlmError; engine surfaces it. parse_error is terminal.
+// adapters classify raw SDK errors → LlmError; engine surfaces it.
 ```
 
 ---
@@ -174,7 +167,7 @@ export interface ResolvedRequest {
   model: string
   system?: string
   messages: Message[]
-  outputSchema?: ZodType // adapter uses it to set provider responseSchema only
+  outputJsonSchema?: JsonValue // adapter uses it to set provider responseSchema only
   config: Required<Pick<GenConfig, 'serviceTier'>> & GenConfig
   signal?: AbortSignal
 }
@@ -246,7 +239,7 @@ runStructured(callSite, vars?, opts?)  /  generate(request)
   6. auth.credentials(provider)
   7. adapter.run(resolved, ctx)   with timeout + AbortSignal
   8. normalize usage  (GROSS convention enforced; details map + raw populated by adapter)
-  9. validate output  (Zod safeParse rawStructured → output | throw LlmError 'parse_error')
+  9. parse structured output  (JSON.parse result → output + outputParsed; caller validates)
  10. pricing.price()  → Cost (micro-USD, frozen)   [fail-open → cost=null on pricing error]
  11. build LlmCallRecord  + sink.record()           [fail-open: swallow+log sink errors]
  12. telemetry.onSuccess + log 'llm.call.success'
@@ -299,7 +292,7 @@ export interface LlmCallRecord {
   responseId?: string
   serviceTier?: string
   // status aligns with LlmErrorKind so postmortems don't collapse distinct failures:
-  status: 'ok' | 'parse_error' | 'api_error' | 'timeout' | 'aborted' | 'content_filter'
+  status: 'ok' | 'api_error' | 'timeout' | 'aborted' | 'content_filter'
   finishReason?: FinishReason
   latencyMs: number
   // usage (typed hot fields)
@@ -333,12 +326,16 @@ Core imports no ORM; a host with a different store implements `UsageSink` direct
 
 ---
 
-## Gemini adapter (`@gullabs/google`)
+## Google adapter (`@gullabs/google`)
 
 - `geminiAdapter(): ProviderAdapter` over `@google/genai` (peerDep), API-key + Vertex-WIF auth.
-- Maps: `serviceTier:'flex'` → Gemini Flex; `reasoning` → `thinkingConfig` (budget for 2.5, level for
-  3.x) with a `reasoning-mapping` warning when lossy; `output.schema` → `responseSchema`
-  (`responseMimeType:'application/json'`); `providerOptions.google.*` forwarded verbatim.
+- Maps: `serviceTier:'flex'` → Gemini Flex only when the model descriptor supports it; `reasoning`
+  → `thinkingConfig` (budget for 2.5, level for 3.x); throws `LlmError('bad_request')` when the mapping cannot be applied;
+  `output.jsonSchema` → `responseSchema` (`responseMimeType:'application/json'`) only when native
+  structured output is enabled; `providerOptions.google.*` forwarded verbatim.
+- Routes Gemini 2.5/3.x and two API-verified Gemma 4 models (`gemma-4-31b-it`,
+  `gemma-4-26b-a4b-it`). Both Gemma 4 descriptors support multimodal parts, native structured
+  output, grounding, and thinking (thinkingLevel). They do not support Gemini Flex or pricing.
 - Usage: read `usageMetadata` → `promptTokenCount`→inputTokens, `candidatesTokenCount`→outputTokens,
   `cachedContentTokenCount`→cachedInputTokens, `thoughtsTokenCount`→thinkingTokens; copy whole object
   to `usage.raw`; populate `details`. Enforce GROSS convention.
@@ -353,7 +350,7 @@ Core imports no ORM; a host with a different store implements `UsageSink` direct
 - **Fakes:** `FakeClock`, `FakeIds`, `RecordingSink` (captures records), `fakeGemini` (a stub
   `@google/genai` client returning scripted responses incl. usageMetadata with thoughtsTokenCount).
 - **Unit:** cost math (GROSS/net, >200k tier, cached discount, unknown-model→null); error
-  classification; config resolution/merge; usage normalization; record building; Zod validate→parse_error.
+  classification; config resolution/merge; usage normalization; record building; JSON parse→outputParsed.
 - **The highest-risk test (codex-mandated, no network):** drive the engine with a fake adapter
   result of `inputTokens=250_000, cachedInputTokens=100_000, outputTokens=5_000, thinkingTokens=2_000`
   and assert in ONE test: gross/subset invariant preserved; `>200k` tier chosen on gross input;

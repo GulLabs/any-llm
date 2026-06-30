@@ -22,7 +22,6 @@
  * - `'aborted'`         — caller cancelled via `AbortSignal`.
  * - `'bad_request'`     — 400/422; the request itself is malformed.
  * - `'content_filter'`  — provider refused output for safety reasons.
- * - `'parse_error'`     — schema validation failed on structured output; terminal.
  * - `'unknown'`         — uncategorised; inspect `cause` for details.
  */
 export type LlmErrorKind =
@@ -33,7 +32,6 @@ export type LlmErrorKind =
   | 'aborted'
   | 'bad_request'
   | 'content_filter'
-  | 'parse_error'
   | 'unknown'
 
 // ---------------------------------------------------------------------------
@@ -63,6 +61,8 @@ export interface LlmErrorOptions {
   callId?: string
   /** Library attempt ID at the time of the error. */
   attemptId?: string
+  /** Service tier actually attempted by the provider when known. */
+  servedServiceTier?: string
 }
 
 /**
@@ -102,6 +102,8 @@ export class LlmError extends Error {
   readonly callId?: string
   /** The attempt ID from the engine at the time of failure. */
   readonly attemptId?: string
+  /** Service tier actually attempted by the provider when known. */
+  readonly servedServiceTier?: string
 
   constructor(message: string, options: LlmErrorOptions) {
     super(message)
@@ -127,6 +129,9 @@ export class LlmError extends Error {
     }
     if (options.attemptId !== undefined) {
       this.attemptId = options.attemptId
+    }
+    if (options.servedServiceTier !== undefined) {
+      this.servedServiceTier = options.servedServiceTier
     }
 
     // Maintain a proper prototype chain in transpiled ES5 environments.

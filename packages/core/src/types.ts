@@ -7,8 +7,6 @@
  * @module
  */
 
-import type { StandardSchemaV1 } from './standard-schema.js'
-
 // ---------------------------------------------------------------------------
 // Primitive JSON value (used throughout for open / forward-compat lanes)
 // ---------------------------------------------------------------------------
@@ -51,8 +49,8 @@ export type TextPart = { kind: 'text'; text: string }
  *
  * `mediaResolution` is a normalised cross-provider hint for image/video
  * detail level (`'low'` reduces tokens; `'high'` maximises fidelity).
- * Adapters map this to the closest provider-specific setting and emit an
- * {@link Warning | unsupported-setting} warning when the model cannot honour it.
+ * Adapters map this to the closest provider-specific setting and throw
+ * `LlmError('bad_request')` when the model cannot honour it.
  */
 export type InlineMediaPart = {
   kind: 'inline-media'
@@ -68,7 +66,7 @@ export type InlineMediaPart = {
    * `'low'` → fewer tokens / lower cost.
    * `'medium'` → balanced (provider default when omitted).
    * `'high'` → highest fidelity / most tokens.
-   * Adapters emit `unsupported-setting` when the model cannot honour the hint.
+   * Adapters throw `LlmError('bad_request')` when the model cannot honour the hint.
    */
   mediaResolution?: 'low' | 'medium' | 'high'
 }
@@ -90,7 +88,7 @@ export type FileUriPart = {
   mimeType: string
   /**
    * Cross-provider media detail hint — see {@link InlineMediaPart.mediaResolution}.
-   * Adapters emit `unsupported-setting` when the model cannot honour the hint.
+   * Adapters throw `LlmError('bad_request')` when the model cannot honour the hint.
    */
   mediaResolution?: 'low' | 'medium' | 'high'
 }
@@ -148,7 +146,7 @@ export type Message = { role: 'user' | 'assistant'; parts: Part[] }
 /**
  * Intent for the model's internal reasoning / chain-of-thought capability.
  * Adapters map this to provider-specific knobs (e.g. Gemini `thinkingConfig`)
- * and emit a `reasoning-mapping` warning when the mapping is lossy.
+ * Adapters throw `LlmError('bad_request')` when the mapping cannot be applied.
  */
 export interface ReasoningIntent {
   /**
@@ -190,6 +188,14 @@ export interface GenConfig {
    */
   serviceTier?: 'flex' | 'standard'
   /**
+   * Gemini Flex capacity fallback.
+   *
+   * Defaults to `true`: Gemini flex capacity errors are retried once by the
+   * provider adapter on standard tier. Set to `false` to surface the original
+   * flex capacity error.
+   */
+  flexFallback?: boolean
+  /**
    * Overall wall-clock ceiling for the logical call.
    *
    * Honored as a **true ceiling across retry attempts** when the retry
@@ -217,10 +223,8 @@ export interface GenConfig {
 /**
  * A request to an LLM.
  *
- * @typeParam S - Standard Schema type for structured output.
- *   Defaults to `StandardSchemaV1` (the base interface) when unspecified.
  */
-export interface LlmRequest<S extends StandardSchemaV1 = StandardSchemaV1> {
+export interface LlmRequest {
   /**
    * Routing key — the engine maps this to a provider adapter.
    * v1 resolves `gemini-*`; unknown models throw `LlmError('bad_request')`.
@@ -234,14 +238,28 @@ export interface LlmRequest<S extends StandardSchemaV1 = StandardSchemaV1> {
    */
   messages: Message[]
   /**
-   * When present, the adapter requests structured JSON output and the engine
-   * validates the raw response against `schema` via the Standard Schema protocol.
+   * Optional structured output hint.
+   *
+   * The adapter forwards this JSON Schema to providers that support native
+   * structured output, JSON-parses the response, and reports `outputParsed`.
+   * The library never validates the parsed value; callers own validation,
+   * retry, and acceptance policy.
    */
-  output?: { schema: S }
+  output?: { jsonSchema: JsonValue }
   /** Generation configuration; merged over library defaults and call-site defaults. */
   config?: GenConfig
   /** Host-supplied metadata anchors persisted verbatim. */
   metadata?: CallMetadata
+  /** Optional call-site identifier for direct `generate()` observability grouping. */
+  callSiteId?: string
+  /**
+   * Optional ledger idempotency key. Attempt 1 uses this exact value as
+   * `attemptId`; in-process library retries suffix later attempts (`key:2`,
+   * `key:3`, ...) so every attempt can keep a distinct durable row.
+   */
+  idempotencyKey?: string
+  /** Optional caller-owned correlation id persisted on the record. */
+  externalId?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -252,28 +270,15 @@ export interface LlmRequest<S extends StandardSchemaV1 = StandardSchemaV1> {
 export type FinishReason = 'stop' | 'length' | 'content_filter' | 'other'
 
 /**
- * A warning emitted when a requested setting could not be applied exactly.
- * Warnings are never silently dropped — they appear on the result and record.
+ * A warning emitted for advisory information that does not prevent the call
+ * from succeeding. Warnings are never silently dropped — they appear on the
+ * result and record.
  */
-export type Warning =
-  | {
-      type: 'unsupported-setting'
-      /** The name of the setting that was not applied. */
-      setting: string
-      /** Human-readable explanation. */
-      details?: string
-    }
-  | {
-      type: 'reasoning-mapping'
-      /** How lossy the mapping was. */
-      quality: 'approximate' | 'unsupported'
-      details?: string
-    }
-  | {
-      type: 'other'
-      /** Free-form message for any other advisory. */
-      message: string
-    }
+export type Warning = {
+  type: 'other'
+  /** Free-form message for any other advisory. */
+  message: string
+}
 
 /**
  * Per-call token usage.
@@ -354,15 +359,19 @@ export interface Cost {
 /**
  * The value returned by a successful (or partially-successful) LLM call.
  *
- * @typeParam T - The inferred output type from the Standard Schema, if any.
  */
-export interface LlmResult<T = unknown> {
+export interface LlmResult {
   /**
-   * Validated structured output.
-   * Present only when `request.output.schema` was supplied and schema validation
-   * succeeded.  Absent on plain-text or failed-parse calls.
+   * JSON-parsed structured output.
+   * Present only when `request.output.jsonSchema` was supplied and JSON parsing
+   * succeeded. Always `unknown`; callers validate.
    */
-  output?: T
+  output?: unknown
+  /**
+   * Whether JSON parsing succeeded for a structured-output request.
+   * Present only when `request.output.jsonSchema` was supplied.
+   */
+  outputParsed?: boolean
   /** Raw text content from the model. */
   text?: string
   /**
@@ -386,6 +395,8 @@ export interface LlmResult<T = unknown> {
   finishReason?: FinishReason
   /** Provider-assigned response ID for deduplication and support queries. */
   responseId?: string
+  /** Service tier actually served by the provider. */
+  servedServiceTier?: string
   /** Wall-clock time from request dispatch to response ready, in milliseconds. */
   latencyMs: number
   /**

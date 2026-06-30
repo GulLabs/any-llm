@@ -56,9 +56,6 @@ importers:
       vitest:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.20.0)
-      zod:
-        specifier: ^3.23.0
-        version: 3.25.76
 
   packages/any-llm:
     dependencies:
@@ -71,15 +68,8 @@ importers:
       '@gullabs/google':
         specifier: workspace:*
         version: link:../google
-      zod:
-        specifier: ^3.23.0 || ^4
-        version: 3.25.76
 
-  packages/core:
-    devDependencies:
-      zod:
-        specifier: ^3.23.0
-        version: 3.25.76
+  packages/core: {}
 
   packages/drizzle:
     dependencies:
@@ -106,9 +96,6 @@ importers:
       '@gullabs/testing':
         specifier: workspace:*
         version: link:../testing
-      zod:
-        specifier: ^3.23.0
-        version: 3.25.76
 
   packages/testing:
     dependencies:
@@ -2003,9 +1990,6 @@ packages:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
     engines: {node: '>=10'}
 
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
-
 snapshots:
 
   '@babel/runtime@7.29.7': {}
@@ -3666,5 +3650,3 @@ snapshots:
   ws@8.21.0: {}
 
   yocto-queue@0.1.0: {}
-
-  zod@3.25.76: {}

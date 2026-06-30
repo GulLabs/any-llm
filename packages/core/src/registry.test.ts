@@ -8,6 +8,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   createModelRegistry,
+  defaultGeminiRegistry,
+  gemmaModelDescriptors,
   geminiModelDescriptors,
   LlmError,
   createClient,
@@ -119,6 +121,50 @@ describe('geminiModelDescriptors', () => {
     for (const d of geminiModelDescriptors) {
       expect(d.capabilities?.structuredOutput).toBe(true)
     }
+  })
+})
+
+describe('gemmaModelDescriptors', () => {
+  it('contains exactly 2 API-verified Gemma 4 descriptors', () => {
+    expect(gemmaModelDescriptors).toHaveLength(2)
+    const ids = gemmaModelDescriptors.map((d) => d.id)
+    expect(ids).toEqual(['gemma-4-31b-it', 'gemma-4-26b-a4b-it'])
+  })
+
+  it('both descriptors have provider "google"', () => {
+    for (const d of gemmaModelDescriptors) {
+      expect(d.provider).toBe('google')
+    }
+  })
+
+  it('both descriptors have verified capabilities: reasoning/level, nativeStructuredOutput, grounding, vision, tunable sampling', () => {
+    for (const d of gemmaModelDescriptors) {
+      expect(d.capabilities?.reasoning, d.id).toBe(true)
+      expect(d.capabilities?.reasoningApi, d.id).toBe('level')
+      expect(d.capabilities?.structuredOutput, d.id).toBe(true)
+      expect(d.capabilities?.nativeStructuredOutput, d.id).toBe(true)
+      expect(d.capabilities?.grounding, d.id).toBe(true)
+      expect(d.capabilities?.vision, d.id).toBe(true)
+      expect(d.capabilities?.sampling, d.id).toBe('tunable')
+    }
+  })
+
+  it('neither descriptor has pricingFamily, serviceTiers, caching, or audioInput', () => {
+    for (const d of gemmaModelDescriptors) {
+      expect(d.pricingFamily, d.id).toBeUndefined()
+      expect(d.capabilities?.serviceTiers, d.id).toBeUndefined()
+      expect(d.capabilities?.caching, d.id).toBeUndefined()
+      expect(d.capabilities?.audioInput, d.id).toBeUndefined()
+    }
+  })
+
+  it('default registry resolves both Gemma 4 descriptors', () => {
+    expect(defaultGeminiRegistry.resolve('gemma-4-31b-it')?.provider).toBe('google')
+    expect(defaultGeminiRegistry.resolve('gemma-4-26b-a4b-it')?.provider).toBe('google')
+  })
+
+  it('google/ aliases are not registered (dropped)', () => {
+    expect(defaultGeminiRegistry.resolve('google/gemma-4-31b-it')).toBeUndefined()
   })
 })
 

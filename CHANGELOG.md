@@ -133,7 +133,7 @@ This project does not use semantic versioning yet — it will adopt semver on fi
 - Grounding metadata capture: `candidate.groundingMetadata` captured into
   `result.providerMetadata['groundingMetadata']`; `promptFeedback` captured alongside it.
 - Grounding + schema conflict guard: adapter throws `LlmError('bad_request')` when
-  `googleSearch` tool and `output.schema` are both set.
+  `googleSearch` tool and `output.jsonSchema` are both set.
 - `FLEX_DEFAULT_TIMEOUT_MS` (1 500 000) and `TRANSPORT_TIMEOUT_BUFFER_MS` (5 000) exported from
   `@gullabs/google`.
 - Automatic `httpOptions.timeout` on every request: `FLEX_DEFAULT_TIMEOUT_MS` for Flex calls
@@ -167,8 +167,8 @@ Initial v1 implementation. Scope: four goals, no more — see `SPEC.md`.
 - `geminiAdapter` — `ProviderAdapter` over `@google/genai` (API-key + Vertex auth via `buildGoogleClient`)
 - Gemini Flex service tier (`serviceTier: 'flex'` default)
 - Thinking capture: `thoughtsTokenCount` → `thinkingTokens` in usage; thought parts → `reasoningText`
-- `reasoning.effort` → `thinkingBudget` (gemini-2.5) or `thinkingLevel` (gemini-3.x); lossy mapping emits a `reasoning-mapping` warning
-- Structured output: Zod schema → `responseSchema` + `responseMimeType: 'application/json'` via `zodToGeminiSchema`
+- `reasoning.effort` → `thinkingBudget` (gemini-2.5) or `thinkingLevel` (gemini-3.x); throws `LlmError('bad_request')` when the mapping cannot be applied
+- Structured output: JSON Schema → `responseSchema` + `responseMimeType: 'application/json'` via `JSON Schema forwarding`
 - Error classification: `401/403` → `invalid_auth`, `429` → `rate_limited` (+ `retryAfterMs`), `5xx` → `server`, safety → `content_filter`
 
 **`@gullabs/drizzle`**

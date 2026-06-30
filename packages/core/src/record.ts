@@ -39,6 +39,8 @@ export interface LlmCallRecord {
   attemptNumber: number
   /** Optional call-site identifier for grouping by prompt template. */
   callSiteId?: string
+  /** Optional caller-owned correlation id for host ledgers. */
+  externalId?: string
 
   // --- routing ---
   /** Provider identifier (e.g. `"google"`). */
@@ -51,6 +53,8 @@ export interface LlmCallRecord {
   responseId?: string
   /** Service tier used for this call (e.g. `"flex"` | `"standard"`). */
   serviceTier?: string
+  /** Service tier actually served by the provider. */
+  servedServiceTier?: string
 
   // --- outcome ---
   /**
@@ -59,15 +63,16 @@ export interface LlmCallRecord {
    * | Value            | Meaning                                        |
    * |------------------|------------------------------------------------|
    * | `'ok'`           | Success                                        |
-   * | `'parse_error'`  | Zod validation failed on structured output     |
    * | `'api_error'`    | Auth/rate-limit/server/bad-request/unknown     |
    * | `'timeout'`      | Request exceeded timeout                       |
    * | `'aborted'`      | Caller cancelled via AbortSignal               |
    * | `'content_filter'` | Provider refused output for safety reasons   |
    */
-  status: 'ok' | 'parse_error' | 'api_error' | 'timeout' | 'aborted' | 'content_filter'
+  status: 'ok' | 'api_error' | 'timeout' | 'aborted' | 'content_filter'
   /** Why the model stopped generating (absent on error). */
   finishReason?: FinishReason
+  /** Whether JSON.parse succeeded for a structured-output request. */
+  outputParsed?: boolean
   /** Wall-clock latency in milliseconds from dispatch to response. */
   latencyMs: number
 
@@ -143,6 +148,8 @@ export interface BuildRecordInput {
   attemptNumber: number
   /** Optional call-site identifier. */
   callSiteId?: string
+  /** Optional caller-owned correlation id. */
+  externalId?: string
   /** Provider identifier. */
   provider: string
   /** Requested model string. */
@@ -153,6 +160,8 @@ export interface BuildRecordInput {
   responseId?: string
   /** Service tier used. */
   serviceTier?: string
+  /** Service tier actually served by the provider. */
+  servedServiceTier?: string
   /** Token usage for the call. */
   usage: Usage
   /** Computed cost (absent when model is unpriced or cost failed). */
@@ -166,6 +175,8 @@ export interface BuildRecordInput {
   status: LlmCallRecord['status']
   /** Finish reason (absent on error paths). */
   finishReason?: FinishReason
+  /** Whether JSON.parse succeeded for a structured-output request. */
+  outputParsed?: boolean
   /** Warnings emitted during the call. */
   warnings?: Warning[]
   /** Effective generation config that was sent to the provider. */
@@ -192,13 +203,11 @@ export interface BuildRecordInput {
 /**
  * Maps an `LlmErrorKind` to a record `status`.
  *
- * - `'parse_error'`, `'timeout'`, `'aborted'`, `'content_filter'` are direct.
+ * - `'timeout'`, `'aborted'`, `'content_filter'` are direct.
  * - All other error kinds collapse to `'api_error'`.
  */
 function errorKindToStatus(kind: LlmErrorKind): LlmCallRecord['status'] {
   switch (kind) {
-    case 'parse_error':
-      return 'parse_error'
     case 'timeout':
       return 'timeout'
     case 'aborted':
@@ -572,13 +581,18 @@ export function buildRecord(input: BuildRecordInput): LlmCallRecord {
     attemptId: input.attemptId,
     attemptNumber: input.attemptNumber,
     ...(input.callSiteId !== undefined ? { callSiteId: input.callSiteId } : {}),
+    ...(input.externalId !== undefined ? { externalId: input.externalId } : {}),
     provider: input.provider,
     model: input.model,
     ...(input.modelVersion !== undefined ? { modelVersion: input.modelVersion } : {}),
     ...(input.responseId !== undefined ? { responseId: input.responseId } : {}),
     ...(input.serviceTier !== undefined ? { serviceTier: input.serviceTier } : {}),
+    ...(input.servedServiceTier !== undefined
+      ? { servedServiceTier: input.servedServiceTier }
+      : {}),
     status,
     ...(input.finishReason !== undefined ? { finishReason: input.finishReason } : {}),
+    ...(input.outputParsed !== undefined ? { outputParsed: input.outputParsed } : {}),
     latencyMs: input.latencyMs,
     // Usage hot fields — always present since Usage.inputTokens/outputTokens are required.
     inputTokens: usage.inputTokens,

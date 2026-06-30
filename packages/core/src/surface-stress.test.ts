@@ -14,14 +14,13 @@
  *   4. Cost property — sum(details)===microUsd (known) and microUsd===null (unknown).
  *   5. Fail-open — throwing sink / telemetry / pricing never fails the call.
  *   6. Cancellation — classification is 'timeout' or 'aborted', never mixed.
- *   7. Parse error — rawStructured violating schema → LlmError parse_error.
+ *   7. Structured output parse-only — caller owns shape validation.
  *   8. providerOptions deep nesting preserved through resolution.
  *
  * @module
  */
 
 import { describe, it, expect } from 'vitest'
-import { z } from 'zod'
 import { createClient, geminiPricingSource, LlmError, computeCost } from './index.js'
 import type {
   AdapterResult,
@@ -225,7 +224,6 @@ describe('surface-stress: only LlmErrors escape + record always written', () => 
           'aborted',
           'bad_request',
           'content_filter',
-          'parse_error',
           'unknown',
         ] as const
         expect(
@@ -248,14 +246,7 @@ describe('surface-stress: only LlmErrors escape + record always written', () => 
         expect(rec.errorKind).toBe((rejectedValue as LlmError).kind)
         expect(typeof rec.errorMessage).toBe('string')
         // status reflects errorKind
-        const VALID_STATUSES = [
-          'ok',
-          'parse_error',
-          'api_error',
-          'timeout',
-          'aborted',
-          'content_filter',
-        ]
+        const VALID_STATUSES = ['ok', 'api_error', 'timeout', 'aborted', 'content_filter']
         expect(VALID_STATUSES).toContain(rec.status)
       } else if (resolved) {
         expect(rec.status).toBe('ok')
@@ -1181,31 +1172,45 @@ describe('surface-stress: cancellation', () => {
 })
 
 // ---------------------------------------------------------------------------
-// INVARIANT 7: Parse error — rawStructured violating Zod schema → parse_error
+// INVARIANT 7: Structured output is parse-only; caller owns validation
 // ---------------------------------------------------------------------------
 
-describe('surface-stress: parse error', () => {
-  it('rawStructured violates Zod schema → LlmError parse_error + record status parse_error (30 iterations)', async () => {
+describe('surface-stress: structured output parse-only', () => {
+  it('shape-mismatching rawStructured still succeeds (30 iterations)', async () => {
     const rand = mulberry32(0x99aabbcc)
 
-    // Matrix of (schema, bad-value) pairs that will all fail validation
-    type BadCase = { schema: ReturnType<typeof z.object>; badValue: unknown }
+    type BadCase = {
+      jsonSchema: { type: 'object'; additionalProperties: true }
+      badValue: unknown
+    }
     const CASES: BadCase[] = [
-      { schema: z.object({ answer: z.number() }), badValue: { answer: 'not-a-number' } },
-      { schema: z.object({ answer: z.number() }), badValue: null },
-      { schema: z.object({ answer: z.number() }), badValue: undefined },
-      { schema: z.object({ answer: z.number() }), badValue: 42 }, // number, not object
-      { schema: z.object({ name: z.string() }), badValue: { name: 123 } },
       {
-        schema: z.object({ items: z.array(z.string()) }),
+        jsonSchema: { type: 'object', additionalProperties: true },
+        badValue: { answer: 'not-a-number' },
+      },
+      { jsonSchema: { type: 'object', additionalProperties: true }, badValue: null },
+      { jsonSchema: { type: 'object', additionalProperties: true }, badValue: undefined },
+      { jsonSchema: { type: 'object', additionalProperties: true }, badValue: 42 },
+      {
+        jsonSchema: { type: 'object', additionalProperties: true },
+        badValue: { name: 123 },
+      },
+      {
+        jsonSchema: { type: 'object', additionalProperties: true },
         badValue: { items: [1, 2, 3] },
       },
-      { schema: z.object({ id: z.string().uuid() }), badValue: { id: 'not-a-uuid' } },
-      { schema: z.object({ score: z.number().min(0).max(1) }), badValue: { score: 99 } },
+      {
+        jsonSchema: { type: 'object', additionalProperties: true },
+        badValue: { id: 'not-a-uuid' },
+      },
+      {
+        jsonSchema: { type: 'object', additionalProperties: true },
+        badValue: { score: 99 },
+      },
     ]
 
     for (let i = 0; i < 30; i++) {
-      const { schema, badValue } = CASES[Math.floor(rand() * CASES.length)]!
+      const { jsonSchema, badValue } = CASES[Math.floor(rand() * CASES.length)]!
       const sink = new RecordingSink()
 
       const adapter = new RawThrowAdapter('google', {
@@ -1221,30 +1226,27 @@ describe('surface-stress: parse error', () => {
         ids: new FakeIds(),
       })
 
-      await expect(
-        client.generate(
-          {
-            model: 'gemini-2.5-pro',
-            messages: MESSAGES,
-            output: { schema },
-          },
-          { auth: TEST_AUTH },
-        ),
-      ).rejects.toMatchObject({ kind: 'parse_error', retryable: false })
+      const result = await client.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: MESSAGES,
+          output: { jsonSchema },
+        },
+        { auth: TEST_AUTH },
+      )
 
       const rec = sink.last()!
-      expect(rec.status, `iter ${i}: record status must be parse_error`).toBe(
-        'parse_error',
-      )
-      expect(rec.errorKind).toBe('parse_error')
+      expect(result.output).toEqual(badValue)
+      expect(result.outputParsed).toBe(badValue !== undefined)
+      expect(rec.status, `iter ${i}: record status must be ok`).toBe('ok')
     }
   })
 
-  it('rawStructured passes schema → typed output, record status ok', async () => {
+  it('rawStructured is passed through, record status ok', async () => {
     const rand = mulberry32(0x11112222)
     for (let i = 0; i < 20; i++) {
       const answer = Math.floor(rand() * 1000)
-      const schema = z.object({ answer: z.number() })
+      const jsonSchema = { type: 'object', properties: { answer: { type: 'number' } } }
 
       const adapter = new RawThrowAdapter('google', {
         kind: 'ok',
@@ -1263,11 +1265,12 @@ describe('surface-stress: parse error', () => {
         {
           model: 'gemini-2.5-pro',
           messages: MESSAGES,
-          output: { schema },
+          output: { jsonSchema },
         },
         { auth: TEST_AUTH },
       )
       expect(result.output).toEqual({ answer })
+      expect(result.outputParsed).toBe(true)
       expect(sink.last()!.status).toBe('ok')
     }
   })

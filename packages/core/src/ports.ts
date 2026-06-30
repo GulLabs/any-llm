@@ -11,7 +11,6 @@
  * @module
  */
 
-import type { StandardSchemaV1 } from './standard-schema.js'
 import type {
   JsonValue,
   Usage,
@@ -43,11 +42,10 @@ export interface ResolvedRequest {
   /** Conversation history with rendered content. */
   messages: Message[]
   /**
-   * Standard Schema for structured output. The adapter uses this to set the
-   * provider-specific response schema (if its vendor is recognized); the engine
-   * owns validation via `schema['~standard'].validate()`.
+   * JSON Schema forwarded to the provider as a structured-output generation
+   * hint. The engine does not validate output shape.
    */
-  outputSchema?: StandardSchemaV1
+  outputJsonSchema?: JsonValue
   /**
    * Merged generation config.
    * `serviceTier` is always present (defaulted to `'flex'` by the engine).
@@ -99,10 +97,12 @@ export interface AdapterCtx {
 export interface AdapterResult {
   /**
    * Raw structured output from the provider.
-   * The engine will Standard-Schema-validate this against `request.outputSchema`.
+   * Already JSON-parsed by the adapter when structured output was requested.
    * `unknown` so the adapter is not coupled to any schema library.
    */
   rawStructured?: unknown
+  /** Service tier actually served by the provider. */
+  servedServiceTier?: string
   /** Raw text content from the model. */
   text?: string
   /**

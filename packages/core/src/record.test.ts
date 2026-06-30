@@ -202,9 +202,7 @@ describe('buildRecord — success path', () => {
   })
 
   it('maps warnings as JSONB', () => {
-    const warnings = [
-      { type: 'unsupported-setting' as const, setting: 'topK', details: 'not supported' },
-    ]
+    const warnings = [{ type: 'other' as const, message: 'topK not supported' }]
     const r = buildRecord(makeBaseInput({ warnings }))
     expect(r.warnings).toEqual(warnings)
   })
@@ -282,15 +280,6 @@ describe('buildRecord — error path', () => {
     expect(r.errorMessage).toBe('Service temporarily unavailable')
   })
 
-  it('derives status from error.kind — parse_error', () => {
-    const error = new LlmError('schema mismatch', {
-      kind: 'parse_error',
-      retryable: false,
-    })
-    const r = buildRecord(makeBaseInput({ status: 'ok', error }))
-    expect(r.status).toBe('parse_error')
-  })
-
   it('derives status from error.kind — timeout', () => {
     const error = new LlmError('timed out', { kind: 'timeout', retryable: true })
     const r = buildRecord(makeBaseInput({ status: 'ok', error }))
@@ -342,9 +331,6 @@ describe('buildRecord — error path', () => {
 // ---------------------------------------------------------------------------
 
 describe('errorKindToStatus', () => {
-  it('parse_error → parse_error', () => {
-    expect(errorKindToStatus('parse_error')).toBe('parse_error')
-  })
   it('timeout → timeout', () => {
     expect(errorKindToStatus('timeout')).toBe('timeout')
   })
@@ -465,14 +451,13 @@ describe('buildRecord — usage invariant clamping (fail-open)', () => {
       inputTokens: 100,
       cachedInputTokens: 150, // violates
     })
-    const callerWarning = { type: 'unsupported-setting' as const, setting: 'topK' }
+    const callerWarning = { type: 'other' as const, message: 'topK not supported' }
     const r = buildRecord(makeBaseInput({ usage, warnings: [callerWarning] }))
 
     const warnings = r.warnings as Array<{ type: string }>
     expect(warnings).toBeDefined()
     // Both the caller warning and the clamp warning are present.
-    expect(warnings.some((w) => w.type === 'unsupported-setting')).toBe(true)
-    expect(warnings.some((w) => w.type === 'other')).toBe(true)
+    expect(warnings.filter((w) => w.type === 'other')).toHaveLength(2)
   })
 
   it('clamps both cachedInputTokens and thinkingTokens when both violate', () => {

@@ -58,11 +58,11 @@ Refreshable credentials (OAuth/STS short-lived tokens): resolve at the engine en
 resolver function; primary design work is the long-lived cache/file stores that currently memoize
 a client from a single auth snapshot (see ADR-020 in DECISIONS.md).
 
-### Standard Schema structured output
+### Caller-owned structured output validation
 
-Accept any Standard Schema v1 validator (Valibot, ArkType, etc.) as `LlmRequest.output.schema`,
-not only Zod. Zod would remain supported as a Standard Schema implementation rather than a
-first-class type parameter. This is a non-breaking additive change.
+Provide optional helper packages or examples for validating `LlmResult.output` with common
+libraries. Core remains forward-only: it accepts `output.jsonSchema`, forwards it as a provider
+hint, and leaves acceptance policy to the caller.
 
 ### `Redactor` port
 

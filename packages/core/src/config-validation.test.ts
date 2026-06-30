@@ -16,11 +16,13 @@ import { describe, it, expect } from 'vitest'
 import {
   createClient,
   geminiPricingSource,
+  gemmaModelDescriptors,
   geminiModelDescriptors,
   defaultGeminiRegistry,
   LlmError,
 } from './index.js'
 import type { AdapterResult, Usage } from './index.js'
+import type { StandardSchemaV1 } from './standard-schema.js'
 import { FakeAdapter, FakeClock, FakeIds, RecordingSink } from '@gullabs/testing'
 
 // ---------------------------------------------------------------------------
@@ -170,6 +172,154 @@ describe('geminiModelDescriptors — Batch 2b fields', () => {
     expect(found!.capabilities?.sampling).toBe('fixed')
     expect(found!.capabilities?.grounding).toBe(true)
     expect(found!.capabilities?.caching).toEqual({ explicit: true, minTokens: 2048 })
+  })
+})
+
+describe('gemmaModelDescriptors — config fields', () => {
+  it('has all 2 Gemma descriptors with configJsonSchema + validateConfig', () => {
+    expect(gemmaModelDescriptors).toHaveLength(2)
+    for (const d of gemmaModelDescriptors) {
+      expect(d.configJsonSchema, `${d.id} should have configJsonSchema`).toBeDefined()
+      expect(d.validateConfig, `${d.id} should have validateConfig`).toBeDefined()
+      expect(d.validateConfig!['~standard'].vendor).toBe('gullabs-gemini')
+      expect(d.validateConfig!['~standard'].version).toBe(1)
+    }
+  })
+
+  it('Gemma descriptors use tunable sampling schema and no service-tier capability', () => {
+    for (const d of gemmaModelDescriptors) {
+      expect(d.capabilities?.sampling, d.id).toBe('tunable')
+      expect(d.capabilities?.serviceTiers, d.id).toBeUndefined()
+      const schema = d.configJsonSchema as Record<string, unknown>
+      const props = schema['properties'] as Record<string, unknown>
+      expect(props['temperature'], d.id).toBeDefined()
+      expect(props['topP'], d.id).toBeDefined()
+      expect(props['topK'], d.id).toBeDefined()
+    }
+  })
+})
+
+describe('gemmaModelDescriptors — reasoning effort validation', () => {
+  it('effort "low" is rejected with path ["reasoning","effort"]', () => {
+    for (const d of gemmaModelDescriptors) {
+      const result = d.validateConfig!['~standard'].validate({
+        reasoning: { effort: 'low' },
+      })
+      expect('issues' in result, `${d.id} should have issues`).toBe(true)
+      const issues = (result as { issues: StandardSchemaV1.Issue[] }).issues
+      const effortIssue = issues.find(
+        (i) =>
+          Array.isArray(i.path) && i.path[0] === 'reasoning' && i.path[1] === 'effort',
+      )
+      expect(effortIssue, `${d.id} missing effort issue`).toBeDefined()
+      expect(effortIssue!.message).toMatch(/not supported/)
+    }
+  })
+
+  it('effort "medium" is rejected with path ["reasoning","effort"]', () => {
+    for (const d of gemmaModelDescriptors) {
+      const result = d.validateConfig!['~standard'].validate({
+        reasoning: { effort: 'medium' },
+      })
+      expect('issues' in result, `${d.id} should have issues`).toBe(true)
+      const issues = (result as { issues: StandardSchemaV1.Issue[] }).issues
+      const effortIssue = issues.find(
+        (i) =>
+          Array.isArray(i.path) && i.path[0] === 'reasoning' && i.path[1] === 'effort',
+      )
+      expect(effortIssue, `${d.id} missing effort issue`).toBeDefined()
+      expect(effortIssue!.message).toMatch(/not supported/)
+    }
+  })
+
+  it('effort "none" passes (no issues)', () => {
+    for (const d of gemmaModelDescriptors) {
+      const result = d.validateConfig!['~standard'].validate({
+        reasoning: { effort: 'none' },
+      })
+      expect('value' in result, `${d.id} should pass`).toBe(true)
+    }
+  })
+
+  it('effort "high" passes (no issues)', () => {
+    for (const d of gemmaModelDescriptors) {
+      const result = d.validateConfig!['~standard'].validate({
+        reasoning: { effort: 'high' },
+      })
+      expect('value' in result, `${d.id} should pass`).toBe(true)
+    }
+  })
+
+  it('reasoning absent entirely passes (no issues)', () => {
+    for (const d of gemmaModelDescriptors) {
+      const result = d.validateConfig!['~standard'].validate({ maxOutputTokens: 1024 })
+      expect('value' in result, `${d.id} should pass`).toBe(true)
+    }
+  })
+
+  it('default validator (no reasoningEfforts) still accepts effort "low" (regression guard)', () => {
+    // makeGeminiConfigValidator with no reasoningEfforts must NOT constrain effort.
+    // Use a 2.5 series descriptor as the reference.
+    const gemini25 = geminiModelDescriptors.find((d) => d.id === 'gemini-2.5-pro')!
+    const result = gemini25.validateConfig!['~standard'].validate({
+      reasoning: { effort: 'low' },
+    })
+    expect('value' in result).toBe(true)
+  })
+})
+
+describe('gemini-3.1-pro-preview — reasoning effort validation', () => {
+  const proPreview = geminiModelDescriptors.find(
+    (d) => d.id === 'gemini-3.1-pro-preview',
+  )!
+
+  it('effort "none" is rejected with path ["reasoning","effort"]', () => {
+    const result = proPreview.validateConfig!['~standard'].validate({
+      reasoning: { effort: 'none' },
+    })
+    expect('issues' in result).toBe(true)
+    const issues = (result as { issues: StandardSchemaV1.Issue[] }).issues
+    const effortIssue = issues.find(
+      (i) => Array.isArray(i.path) && i.path[0] === 'reasoning' && i.path[1] === 'effort',
+    )
+    expect(effortIssue, 'missing effort issue').toBeDefined()
+    expect(effortIssue!.message).toMatch(/not supported/)
+  })
+
+  it('effort "low" passes (no issues)', () => {
+    const result = proPreview.validateConfig!['~standard'].validate({
+      reasoning: { effort: 'low' },
+    })
+    expect('value' in result).toBe(true)
+  })
+
+  it('effort "medium" passes (no issues)', () => {
+    const result = proPreview.validateConfig!['~standard'].validate({
+      reasoning: { effort: 'medium' },
+    })
+    expect('value' in result).toBe(true)
+  })
+
+  it('effort "high" passes (no issues)', () => {
+    const result = proPreview.validateConfig!['~standard'].validate({
+      reasoning: { effort: 'high' },
+    })
+    expect('value' in result).toBe(true)
+  })
+
+  it('reasoning absent passes (no issues)', () => {
+    const result = proPreview.validateConfig!['~standard'].validate({
+      maxOutputTokens: 512,
+    })
+    expect('value' in result).toBe(true)
+  })
+
+  it('regression: gemini-3.5-flash still accepts effort "none"', () => {
+    const flash = geminiModelDescriptors.find((d) => d.id === 'gemini-3.5-flash')!
+    const result = flash.validateConfig!['~standard'].validate({
+      reasoning: { effort: 'none' },
+    })
+    expect('value' in result).toBe(true)
   })
 })
 

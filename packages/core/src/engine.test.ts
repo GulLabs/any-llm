@@ -9,7 +9,6 @@
  */
 
 import { describe, it, expect, vi } from 'vitest'
-import { z } from 'zod'
 import {
   createClient,
   geminiPricingSource,
@@ -402,12 +401,12 @@ describe('engine — failure path', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 4. parse_error
+// 4. Structured output parsing
 // ---------------------------------------------------------------------------
 
-describe('engine — parse_error', () => {
-  it('rawStructured fails schema → LlmError parse_error, record status parse_error', async () => {
-    const schema = z.object({ answer: z.number() })
+describe('engine — structured output', () => {
+  it('shape mismatch still succeeds; caller owns validation', async () => {
+    const jsonSchema = { type: 'object', properties: { answer: { type: 'number' } } }
     const adapter = new FakeAdapter(
       'google',
       makeSuccessResult({ rawStructured: { answer: 'not-a-number' } }),
@@ -430,25 +429,24 @@ describe('engine — parse_error', () => {
       ids: new FakeIds(),
     })
 
-    await expect(
-      client.generate(
-        {
-          model: 'gemini-2.5-pro',
-          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-          output: { schema },
-        },
-        { auth: TEST_AUTH },
-      ),
-    ).rejects.toMatchObject({ kind: 'parse_error', retryable: false })
+    const result = await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+        output: { jsonSchema },
+      },
+      { auth: TEST_AUTH },
+    )
 
     const rec = sink.last()!
-    expect(rec.status).toBe('parse_error')
-    expect(rec.errorKind).toBe('parse_error')
-    expect(errors).toHaveLength(1)
+    expect(result.output).toEqual({ answer: 'not-a-number' })
+    expect(result.outputParsed).toBe(true)
+    expect(rec.status).toBe('ok')
+    expect(errors).toHaveLength(0)
   })
 
-  it('rawStructured passes schema → typed output on result', async () => {
-    const schema = z.object({ answer: z.number() })
+  it('rawStructured present → outputParsed true on result', async () => {
+    const jsonSchema = { type: 'object', properties: { answer: { type: 'number' } } }
     const adapter = new FakeAdapter(
       'google',
       makeSuccessResult({ rawStructured: { answer: 42 } }),
@@ -468,13 +466,42 @@ describe('engine — parse_error', () => {
       {
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-        output: { schema },
+        output: { jsonSchema },
       },
       { auth: TEST_AUTH },
     )
 
     expect(result.output).toEqual({ answer: 42 })
+    expect(result.outputParsed).toBe(true)
     expect(sink.last()!.status).toBe('ok')
+    expect(sink.last()!.outputParsed).toBe(true)
+  })
+
+  it('persists outputParsed false for malformed structured output', async () => {
+    const adapter = new FakeAdapter('google', makeSuccessResult())
+    const sink = new RecordingSink()
+
+    const client = createClient({
+      adapters: [adapter],
+      pricing: PRICING,
+      sink,
+      clock: new FakeClock(),
+      ids: new FakeIds(),
+    })
+
+    const result = await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+        output: { jsonSchema: { type: 'object' } },
+      },
+      { auth: TEST_AUTH },
+    )
+
+    expect(result.output).toBeUndefined()
+    expect(result.outputParsed).toBe(false)
+    expect(sink.last()!.status).toBe('ok')
+    expect(sink.last()!.outputParsed).toBe(false)
   })
 })
 
@@ -1213,34 +1240,9 @@ describe('engine — pricingFamily routing', () => {
 // Standard Schema — engine validation path
 // ---------------------------------------------------------------------------
 
-describe('engine — Standard Schema validation (non-Zod)', () => {
-  /**
-   * A minimal hand-rolled Standard Schema v1 object.
-   * Validates that value is an object with a numeric `score` field.
-   */
-  function makeScoreSchema() {
-    return {
-      '~standard': {
-        version: 1 as const,
-        vendor: 'custom',
-        validate(value: unknown) {
-          if (
-            value !== null &&
-            typeof value === 'object' &&
-            'score' in value &&
-            typeof (value as Record<string, unknown>)['score'] === 'number'
-          ) {
-            return { value: value as { score: number } }
-          }
-          return { issues: [{ message: 'Expected object with numeric score' }] }
-        },
-        types: undefined as undefined,
-      },
-    }
-  }
-
-  it('validates structured output via ~standard.validate() and returns typed output', async () => {
-    const schema = makeScoreSchema()
+describe('engine — structured output parse-only path', () => {
+  it('passes structured output through without Standard Schema validation', async () => {
+    const jsonSchema = { type: 'object', properties: { score: { type: 'number' } } }
     const { client } = makeClient({
       adapters: [
         new FakeAdapter('google', makeSuccessResult({ rawStructured: { score: 42 } })),
@@ -1251,16 +1253,17 @@ describe('engine — Standard Schema validation (non-Zod)', () => {
       {
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Score?' }] }],
-        output: { schema },
+        output: { jsonSchema },
       },
       { auth: TEST_AUTH },
     )
 
     expect(result.output).toEqual({ score: 42 })
+    expect(result.outputParsed).toBe(true)
   })
 
-  it('throws parse_error when ~standard.validate() returns issues', async () => {
-    const schema = makeScoreSchema()
+  it('does not throw when output shape mismatches the hint', async () => {
+    const jsonSchema = { type: 'object', properties: { score: { type: 'number' } } }
     const { client } = makeClient({
       adapters: [
         new FakeAdapter(
@@ -1270,50 +1273,21 @@ describe('engine — Standard Schema validation (non-Zod)', () => {
       ],
     })
 
-    await expect(
-      client.generate(
-        {
-          model: 'gemini-2.5-pro',
-          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Score?' }] }],
-          output: { schema },
-        },
-        { auth: TEST_AUTH },
-      ),
-    ).rejects.toThrow(LlmError)
+    const result = await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Score?' }] }],
+        output: { jsonSchema },
+      },
+      { auth: TEST_AUTH },
+    )
 
-    try {
-      await client.generate(
-        {
-          model: 'gemini-2.5-pro',
-          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Score?' }] }],
-          output: { schema },
-        },
-        { auth: TEST_AUTH },
-      )
-    } catch (err) {
-      expect(err).toBeInstanceOf(LlmError)
-      expect((err as LlmError).kind).toBe('parse_error')
-      expect((err as LlmError).message).toContain('Expected object with numeric score')
-    }
+    expect(result.output).toEqual({ wrong: 'data' })
+    expect(result.outputParsed).toBe(true)
   })
 
-  it('supports async validate() returning a Promise', async () => {
-    // Standard Schema allows validate() to return a Promise.
-    const asyncSchema = {
-      '~standard': {
-        version: 1 as const,
-        vendor: 'async-validator',
-        validate: async (value: unknown) => {
-          // Simulate async validation
-          await Promise.resolve()
-          if (value !== null && typeof value === 'object' && 'ok' in value) {
-            return { value: value as { ok: boolean } }
-          }
-          return { issues: [{ message: 'Expected object with ok field' }] }
-        },
-        types: undefined as undefined,
-      },
-    }
+  it('reports outputParsed true for parsed structured output', async () => {
+    const jsonSchema = { type: 'object', properties: { ok: { type: 'boolean' } } }
 
     const { client } = makeClient({
       adapters: [
@@ -1325,12 +1299,13 @@ describe('engine — Standard Schema validation (non-Zod)', () => {
       {
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'ok?' }] }],
-        output: { schema: asyncSchema },
+        output: { jsonSchema },
       },
       { auth: TEST_AUTH },
     )
 
     expect(result.output).toEqual({ ok: true })
+    expect(result.outputParsed).toBe(true)
   })
 })
 
@@ -1402,6 +1377,58 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
     expect(result.attemptId).toBe(successRecord.attemptId)
     // And it differs from the first (failed) attempt
     expect(result.attemptId).not.toBe(failedRecord.attemptId)
+  })
+
+  it('idempotencyKey is deterministic but still preserves per-attempt retry records', async () => {
+    const adapter = new FakeAdapter('google', [
+      new LlmError('transient', { kind: 'server', retryable: true }),
+      makeSuccessResult(),
+    ])
+    const sink = new RecordingSink()
+    const client = createClient({
+      adapters: [adapter],
+      pricing: PRICING,
+      sink,
+      clock: new FakeClock(),
+      ids: new FakeIds(),
+      middleware: [
+        retryMiddleware(
+          { maxAttempts: 2, baseDelayMs: 0 },
+          { sleep: async () => {}, random: () => 0, now: () => 0 },
+        ),
+      ],
+    })
+
+    const result = await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+        idempotencyKey: 'ctx-123',
+      },
+      { auth: TEST_AUTH },
+    )
+
+    expect(sink.records).toHaveLength(2)
+    expect(sink.records[0]!.attemptId).toBe('ctx-123')
+    expect(sink.records[0]!.status).toBe('api_error')
+    expect(sink.records[1]!.attemptId).toBe('ctx-123:2')
+    expect(sink.records[1]!.status).toBe('ok')
+    expect(result.attemptId).toBe('ctx-123:2')
+  })
+
+  it('externalId round-trips to success records', async () => {
+    const { client, sink } = makeClient()
+
+    await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+        externalId: 'ai-studio-context-1',
+      },
+      { auth: TEST_AUTH },
+    )
+
+    expect(sink.last()!.externalId).toBe('ai-studio-context-1')
   })
 
   it('error path: thrown LlmError carries callId and attemptId matching the error record', async () => {

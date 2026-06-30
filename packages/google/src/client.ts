@@ -27,6 +27,15 @@ import type { AuthMaterial } from '@gullabs/core'
 export const FLEX_DEFAULT_TIMEOUT_MS = 1_500_000
 
 /**
+ * Default HTTP transport timeout for Gemini standard-tier calls (ms).
+ *
+ * Used when a standard-tier request has no explicit `timeoutMs`. The adapter
+ * also backs this with an AbortController so the limit is a real client-side
+ * ceiling, not only an SDK transport hint.
+ */
+export const STANDARD_DEFAULT_TIMEOUT_MS = 300_000
+
+/**
  * Buffer added above `timeoutMs` when setting the SDK transport timeout.
  *
  * When `timeoutMs` is set, the engine arms an AbortSignal at exactly

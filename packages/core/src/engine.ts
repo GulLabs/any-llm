@@ -11,7 +11,6 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import type { StandardSchemaV1 } from './standard-schema.js'
 import { LlmError, classifyError } from './errors.js'
 import { buildRecord, normalizeUsage } from './record.js'
 import { redactSecrets } from './redact.js'
@@ -178,12 +177,9 @@ export interface Client {
    * `opts.auth` is required on every call — the library never reads credentials
    * from the environment.
    *
-   * @returns A typed {@link LlmResult} on success; throws {@link LlmError} on failure.
+   * @returns An {@link LlmResult} on success; throws {@link LlmError} on failure.
    */
-  generate<S extends StandardSchemaV1>(
-    request: LlmRequest<S>,
-    opts: GenerateOptions,
-  ): Promise<LlmResult<StandardSchemaV1.InferOutput<S>>>
+  generate(request: LlmRequest, opts: GenerateOptions): Promise<LlmResult>
 
   /**
    * Execute an LLM call described by a {@link CallSite} with per-call overrides.
@@ -191,12 +187,9 @@ export interface Client {
    * Config resolution: `clientDefaults → callSite.config → opts.config`.
    * `opts.auth` is required on every call.
    *
-   * @returns A typed {@link LlmResult} with `output` typed to the call-site schema.
+   * @returns An {@link LlmResult}; callers validate `output` when present.
    */
-  runStructured<S extends StandardSchemaV1>(
-    callSite: CallSite<S>,
-    opts: RunStructuredOptions,
-  ): Promise<LlmResult<StandardSchemaV1.InferOutput<S>>>
+  runStructured(callSite: CallSite, opts: RunStructuredOptions): Promise<LlmResult>
 
   /**
    * Execute an LLM call described by a {@link CallSite} with template variables
@@ -209,13 +202,13 @@ export interface Client {
    * literal `{{var}}` placeholder.
    * `opts.auth` is required on every call.
    *
-   * @returns A typed {@link LlmResult} with `output` typed to the call-site schema.
+   * @returns An {@link LlmResult}; callers validate `output` when present.
    */
-  runStructured<S extends StandardSchemaV1>(
-    callSite: CallSite<S>,
+  runStructured(
+    callSite: CallSite,
     vars: Record<string, string>,
     opts: RunStructuredOptions,
-  ): Promise<LlmResult<StandardSchemaV1.InferOutput<S>>>
+  ): Promise<LlmResult>
 }
 
 // ---------------------------------------------------------------------------
@@ -626,12 +619,15 @@ function buildSuccessRecord(
   latencyMs: number,
   startMs: number,
   attemptNumber: number,
+  externalId: string | undefined,
+  outputParsed: boolean | undefined,
 ): ReturnType<typeof buildRecord> {
   return buildRecord({
     callId,
     attemptId,
     attemptNumber,
     ...(callSiteId !== undefined ? { callSiteId } : {}),
+    ...(externalId !== undefined ? { externalId } : {}),
     provider,
     model,
     ...(adapterResult.modelVersion !== undefined
@@ -641,6 +637,9 @@ function buildSuccessRecord(
       ? { responseId: adapterResult.responseId }
       : {}),
     serviceTier: resolvedConfig.serviceTier,
+    ...(adapterResult.servedServiceTier !== undefined
+      ? { servedServiceTier: adapterResult.servedServiceTier }
+      : {}),
     usage: normalizedUsage,
     ...(cost !== undefined ? { cost } : {}),
     latencyMs,
@@ -648,6 +647,7 @@ function buildSuccessRecord(
     ...(adapterResult.finishReason !== undefined
       ? { finishReason: adapterResult.finishReason }
       : {}),
+    ...(outputParsed !== undefined ? { outputParsed } : {}),
     warnings: allWarnings,
     generationConfig: resolvedConfig,
     metadata: metadata ?? {},
@@ -677,18 +677,23 @@ function buildErrorRecord(
   startMs: number,
   err: LlmError,
   attemptNumber: number,
+  externalId: string | undefined,
 ): ReturnType<typeof buildRecord> {
   return buildRecord({
     callId,
     attemptId,
     attemptNumber,
     ...(callSiteId !== undefined ? { callSiteId } : {}),
+    ...(externalId !== undefined ? { externalId } : {}),
     provider,
     model,
     usage,
     latencyMs,
     // buildRecord overrides status from error.kind via errorKindToStatus.
     status: 'api_error',
+    ...(err.servedServiceTier !== undefined
+      ? { servedServiceTier: err.servedServiceTier }
+      : {}),
     generationConfig: resolvedConfig,
     metadata: metadata ?? {},
     createdAt: new Date(startMs).toISOString(),
@@ -878,13 +883,13 @@ export function createClient(config: ClientConfig): Client {
   //   The record is ALWAYS attempted, even when the adapter was never reached.
   // -------------------------------------------------------------------------
 
-  async function runPipeline<S extends StandardSchemaV1>(
-    request: LlmRequest<S>,
+  async function runPipeline(
+    request: LlmRequest,
     resolvedConfig: ResolvedConfig,
     callSiteId: string | undefined,
     callerSignal: AbortSignal | undefined,
     callAuth: AuthMaterial,
-  ): Promise<LlmResult<StandardSchemaV1.InferOutput<S>>> {
+  ): Promise<LlmResult> {
     // ── (a) Call-level prologue ────────────────────────────────────────────
     // ONE callId per logical call.  ONE onStart.  ONE log-start entry.
     // These fire before the middleware chain runs (including any retry logic).
@@ -931,8 +936,8 @@ export function createClient(config: ClientConfig): Client {
       messages: request.messages,
       config: resolvedConfig,
       ...(request.system !== undefined ? { system: request.system } : {}),
-      ...(request.output?.schema !== undefined
-        ? { outputSchema: request.output.schema }
+      ...(request.output?.jsonSchema !== undefined
+        ? { outputJsonSchema: request.output.jsonSchema }
         : {}),
       ...(descriptor !== undefined ? { modelDescriptor: descriptor } : {}),
     }
@@ -957,19 +962,21 @@ export function createClient(config: ClientConfig): Client {
     // Errors: classify → build error record → sink (fail-open) → rethrow.
     // The call-level telemetry.onError and logger.error are fired by the
     // epilogue after the chain settles, NOT here.
-    async function runAttempt(
-      req: ResolvedRequest,
-      ctx: EngineCtx,
-    ): Promise<LlmResult<StandardSchemaV1.InferOutput<S>>> {
-      const attemptStartMs = ctx.clock.now()
-      // Generate a fresh attemptId on every invocation.
-      // Assign to lastAttemptId so the call-level epilogue can reference it.
-      const attemptId = ids.attemptId()
-      lastAttemptId = attemptId
-
+    async function runAttempt(req: ResolvedRequest, ctx: EngineCtx): Promise<LlmResult> {
       // Resolve 1-based attempt ordinal (set by retry middleware; defaults to 1
       // for direct calls that bypass the retry middleware).
       const attemptNumber = req.attemptNumber ?? 1
+      const attemptStartMs = ctx.clock.now()
+      // Generate a fresh attemptId on every invocation. When a caller supplies
+      // an idempotencyKey, keep attempt 1 exactly equal to that key and suffix
+      // in-process retries so every attempt still gets a durable row.
+      const attemptId =
+        request.idempotencyKey === undefined
+          ? ids.attemptId()
+          : attemptNumber === 1
+          ? request.idempotencyKey
+          : `${request.idempotencyKey}:${attemptNumber}`
+      lastAttemptId = attemptId
       lastAttemptNumber = attemptNumber
 
       // A2: Attempt-start debug log so operators can trace individual attempts.
@@ -1090,23 +1097,16 @@ export function createClient(config: ClientConfig): Client {
         // Step 7b: Normalize usage ONCE.
         normalizedResult = normalizeUsage(adapterResult.usage)
 
-        // Step 8: Validate structured output (terminal on failure).
-        let output: StandardSchemaV1.InferOutput<S> | undefined
-        if (req.outputSchema !== undefined) {
-          const schema = req.outputSchema
-          // Standard Schema: validate() may return sync or async — await handles both.
-          const validateResult = await schema['~standard'].validate(
-            adapterResult.rawStructured,
-          )
-          if (validateResult.issues !== undefined) {
-            const message = validateResult.issues.map((issue) => issue.message).join('; ')
-            throw new LlmError(`Structured output validation failed: ${message}`, {
-              kind: 'parse_error',
-              retryable: false,
-              cause: validateResult.issues,
-            })
+        // Step 8: JSON.parse structured output — caller owns validation.
+        let output: unknown
+        let outputParsed: boolean | undefined
+        if (req.outputJsonSchema !== undefined) {
+          if (adapterResult.rawStructured !== undefined) {
+            output = adapterResult.rawStructured
+            outputParsed = true
+          } else {
+            outputParsed = false
           }
-          output = validateResult.value
         }
 
         // Step 9: Cost — fail-open (never fail the call for costing).
@@ -1116,7 +1116,7 @@ export function createClient(config: ClientConfig): Client {
           cost = pricing.price(
             pricingKey,
             normalizedResult.usage,
-            resolvedConfig.serviceTier,
+            adapterResult.servedServiceTier ?? req.config.serviceTier,
           )
         } catch (costErr) {
           costWarnings.push({
@@ -1153,13 +1153,15 @@ export function createClient(config: ClientConfig): Client {
           latencyMs,
           attemptStartMs,
           attemptNumber,
+          request.externalId,
+          outputParsed,
         )
 
         // Step 11: Sink — fail-open.
         await recordToSink(sink, record, ctx.logger, ctx.callId)
 
         // Step 12: Return LlmResult.
-        const result: LlmResult<StandardSchemaV1.InferOutput<S>> = {
+        const result: LlmResult = {
           callId: ctx.callId,
           attemptId,
           usage: normalizedResult.usage,
@@ -1167,6 +1169,7 @@ export function createClient(config: ClientConfig): Client {
           latencyMs,
           warnings: allWarnings,
           ...(output !== undefined ? { output } : {}),
+          ...(outputParsed !== undefined ? { outputParsed } : {}),
           ...(adapterResult.text !== undefined ? { text: adapterResult.text } : {}),
           ...(adapterResult.reasoningText !== undefined
             ? { reasoningText: adapterResult.reasoningText }
@@ -1180,6 +1183,9 @@ export function createClient(config: ClientConfig): Client {
             : {}),
           ...(adapterResult.responseId !== undefined
             ? { responseId: adapterResult.responseId }
+            : {}),
+          ...(adapterResult.servedServiceTier !== undefined
+            ? { servedServiceTier: adapterResult.servedServiceTier }
             : {}),
           ...(adapterResult.providerMetadata !== undefined
             ? { providerMetadata: adapterResult.providerMetadata }
@@ -1214,6 +1220,7 @@ export function createClient(config: ClientConfig): Client {
           attemptStartMs,
           err,
           attemptNumber,
+          request.externalId,
         )
 
         // Sink error record — fail-open.
@@ -1326,10 +1333,7 @@ export function createClient(config: ClientConfig): Client {
   // -------------------------------------------------------------------------
 
   return {
-    async generate<S extends StandardSchemaV1>(
-      request: LlmRequest<S>,
-      opts: GenerateOptions,
-    ): Promise<LlmResult<StandardSchemaV1.InferOutput<S>>> {
+    async generate(request: LlmRequest, opts: GenerateOptions): Promise<LlmResult> {
       const runtimeOpts = opts as GenerateOptions | undefined
       const callAuth = requireAuth(runtimeOpts?.auth)
       // Config resolution: libDefaults → request.config
@@ -1339,20 +1343,20 @@ export function createClient(config: ClientConfig): Client {
         ...merged,
         serviceTier,
       }
-      return runPipeline<S>(
+      return runPipeline(
         request,
         resolvedConfig,
-        undefined,
+        request.callSiteId,
         runtimeOpts?.signal,
         callAuth,
       )
     },
 
-    async runStructured<S extends StandardSchemaV1>(
-      callSite: CallSite<S>,
+    async runStructured(
+      callSite: CallSite,
       varsOrOpts: Record<string, string> | RunStructuredOptions,
       opts?: RunStructuredOptions,
-    ): Promise<LlmResult<StandardSchemaV1.InferOutput<S>>> {
+    ): Promise<LlmResult> {
       // Detect overload: (callSite, opts) vs (callSite, vars, opts)
       let vars: Record<string, string>
       let resolvedOpts: RunStructuredOptions
@@ -1386,17 +1390,19 @@ export function createClient(config: ClientConfig): Client {
         callSite.system !== undefined ? interpolate(callSite.system, vars) : undefined
 
       // Build the rendered request (no config on the request — already merged).
-      const request: LlmRequest<S> = {
+      const request: LlmRequest = {
         model: callSite.model,
         messages: [{ role: 'user', parts: [{ kind: 'text', text: userText }] }],
         ...(renderedSystem !== undefined ? { system: renderedSystem } : {}),
-        ...(callSite.schema !== undefined ? { output: { schema: callSite.schema } } : {}),
+        ...(callSite.jsonSchema !== undefined
+          ? { output: { jsonSchema: callSite.jsonSchema } }
+          : {}),
         ...(runtimeOpts?.metadata !== undefined
           ? { metadata: runtimeOpts.metadata }
           : {}),
       }
 
-      return runPipeline<S>(
+      return runPipeline(
         request,
         resolvedConfig,
         callSite.id,

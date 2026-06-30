@@ -79,7 +79,7 @@ respect a backoff hint — without parsing error message strings.
 Every throw from the engine or adapters is an `LlmError`. The class carries:
 
 - `kind`: a closed union (`invalid_auth | rate_limited | server | timeout | aborted | bad_request |
-content_filter | parse_error | unknown`) that drives retry decisions and record status.
+content_filter | unknown`) that drives retry decisions and record status.
 - `retryable`: a boolean derived deterministically from `kind`; callers and retry middleware read
   this flag rather than switching on `kind` themselves.
 - `retryAfterMs`: populated from the provider's `Retry-After` header when a 429 carries one.
@@ -274,32 +274,20 @@ port is a no-op in that context.
 **Status:** Accepted
 
 **Context:**
-Provider APIs return structured JSON output as raw strings or parsed objects. The library needs to
-validate that raw output conforms to the caller-supplied schema before returning it. Multiple
-schema libraries exist (Zod, Valibot, ArkType, Standard Schema); choosing one affects the public
-API surface and dependency footprint.
+Provider APIs return structured JSON output as raw strings or parsed objects. The library should
+forward provider-native JSON Schema hints without choosing the caller's validation library.
 
 **Decision:**
-v1 uses Zod directly. `LlmRequest.output.schema` is typed as `ZodType`; the engine calls
-`schema.safeParse(adapterResult.rawStructured)` and throws `LlmError('parse_error')` on failure.
-`runStructured`'s return type is parameterized on `ZodType` and infers `_output` so callers get
-typed results without casting.
-
-The Gemini adapter uses `zodToGeminiSchema` to convert the Zod schema to a Gemini `responseSchema`
-object at the API level; this instructs the model to return conformant JSON rather than relying
-solely on prompt engineering.
+v1 uses a forward-only JSON Schema hint. `LlmRequest.output.jsonSchema` is typed as `JsonValue`;
+the Gemini adapter forwards it as `responseSchema` and JSON-parses the returned text when
+structured output was requested. The engine returns `output: unknown` and `outputParsed`, and never
+validates shape.
 
 **Consequences:**
 
-- `zod` becomes a peer dependency that consumers must install. This is preferable to bundling Zod
-  (which would duplicate it for hosts that already depend on Zod).
-- The public surface is coupled to Zod's major version. Migrating to Standard Schema as the
-  public contract type (for validator-agnosticism) is a non-breaking additive change planned
-  for a future version, at which point `ZodType` would be accepted as a Standard Schema
-  implementation rather than a first-class type parameter.
-- `parse_error` is terminal: the library does not retry structured output validation failures.
-  A model consistently returning non-conformant JSON is a prompt or schema problem, not a
-  transient failure.
+- The library has no runtime dependency on Zod or any other validation library.
+- Callers own validation, retry, and acceptance policy for `output`.
+- Malformed or empty structured output is a successful provider call with `outputParsed:false`.
 
 ---
 
@@ -480,7 +468,7 @@ and caller-supplied `httpOptions` still wins.
 
 The adapter inspects the merged config after the merge and enforces a hard guard: if
 `tools` contains any entry with a `googleSearch` or `googleSearchRetrieval` key AND
-`req.outputSchema` is set, the adapter throws `LlmError('bad_request', retryable: false)` with a
+`req.outputJsonSchema` is set, the adapter throws `LlmError('bad_request', retryable: false)` with a
 clear message. This catches the incompatibility at the library boundary rather than as a cryptic
 provider error.
 

@@ -2,25 +2,21 @@
  * Call-site definition for @gullabs/core.
  *
  * A {@link CallSite} is a reusable, named prompt template with an associated
- * model and optional Zod schema for structured output.  It is the unit of
+ * model and optional JSON Schema hint for structured output.  It is the unit of
  * observability: every call made through a call site records a `callSiteId`
  * so usage can be grouped by prompt template in dashboards and audits.
  *
  * @module
  */
 
-import type { StandardSchemaV1 } from './standard-schema.js'
-import type { GenConfig } from './types.js'
+import type { GenConfig, JsonValue } from './types.js'
 
 // ---------------------------------------------------------------------------
 // CallSite type
 // ---------------------------------------------------------------------------
 
 /**
- * A reusable prompt template that bundles model, schema, and gen-config.
- *
- * @typeParam S - Standard Schema type for structured output.  Defaults to `StandardSchemaV1`
- *   (unstructured — no validation, `output` will be `undefined`).
+ * A reusable prompt template that bundles model, JSON Schema hint, and gen-config.
  *
  * @example
  * ```ts
@@ -33,7 +29,7 @@ import type { GenConfig } from './types.js'
  * })
  * ```
  */
-export interface CallSite<S extends StandardSchemaV1 = StandardSchemaV1> {
+export interface CallSite {
   /**
    * Stable identifier for this call site.
    * Persisted as `callSiteId` on every record for grouping/attribution.
@@ -45,11 +41,10 @@ export interface CallSite<S extends StandardSchemaV1 = StandardSchemaV1> {
    */
   model: string
   /**
-   * Standard Schema for structured output.
-   * When present, the engine validates `rawStructured` from the adapter and
-   * exposes the typed result as `LlmResult.output`.
+   * Optional JSON Schema forwarded to the provider as a structured-output
+   * generation hint. The library does not validate the result.
    */
-  schema?: S
+  jsonSchema?: JsonValue
   /**
    * System instruction template.
    * Supports `{{var}}` interpolation (non-recursive; missing vars are left
@@ -74,11 +69,10 @@ export interface CallSite<S extends StandardSchemaV1 = StandardSchemaV1> {
 // ---------------------------------------------------------------------------
 
 /**
- * Defines a typed call site — a reusable prompt template bound to a model.
+ * Defines a call site — a reusable prompt template bound to a model.
  *
  * This is a pure identity function: it returns the options object unchanged but
- * branded with the correct TypeScript type so the `S` type parameter is
- * propagated to `runStructured`.
+ * typed as a {@link CallSite}.
  *
  * @param opts - Call site definition.
  * @returns The same object, typed as {@link CallSite}.
@@ -86,18 +80,18 @@ export interface CallSite<S extends StandardSchemaV1 = StandardSchemaV1> {
  * @example
  * ```ts
  * import { defineCallSite } from '@gullabs/core'
- * import { z } from 'zod'
- *
  * const classify = defineCallSite({
  *   id: 'classify-sentiment',
  *   model: 'gemini-2.5-flash',
- *   schema: z.object({ sentiment: z.enum(['positive', 'negative', 'neutral']) }),
+ *   jsonSchema: {
+ *     type: 'object',
+ *     properties: { sentiment: { type: 'string', enum: ['positive', 'negative', 'neutral'] } },
+ *     required: ['sentiment'],
+ *   },
  *   userTemplate: 'Classify the sentiment of: {{text}}',
  * })
  * ```
  */
-export function defineCallSite<S extends StandardSchemaV1>(
-  opts: CallSite<S>,
-): CallSite<S> {
+export function defineCallSite(opts: CallSite): CallSite {
   return opts
 }

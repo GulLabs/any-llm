@@ -8,11 +8,7 @@
  * @module
  */
 
-// Standard Schema
-import type { StandardSchemaV1 } from './standard-schema.js'
-export type { StandardSchemaV1 }
-/** Infer the output type of a Standard Schema. */
-export type InferOutput<S extends StandardSchemaV1> = StandardSchemaV1.InferOutput<S>
+export type { StandardSchemaV1 } from './standard-schema.js'
 
 // Core types
 export type {
@@ -87,6 +83,7 @@ export { createClient } from './engine.js'
 export type { ModelDescriptor, ModelRegistry } from './registry.js'
 export {
   createModelRegistry,
+  gemmaModelDescriptors,
   geminiModelDescriptors,
   defaultGeminiRegistry,
   makeGeminiConfigSchema,

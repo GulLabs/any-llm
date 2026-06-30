@@ -247,6 +247,16 @@ describe('computeCost — edge cases', () => {
     expect(cost.pricingVersion).toBe(pricingVersion)
   })
 
+  it('Gemma 4 models remain unpriced until exact Google token rates are added', () => {
+    const usage = makeUsage({ inputTokens: 10_000, outputTokens: 500 })
+    const cost = computeCost('gemma-4-31b-it', usage, 'standard')
+
+    expect(cost.microUsd).toBeNull()
+    expect(cost.usd).toBeNull()
+    expect(cost.confidence).toBe('estimated')
+    expect(cost.details).toEqual({ input: 0, cached: 0, output: 0 })
+  })
+
   it('flat (non-tiered) model: gemini-2.5-flash-lite', () => {
     const usage = makeUsage({
       inputTokens: 1_000_000,

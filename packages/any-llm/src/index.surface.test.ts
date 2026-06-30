@@ -2,7 +2,7 @@
  * Package-surface importability tests for @gullabs/any-llm.
  *
  * Proves that the batteries-included package exposes the default client path:
- * core engine exports, Gemini adapter exports, and the bundled Zod helper.
+ * core engine exports and Gemini adapter exports.
  *
  * @module
  */
@@ -14,7 +14,6 @@ import {
   createClient,
   geminiAdapter,
   geminiPricingSource,
-  z,
 } from './index.js'
 
 describe('@gullabs/any-llm package surface', () => {
@@ -25,10 +24,6 @@ describe('@gullabs/any-llm package surface', () => {
   it('exports the Gemini adapter and pricing source', () => {
     expect(typeof geminiAdapter).toBe('function')
     expect(typeof geminiPricingSource).toBe('function')
-  })
-
-  it('exports Zod for one-package structured-output setup', () => {
-    expect(typeof z.object).toBe('function')
   })
 
   it('ANY_LLM_VERSION matches package.json version', () => {

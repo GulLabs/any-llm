@@ -29,13 +29,11 @@
     "@gullabs/core": "workspace:*"
   },
   "peerDependencies": {
-    "@google/genai": "^1 || ^2",
-    "zod": "^3.23.0 || ^4"
+    "@google/genai": "^1 || ^2"
   },
   "devDependencies": {
     "@google/genai": "^1.45.0",
-    "@gullabs/testing": "workspace:*",
-    "zod": "^3.23.0"
+    "@gullabs/testing": "workspace:*"
   },
   "engines": {
     "node": ">=20.9.0"

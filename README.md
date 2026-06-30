@@ -10,11 +10,11 @@ An in-process TypeScript library that standardises LLM calls with first-class ob
 pnpm add @gullabs/any-llm
 ```
 
-The default package includes the core engine, Gemini adapter, `@google/genai`, and `zod`.
+The default package includes the core engine, Gemini adapter, and `@google/genai`.
 Use the modular packages only when you want explicit dependency control:
 
 ```bash
-pnpm add @gullabs/core @gullabs/google @google/genai zod
+pnpm add @gullabs/core @gullabs/google @google/genai
 # optional companions:
 pnpm add @gullabs/drizzle    # Drizzle ORM sink for Postgres
 pnpm add @gullabs/testing    # test fakes (dev only)
@@ -25,7 +25,12 @@ pnpm add @gullabs/testing    # test fakes (dev only)
 The four v1 goals in ~25 lines:
 
 ```ts
-import { z, createClient, geminiPricingSource, defineCallSite, geminiAdapter } from '@gullabs/any-llm'
+import {
+  createClient,
+  geminiPricingSource,
+  defineCallSite,
+  geminiAdapter,
+} from '@gullabs/any-llm'
 
 // 1. Wire up the client — no auth here; the library never reads credentials
 const client = createClient({
@@ -33,16 +38,18 @@ const client = createClient({
   pricing: geminiPricingSource(),
 })
 
-// 2. Define a typed, reusable call site
-const ReviewSchema = z.object({
-  rating: z.number().int().min(1).max(5),
-  summary: z.string(),
-})
-
+// 2. Define a reusable call site with a provider-forwarded JSON Schema hint
 const codeReview = defineCallSite({
   id: 'code-review',
   model: 'gemini-2.5-flash',
-  schema: ReviewSchema,
+  jsonSchema: {
+    type: 'object',
+    properties: {
+      rating: { type: 'number' },
+      summary: { type: 'string' },
+    },
+    required: ['rating', 'summary'],
+  },
   system: 'You are a senior code reviewer.',
   userTemplate: 'Review this diff:\n\n{{diff}}',
   config: {
@@ -58,7 +65,8 @@ const auth = { apiKey: process.env.MY_APP_GEMINI_KEY! }
 const result = await client.runStructured(codeReview, { diff: myDiff }, { auth })
 
 // All four goals satisfied:
-console.log(result.output) // { rating: 4, summary: '...' }  — Zod-validated
+console.log(result.output) // JSON-parsed unknown; caller validates
+console.log(result.outputParsed) // true when JSON.parse succeeded
 console.log(result.usage) // { inputTokens, outputTokens, cachedInputTokens, thinkingTokens }
 console.log(result.cost?.microUsd) // integer micro-USD, frozen at call time
 console.log(result.reasoningText) // thought summary from the model
@@ -109,7 +117,7 @@ generate() / runStructured()
   → rateLimiter.acquire("provider:model")    [pre-send pacing; propagates on reject]
   → adapter.run(resolved, ctx)    ← provider SDK (anti-corruption layer)
   → normalizeUsage()              [enforce GROSS token convention]
-  → Standard Schema validate(rawStructured)  [structured output validation; terminal on failure]
+  → JSON.parse structured output      [sets outputParsed; caller validates]
   → pricing.price()               [micro-USD cost; fail-open]
   → buildRecord() → sink.record() [persist call record; fail-open]
   → LlmResult
@@ -119,13 +127,13 @@ The design is **Ports & Adapters (hexagonal)**: the core engine depends only on 
 
 ## Packages
 
-| Package                                  | Description                                                                                                                                                                                                                                |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [`@gullabs/any-llm`](./packages/any-llm) | Default batteries-included package: re-exports core + Gemini adapter and installs `@google/genai` + `zod` for one-package setup.                                                                                                            |
-| [`@gullabs/core`](./packages/core)       | Types, ports, engine (`createClient`, `generate`, `runStructured`), cost computation, record builder. No provider dependencies.                                                                                                            |
-| [`@gullabs/google`](./packages/google)   | Gemini adapter over `@google/genai`. Maps Flex tier, thinking config, multimodal parts, structured output, and error classification. Optional `GoogleFileStore` and `GoogleCacheStore` helpers for Gemini Files API and Context Cache API. |
-| [`@gullabs/drizzle`](./packages/drizzle) | Reference Postgres schema (`llm_calls` table) and `drizzleUsageSink` — a `UsageSink` port implementation for Drizzle ORM.                                                                                                                  |
-| [`@gullabs/testing`](./packages/testing) | Test fakes: `FakeClock`, `FakeIds`, `RecordingSink`, `FakeAdapter`, `makeFakeGemini`, `fakeGeminiResponse`. No network in tests.                                                                                                           |
+| Package                                  | Description                                                                                                                                                                                                                                                        |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`@gullabs/any-llm`](./packages/any-llm) | Default batteries-included package: re-exports core + Gemini adapter and installs `@google/genai` for one-package setup.                                                                                                                                           |
+| [`@gullabs/core`](./packages/core)       | Types, ports, engine (`createClient`, `generate`, `runStructured`), cost computation, record builder. No provider dependencies.                                                                                                                                    |
+| [`@gullabs/google`](./packages/google)   | Google adapter over `@google/genai`. Maps Gemini Flex tier, thinking config, multimodal parts, structured output, Gemma 4 routing, and error classification. Optional `GoogleFileStore` and `GoogleCacheStore` helpers for Gemini Files API and Context Cache API. |
+| [`@gullabs/drizzle`](./packages/drizzle) | Reference Postgres schema (`llm_calls` table) and `drizzleUsageSink` — a `UsageSink` port implementation for Drizzle ORM.                                                                                                                                          |
+| [`@gullabs/testing`](./packages/testing) | Test fakes: `FakeClock`, `FakeIds`, `RecordingSink`, `FakeAdapter`, `makeFakeGemini`, `fakeGeminiResponse`. No network in tests.                                                                                                                                   |
 
 ## Multimodal parts
 
@@ -169,6 +177,55 @@ const result2 = await client.generate({
   ],
 })
 ```
+
+Gemma 4 models use the same message shape. Built-in routing covers two
+API-verified Gemma 4 models: `gemma-4-31b-it` and `gemma-4-26b-a4b-it`:
+
+```ts
+const qa = await client.generate(
+  {
+    model: 'gemma-4-26b-a4b-it',
+    messages: [
+      {
+        role: 'user',
+        parts: [
+          {
+            kind: 'text',
+            text: 'Does this rendered page pass visual QA?',
+          },
+          {
+            kind: 'inline-media',
+            mimeType: 'image/png',
+            data: Buffer.from(screenshotPng).toString('base64'),
+            mediaResolution: 'high',
+          },
+        ],
+      },
+    ],
+    output: {
+      jsonSchema: {
+        type: 'object',
+        properties: {
+          pass: { type: 'boolean' },
+          notes: { type: 'string' },
+        },
+        required: ['pass', 'notes'],
+      },
+    },
+  },
+  { auth: { apiKey: process.env.GEMINI_API_KEY! } },
+)
+```
+
+Both Gemma 4 models support native structured output (`responseMimeType` +
+`responseSchema`), grounding (`tools:[{googleSearch:{}}]`), vision input, and
+thinking via `thinkingLevel`. They do not support Gemini Flex service tier or
+pricing (unpriced: `cost.microUsd` will be `null`).
+
+Gemma 4 thinking is binary: use `reasoning: { effort: 'none' }` (MINIMAL, thinking off)
+or `{ effort: 'high' }` (HIGH, thinking on). Passing `effort: 'low'` or `effort: 'medium'`
+is rejected with a `bad_request` error because the model only accepts MINIMAL and HIGH
+`thinkingLevel` values.
 
 ## Files API (`GoogleFileStore`)
 
@@ -298,6 +355,27 @@ const result = await client.generate({
 })
 ```
 
+Gemini SDK settings that are not first-class in `GenConfig` use the same lane:
+
+```ts
+await client.generate({
+  model: 'gemini-2.5-flash',
+  messages: [...],
+  config: {
+    providerOptions: {
+      google: {
+        safetySettings: [
+          {
+            category: 'HARM_CATEGORY_HATE_SPEECH',
+            threshold: 'BLOCK_MEDIUM_AND_ABOVE',
+          },
+        ],
+      },
+    },
+  },
+})
+```
+
 There is no guarantee that any key inside `providerOptions` will be honoured — it depends entirely
 on what the underlying provider adapter does with it. Use sparingly and document any reliance on
 specific keys in application code.
@@ -404,20 +482,29 @@ Telemetry hook failures are swallowed (fail-open) and emit a `debug` breadcrumb
 Every call attempt produces an `LlmCallRecord` that is persisted via `UsageSink`. Key traceability
 fields:
 
-| Field                          | Description                                                             |
-| ------------------------------ | ----------------------------------------------------------------------- | ----------- | --------- | --------- | ------------- | ---------------- |
-| `callId`                       | Stable identifier shared across all retry attempts of a logical call    |
-| `attemptId`                    | Unique per-attempt idempotency key (use `onConflictDoNothing` in sinks) |
-| `attemptNumber`                | 1-based ordinal (1 = first attempt, 2 = first retry, …)                 |
-| `latencyMs`                    | Wall-clock time from dispatch to response for this attempt              |
-| `inputTokens` / `outputTokens` | GROSS token counts (cached and thinking are subsets)                    |
-| `costMicroUsd`                 | Frozen micro-USD cost; `null` if model is unpriced                      |
-| `errorKind`                    | Classified error kind (absent on success)                               |
-| `status`                       | `ok`                                                                    | `api_error` | `timeout` | `aborted` | `parse_error` | `content_filter` |
-| `metadata`                     | Host-supplied `CallMetadata` — persisted verbatim                       |
+| Field                          | Description                                                          |
+| ------------------------------ | -------------------------------------------------------------------- |
+| `callId`                       | Stable identifier shared across all retry attempts of a logical call |
+| `attemptId`                    | Unique per-attempt idempotency key and ledger primary key            |
+| `attemptNumber`                | 1-based ordinal (1 = first attempt, 2 = first retry, …)              |
+| `externalId`                   | Optional caller-owned correlation id                                 |
+| `servedServiceTier`            | Service tier actually served by the provider                         |
+| `latencyMs`                    | Wall-clock time from dispatch to response for this attempt           |
+| `inputTokens` / `outputTokens` | GROSS token counts (cached and thinking are subsets)                 |
+| `costMicroUsd`                 | Frozen micro-USD cost; `null` if model is unpriced                   |
+| `errorKind`                    | Classified error kind (absent on success)                            |
+| `status`                       | `ok`, `api_error`, `timeout`, `aborted`, or `content_filter`         |
+| `metadata`                     | Host-supplied `CallMetadata` — persisted verbatim                    |
 
 Records are per-attempt and correlated by `callId`. The `@gullabs/drizzle` sink is idempotent on
 `attemptId`.
+
+When you pass `idempotencyKey`, attempt 1 uses that exact value as `attemptId`. If library-side
+`retryMiddleware` performs an in-process retry, later attempts are suffixed (`key:2`, `key:3`, ...)
+so each attempt can keep its own durable row; correlate the final outcome from `result.attemptId`
+or `LlmError.attemptId`. Temporal-owned activity retries that call the library fresh each time keep
+the pre-minted key on attempt 1 and rely on the sink's `attemptId` conflict handling for ledger
+idempotency. This is ledger idempotency only; provider calls are not deduplicated.
 
 ### Secret redaction
 

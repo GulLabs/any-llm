@@ -20,10 +20,10 @@ import type {
   AuthMaterial,
   Part,
 } from '@gullabs/core'
-import type { ZodTypeAny } from 'zod'
 import {
   buildGoogleClient,
   FLEX_DEFAULT_TIMEOUT_MS,
+  STANDARD_DEFAULT_TIMEOUT_MS,
   TRANSPORT_TIMEOUT_BUFFER_MS,
 } from './client.js'
 import type {
@@ -34,7 +34,7 @@ import type {
   GeminiResponseShape,
   GeminiUsageMetadataShape,
 } from './client.js'
-import { zodToGeminiSchema } from './schema.js'
+import { isGeminiCapacityError } from './flex-fallback.js'
 
 // ---------------------------------------------------------------------------
 // Exported types for consumers that inject a custom client
@@ -271,7 +271,29 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
 
       // Service tier (FLEX or STANDARD)
       // Real SDK: GenerateContentConfig.serviceTier = ServiceTier enum ("flex"|"standard")
-      config.serviceTier = genConfig.serviceTier === 'standard' ? 'standard' : 'flex'
+      const explicit = (genConfig as { serviceTier?: 'flex' | 'standard' }).serviceTier
+      const supported = req.modelDescriptor?.capabilities?.serviceTiers
+      if (explicit !== undefined) {
+        // caller explicitly chose a tier — reject if the model can't honour it
+        if (
+          req.modelDescriptor !== undefined &&
+          (supported === undefined || !supported.includes(explicit))
+        ) {
+          throw new LlmError(
+            `serviceTier "${explicit}" is not supported for model "${model}".`,
+            { kind: 'bad_request', retryable: false },
+          )
+        }
+        config.serviceTier = explicit
+      } else {
+        // no explicit choice — default to flex only when the model supports it
+        if (req.modelDescriptor === undefined) {
+          config.serviceTier = 'flex'
+        } else if (supported?.includes('flex') === true) {
+          config.serviceTier = 'flex'
+        }
+        // otherwise omit serviceTier entirely
+      }
 
       // ------------------------------------------------------------------
       // 3. Reasoning → thinkingConfig
@@ -279,6 +301,13 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       const reasoning = genConfig.reasoning
       if (reasoning !== undefined) {
         const reasoningApi = req.modelDescriptor?.capabilities?.reasoningApi
+
+        if (reasoning.effort !== undefined && reasoning.budgetTokens !== undefined) {
+          throw new LlmError(
+            `Provide either reasoning.effort or reasoning.budgetTokens, not both, for model "${model}".`,
+            { kind: 'bad_request', retryable: false },
+          )
+        }
 
         if (reasoningApi === 'budget') {
           // gemini-2.5* → thinkingBudget
@@ -293,16 +322,15 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
             ...(budget !== undefined ? { thinkingBudget: budget } : {}),
             ...(reasoning.includeThoughts === true ? { includeThoughts: true } : {}),
           }
-
-          if (reasoning.effort !== undefined && reasoning.budgetTokens !== undefined) {
-            warnings.push({
-              type: 'reasoning-mapping',
-              quality: 'approximate',
-              details: 'budgetTokens takes precedence over effort for thinkingBudget',
-            })
-          }
         } else if (reasoningApi === 'level') {
           // gemini-3.* → thinkingLevel
+          if (reasoning.budgetTokens !== undefined) {
+            throw new LlmError(
+              `reasoning.budgetTokens is not supported for model "${model}" (it uses thinkingLevel, not thinkingBudget); use reasoning.effort instead.`,
+              { kind: 'bad_request', retryable: false },
+            )
+          }
+
           // Real SDK ThinkingLevel enum: "LOW" | "MEDIUM" | "HIGH" | "MINIMAL"
           let thinkingLevel: string | undefined
           if (reasoning.effort !== undefined) {
@@ -324,63 +352,31 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
             }
           }
 
-          if (reasoning.budgetTokens !== undefined) {
-            warnings.push({
-              type: 'reasoning-mapping',
-              quality: 'approximate',
-              details:
-                'budgetTokens is not supported for gemini-3.x models; mapping effort to thinkingLevel instead',
-            })
-          }
-
           config.thinkingConfig = {
             ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
             ...(reasoning.includeThoughts === true ? { includeThoughts: true } : {}),
           }
         } else {
-          // No descriptor or descriptor has no reasoningApi — emit unsupported warning.
-          warnings.push({
-            type: 'reasoning-mapping',
-            quality: 'unsupported',
-            details: `thinkingConfig not mapped for model "${model}"; unknown generation`,
-          })
+          throw new LlmError(
+            `Model "${model}" does not support reasoning/thinkingConfig.`,
+            { kind: 'bad_request', retryable: false },
+          )
         }
       }
 
       // ------------------------------------------------------------------
       // 4. Structured output → responseMimeType + responseSchema
       // ------------------------------------------------------------------
-      let outputSchemaRequested = false
-      if (req.outputSchema !== undefined) {
-        outputSchemaRequested = true
-        config.responseMimeType = 'application/json'
+      const structuredOutputRequested = req.outputJsonSchema !== undefined
+      if (structuredOutputRequested) {
+        const nativeStructuredOutput =
+          req.modelDescriptor?.capabilities?.nativeStructuredOutput !== false
 
-        if (req.outputSchema['~standard'].vendor === 'zod') {
-          // Legitimate vendor-specific cast: we've confirmed this is a Zod schema,
-          // so casting to ZodTypeAny for the Zod-specific converter is safe.
-          const geminiSchema = zodToGeminiSchema(req.outputSchema as ZodTypeAny)
-          if (geminiSchema !== undefined) {
-            config.responseSchema = geminiSchema
-          } else {
-            warnings.push({
-              type: 'unsupported-setting',
-              setting: 'output.schema',
-              details:
-                'Could not convert Zod schema to Gemini responseSchema; ' +
-                'proceeding with responseMimeType only. Engine will still validate.',
-            })
-          }
-        } else {
-          // Non-Zod schema: native provider schema enforcement is unavailable.
-          // The engine still validates output via Standard Schema, so correctness
-          // is preserved — only the provider-side enforcement optimization is skipped.
-          warnings.push({
-            type: 'other',
-            message:
-              `Native Gemini responseSchema conversion is not available for vendor ` +
-              `"${req.outputSchema['~standard'].vendor}"; ` +
-              `proceeding with responseMimeType only. Engine will validate output client-side via Standard Schema.`,
-          })
+        if (nativeStructuredOutput) {
+          config.responseMimeType = 'application/json'
+          config.responseSchema = req.outputJsonSchema as NonNullable<
+            GeminiGenerateConfig['responseSchema']
+          >
         }
       }
 
@@ -400,34 +396,26 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       // 5c. Re-assert fixed-sampling invariant AFTER providerOptions merge.
       //     providerOptions.google is a last-write-wins escape hatch, but on
       //     Gemini 3.x (sampling: 'fixed') the API rejects temperature/topP/topK
-      //     unconditionally.  Strip them and warn so the call is not rejected,
-      //     but DO NOT throw — providerOptions is intentional caller override
-      //     territory; strip+warn is the correct policy.
+      //     unconditionally.  Throw so the caller knows they sent bad config.
       // ------------------------------------------------------------------
       if (req.modelDescriptor?.capabilities?.sampling === 'fixed') {
-        const droppedSampling: string[] = []
+        const offendingSampling: string[] = []
         if ('temperature' in config) {
-          delete (config as Record<string, unknown>).temperature
-          droppedSampling.push('temperature')
+          offendingSampling.push('temperature')
         }
         if ('topP' in config) {
-          delete (config as Record<string, unknown>).topP
-          droppedSampling.push('topP')
+          offendingSampling.push('topP')
         }
         if ('topK' in config) {
-          delete (config as Record<string, unknown>).topK
-          droppedSampling.push('topK')
+          offendingSampling.push('topK')
         }
-        if (droppedSampling.length > 0) {
-          warnings.push({
-            type: 'unsupported-setting',
-            setting: droppedSampling.join(', '),
-            details:
-              `Sampling parameter(s) [${droppedSampling.join(
-                ', ',
-              )}] from providerOptions.google were stripped: ` +
-              `this model has fixed sampling (Gemini 3.x) and the API rejects these fields.`,
-          })
+        if (offendingSampling.length > 0) {
+          throw new LlmError(
+            `Sampling parameters [${offendingSampling.join(
+              ', ',
+            )}] are not supported for model "${model}" (fixed sampling); they were supplied via providerOptions.google.`,
+            { kind: 'bad_request', retryable: false },
+          )
         }
       }
 
@@ -446,9 +434,9 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
           return false
         })
 
-      if (groundingRequested && req.outputSchema !== undefined) {
+      if (groundingRequested && structuredOutputRequested) {
         throw new LlmError(
-          'Grounding (googleSearch) cannot be combined with structured output (output.schema) on Gemini; choose one.',
+          'Grounding (googleSearch) cannot be combined with structured output (output.jsonSchema) on Gemini; choose one.',
           { kind: 'bad_request', retryable: false },
         )
       }
@@ -463,9 +451,9 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       // We arm our own AbortController here and combine it with any incoming
       // signal so WE enforce the ceiling regardless of the SDK bug.
       //
-      // ONLY the flex-default path needs this extra timer: when timeoutMs IS set
-      // the engine already arms a hard AbortSignal at exactly timeoutMs — adding
-      // another timer would be redundant and could mask the correct error.
+      // Flex and standard default paths need this extra timer when timeoutMs is
+      // absent. When timeoutMs IS set the engine already arms a hard AbortSignal
+      // at exactly timeoutMs.
       //
       // Abort reason uses DOMException with name 'TimeoutError' so classifyError
       // maps the resulting LlmError to kind:'timeout' (retryable:true), matching
@@ -476,29 +464,49 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       //
       // Real SDK: GenerateContentConfig.abortSignal (in config, NOT in params)
       // ------------------------------------------------------------------
-      let _flexTimeoutHandle: ReturnType<typeof setTimeout> | undefined
+      let tierTimeoutHandle: ReturnType<typeof setTimeout> | undefined
 
-      if (config.serviceTier === 'flex' && genConfig.timeoutMs === undefined) {
-        // Flex-default path: engine armed no timer — arm one ourselves.
-        const flexController = new AbortController()
-        const timeoutReason = new DOMException(
-          `Flex timeout: call exceeded ${FLEX_DEFAULT_TIMEOUT_MS}ms client-side ceiling` +
-            ' (@google/genai #1277 belt-and-suspenders)',
-          'TimeoutError',
-        )
-        _flexTimeoutHandle = setTimeout(() => {
-          flexController.abort(timeoutReason)
-        }, FLEX_DEFAULT_TIMEOUT_MS)
-        // Combine with caller signal if present — either aborting cancels the request.
-        if (ctx.signal !== undefined) {
-          config.abortSignal = AbortSignal.any([flexController.signal, ctx.signal])
-        } else {
-          config.abortSignal = flexController.signal
+      const clearTierTimeout = (): void => {
+        if (tierTimeoutHandle !== undefined) {
+          clearTimeout(tierTimeoutHandle)
+          tierTimeoutHandle = undefined
         }
-      } else if (ctx.signal !== undefined) {
-        // Normal path: engine handles timer (if any); pass ctx.signal through.
-        config.abortSignal = ctx.signal
       }
+
+      const applyTierTimeout = (tier: string | undefined): void => {
+        clearTierTimeout()
+        delete config.abortSignal
+
+        const defaultTimeoutMs =
+          genConfig.timeoutMs === undefined
+            ? tier === 'flex'
+              ? FLEX_DEFAULT_TIMEOUT_MS
+              : tier === 'standard'
+              ? STANDARD_DEFAULT_TIMEOUT_MS
+              : undefined
+            : undefined
+
+        if (defaultTimeoutMs !== undefined) {
+          const tierController = new AbortController()
+          const tierLabel = tier === 'standard' ? 'Standard' : 'Flex'
+          const timeoutReason = new DOMException(
+            `${tierLabel} timeout: call exceeded ${defaultTimeoutMs}ms client-side ceiling` +
+              ' (@google/genai #1277 belt-and-suspenders)',
+            'TimeoutError',
+          )
+          tierTimeoutHandle = setTimeout(() => {
+            tierController.abort(timeoutReason)
+          }, defaultTimeoutMs)
+          config.abortSignal =
+            ctx.signal !== undefined
+              ? AbortSignal.any([tierController.signal, ctx.signal])
+              : tierController.signal
+        } else if (ctx.signal !== undefined) {
+          config.abortSignal = ctx.signal
+        }
+      }
+
+      applyTierTimeout(config.serviceTier)
 
       // ------------------------------------------------------------------
       // 7. Transport timeout — set httpOptions.timeout so the @google/genai
@@ -512,7 +520,7 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       //       ceiling at timeoutMs) always fires before the SDK transport timer.
       //    3. serviceTier 'flex', no timeoutMs → FLEX_DEFAULT_TIMEOUT_MS (no
       //       buffer; there is no engine AbortSignal deadline in this case).
-      //    4. standard, no timeoutMs → no forced timeout (SDK default).
+      //    4. serviceTier 'standard', no timeoutMs → STANDARD_DEFAULT_TIMEOUT_MS.
       //
       //    Merge order: computed timeout first, caller's httpOptions spread on
       //    top so caller values always win.  Only assign config.httpOptions when
@@ -527,8 +535,10 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       const computedTimeoutMs: number | undefined =
         genConfig.timeoutMs !== undefined
           ? genConfig.timeoutMs + TRANSPORT_TIMEOUT_BUFFER_MS
-          : genConfig.serviceTier === 'flex'
+          : config.serviceTier === 'flex'
           ? FLEX_DEFAULT_TIMEOUT_MS
+          : config.serviceTier === 'standard'
+          ? STANDARD_DEFAULT_TIMEOUT_MS
           : undefined
 
       // Merge: our computed timeout is the base; caller wins on top.
@@ -542,34 +552,43 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       }
 
       // ------------------------------------------------------------------
-      // 8. Build params + call the SDK
-      // ------------------------------------------------------------------
-      const params = {
-        model,
-        contents,
-        config,
-      }
-
-      // ------------------------------------------------------------------
       // 8b. Client construction + SDK call — both inside the classifier
       //     so that ANY failure in run() (including a bad auth constructor)
       //     is rethrown as a typed LlmError(provider:'google').
       // ------------------------------------------------------------------
       let response: GeminiResponseShape
-      try {
+      let servedServiceTier = config.serviceTier
+      const dispatch = async (): Promise<GeminiResponseShape> => {
+        const dispatchConfig: GeminiGenerateConfig = {
+          ...config,
+          ...(config.httpOptions !== undefined
+            ? { httpOptions: { ...config.httpOptions } }
+            : {}),
+        }
+        const params = {
+          model,
+          contents,
+          config: dispatchConfig,
+        }
         const buildClient = opts?._clientFactory ?? buildGoogleClient
         const client: GeminiClientLike =
           opts?.client !== undefined ? opts.client : await buildClient(ctx.auth)
         ctx.logger.debug(
-          { model, configKeys: Object.keys(config) },
+          {
+            model,
+            configKeys: Object.keys(dispatchConfig),
+            serviceTier: dispatchConfig.serviceTier,
+          },
           'llm.adapter.dispatch',
         )
-        response = await client.models.generateContent(params)
+        return client.models.generateContent(params)
+      }
+      try {
+        response = await dispatch()
       } catch (rawErr) {
         // Classify SDK errors → LlmError
         const classified = classifyError(rawErr)
-        // Attach provider tag via re-throw (LlmError is already classified).
-        throw new LlmError(classified.message, {
+        const typed = new LlmError(classified.message, {
           kind: classified.kind,
           retryable: classified.retryable,
           ...(classified.httpStatus !== undefined
@@ -580,11 +599,50 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
             : {}),
           provider: 'google',
           cause: classified.cause ?? rawErr,
+          ...(servedServiceTier !== undefined ? { servedServiceTier } : {}),
         })
+
+        if (
+          config.serviceTier === 'flex' &&
+          genConfig.flexFallback !== false &&
+          isGeminiCapacityError(typed)
+        ) {
+          config.serviceTier = 'standard'
+          servedServiceTier = 'standard'
+          const fallbackTimeout =
+            genConfig.timeoutMs !== undefined
+              ? genConfig.timeoutMs + TRANSPORT_TIMEOUT_BUFFER_MS
+              : STANDARD_DEFAULT_TIMEOUT_MS
+          config.httpOptions = {
+            timeout: fallbackTimeout,
+            ...callerHttpOptions,
+          }
+          applyTierTimeout('standard')
+          try {
+            response = await dispatch()
+          } catch (fallbackRawErr) {
+            const fallbackClassified = classifyError(fallbackRawErr)
+            throw new LlmError(fallbackClassified.message, {
+              kind: fallbackClassified.kind,
+              retryable: fallbackClassified.retryable,
+              ...(fallbackClassified.httpStatus !== undefined
+                ? { httpStatus: fallbackClassified.httpStatus }
+                : {}),
+              ...(fallbackClassified.retryAfterMs !== undefined
+                ? { retryAfterMs: fallbackClassified.retryAfterMs }
+                : {}),
+              provider: 'google',
+              cause: fallbackClassified.cause ?? fallbackRawErr,
+              servedServiceTier: 'standard',
+            })
+          }
+        } else {
+          throw typed
+        }
       } finally {
-        // FIX A-2: always clear the flex timeout timer so it never leaks,
+        // FIX A-2: always clear the tier timeout timer so it never leaks,
         // regardless of whether the call succeeded, threw, or was aborted.
-        if (_flexTimeoutHandle !== undefined) clearTimeout(_flexTimeoutHandle)
+        clearTierTimeout()
       }
 
       // ------------------------------------------------------------------
@@ -644,11 +702,11 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
 
       // Parse structured output (JSON text → rawStructured).
       let rawStructured: unknown
-      if (outputSchemaRequested && text.length > 0) {
+      if (structuredOutputRequested && text.length > 0) {
         try {
           rawStructured = JSON.parse(text)
         } catch {
-          // Engine will surface parse_error; leave rawStructured undefined.
+          // Core reports outputParsed:false; callers own validation/retry policy.
         }
       }
 
@@ -662,6 +720,7 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
         model,
         usage,
         warnings,
+        ...(servedServiceTier !== undefined ? { servedServiceTier } : {}),
         ...(text.length > 0 ? { text } : {}),
         ...(reasoningText !== undefined ? { reasoningText } : {}),
         ...(rawStructured !== undefined ? { rawStructured } : {}),

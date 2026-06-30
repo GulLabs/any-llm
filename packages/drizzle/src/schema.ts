@@ -1,28 +1,30 @@
 import {
+  boolean,
+  index,
   integer,
   jsonb,
   pgTable,
   text,
   timestamp,
-  uniqueIndex,
-  uuid,
 } from 'drizzle-orm/pg-core'
 
 export const llmCalls = pgTable(
   'llm_calls',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
     recordSchemaVersion: integer('record_schema_version').notNull(),
     callId: text('call_id').notNull(),
-    attemptId: text('attempt_id').notNull(),
+    attemptId: text('attempt_id').primaryKey(),
     callSiteId: text('call_site_id'),
+    externalId: text('external_id'),
     provider: text('provider').notNull(),
     model: text('model').notNull(),
     modelVersion: text('model_version'),
     responseId: text('response_id'),
     serviceTier: text('service_tier'),
+    servedServiceTier: text('served_service_tier'),
     status: text('status').notNull(),
     finishReason: text('finish_reason'),
+    outputParsed: boolean('output_parsed'),
     latencyMs: integer('latency_ms'),
     inputTokens: integer('input_tokens'),
     outputTokens: integer('output_tokens'),
@@ -43,5 +45,8 @@ export const llmCalls = pgTable(
     metadata: jsonb('metadata').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   },
-  (table) => [uniqueIndex('llm_calls_attempt_id_idx').on(table.attemptId)],
+  (table) => [
+    index('llm_calls_call_id_idx').on(table.callId),
+    index('llm_calls_external_id_idx').on(table.externalId),
+  ],
 )

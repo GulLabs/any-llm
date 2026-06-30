@@ -22,18 +22,20 @@ import type { LlmCallRecord, JsonValue } from '@gullabs/core'
 // DDL derived precisely from packages/drizzle/src/schema.ts
 // ---------------------------------------------------------------------------
 // Column-by-column derivation from schema.ts:
-//   id:                  uuid PRIMARY KEY DEFAULT gen_random_uuid()
 //   record_schema_version: integer NOT NULL
 //   call_id:             text NOT NULL
-//   attempt_id:          text NOT NULL  → unique index below
+//   attempt_id:          text PRIMARY KEY
 //   call_site_id:        text (nullable)
+//   external_id:         text (nullable)
 //   provider:            text NOT NULL
 //   model:               text NOT NULL
 //   model_version:       text (nullable)
 //   response_id:         text (nullable)
 //   service_tier:        text (nullable)
+//   served_service_tier: text (nullable)
 //   status:              text NOT NULL
 //   finish_reason:       text (nullable)
+//   output_parsed:       boolean (nullable)
 //   latency_ms:          integer (nullable)
 //   input_tokens:        integer (nullable)
 //   output_tokens:       integer (nullable)
@@ -56,18 +58,20 @@ import type { LlmCallRecord, JsonValue } from '@gullabs/core'
 // ---------------------------------------------------------------------------
 const CREATE_TABLE_SQL = /* sql */ `
   CREATE TABLE IF NOT EXISTS llm_calls (
-    id                    UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
     record_schema_version INTEGER      NOT NULL,
     call_id               TEXT         NOT NULL,
-    attempt_id            TEXT         NOT NULL,
+    attempt_id            TEXT         PRIMARY KEY,
     call_site_id          TEXT,
+    external_id           TEXT,
     provider              TEXT         NOT NULL,
     model                 TEXT         NOT NULL,
     model_version         TEXT,
     response_id           TEXT,
     service_tier          TEXT,
+    served_service_tier   TEXT,
     status                TEXT         NOT NULL,
     finish_reason         TEXT,
+    output_parsed         BOOLEAN,
     latency_ms            INTEGER,
     input_tokens          INTEGER,
     output_tokens         INTEGER,
@@ -89,7 +93,8 @@ const CREATE_TABLE_SQL = /* sql */ `
     created_at            TIMESTAMPTZ  DEFAULT now()
   );
 
-  CREATE UNIQUE INDEX IF NOT EXISTS llm_calls_attempt_id_idx ON llm_calls (attempt_id);
+  CREATE INDEX IF NOT EXISTS llm_calls_call_id_idx ON llm_calls (call_id);
+  CREATE INDEX IF NOT EXISTS llm_calls_external_id_idx ON llm_calls (external_id);
 `
 
 // ---------------------------------------------------------------------------
@@ -108,8 +113,10 @@ function makeRecord(overrides: Partial<LlmCallRecord> = {}): LlmCallRecord {
     modelVersion: 'gemini-2.5-pro-001',
     responseId: 'resp_int_456',
     serviceTier: 'flex',
+    servedServiceTier: 'standard',
     status: 'ok',
     finishReason: 'stop',
+    outputParsed: true,
     latencyMs: 250,
     inputTokens: 200,
     outputTokens: 40,
@@ -192,10 +199,12 @@ describe('drizzleUsageSink — real PGlite integration', () => {
     expect(row.modelVersion).toBe('gemini-2.5-pro-001')
     expect(row.responseId).toBe('resp_int_456')
     expect(row.serviceTier).toBe('flex')
+    expect(row.servedServiceTier).toBe('standard')
 
     // Outcome
     expect(row.status).toBe('ok')
     expect(row.finishReason).toBe('stop')
+    expect(row.outputParsed).toBe(true)
     expect(row.latencyMs).toBe(250)
 
     // Token hot fields
@@ -234,9 +243,8 @@ describe('drizzleUsageSink — real PGlite integration', () => {
     // Host metadata JSONB
     expect(row.metadata).toEqual({ tenantId: 'tenant_int', runId: 'run_42' })
 
-    // id is auto-generated UUID (non-null, non-empty string)
-    expect(typeof row.id).toBe('string')
-    expect(row.id.length).toBeGreaterThan(0)
+    // attemptId is the ledger primary key.
+    expect(row.attemptId).toBe('attempt_integration_1')
   })
 
   // (b) attemptId idempotency: two records with the same attemptId → exactly one row.
