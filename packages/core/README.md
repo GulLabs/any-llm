@@ -12,7 +12,7 @@ The provider-agnostic heart of any-llm. Contains all types, port interfaces, the
 | `LlmError` | Typed error class — always thrown on call failure |
 | `buildRecord(input)` | Assembles an `LlmCallRecord` from engine state (used internally) |
 
-Port interfaces you implement: `ProviderAdapter`, `UsageSink`, `PricingSource`, `AuthProvider`, `Clock`, `IdGenerator`, `Logger`, `Telemetry`.
+Port interfaces you implement: `ProviderAdapter`, `UsageSink`, `PricingSource`, `Clock`, `IdGenerator`, `Logger`, `Telemetry`.
 
 ## Quick example
 
@@ -22,7 +22,6 @@ import { z } from 'zod'
 
 const client = createClient({
   adapters: [myAdapter],
-  auth: myAuth,
   pricing: geminiPricingSource(),
   sink: mySink,
 })
@@ -35,7 +34,10 @@ const callSite = defineCallSite({
   config: { reasoning: { includeThoughts: true } },
 })
 
-const result = await client.runStructured(callSite, { text: 'hello world' })
+// Auth is required per call — never read from the environment.
+const result = await client.runStructured(callSite, { text: 'hello world' }, {
+  auth: { apiKey: 'YOUR_KEY' },
+})
 // result.output   — Zod-validated
 // result.usage    — { inputTokens, outputTokens, thinkingTokens, cachedInputTokens }
 // result.cost     — { microUsd, pricingVersion, details: { input, cached, output } }

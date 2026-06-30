@@ -13,7 +13,7 @@ Reusable test fakes for any-llm. Lets you drive the full engine pipeline — inc
 | `fakeGeminiResponse(opts)` | Builds a `GeminiResponseLike` with usage metadata, thought parts, and JSON output |
 | `fakeGeminiBlocked(opts)` | Builds a safety-blocked `GeminiResponseLike` (no candidates, `promptFeedback.blockReason` set) |
 | `FakeAdapter` | Scriptable `ProviderAdapter` — use at the port level (bypasses Gemini SDK entirely) |
-| `fakeAuth(material)` | Returns an `AuthProvider` that always resolves to the given credentials |
+| `SignalAwareFakeAdapter` | Like `FakeAdapter` but observes and honours `AbortSignal` from `AdapterCtx` |
 
 ## Quick example — end-to-end with fake Gemini client
 
@@ -23,7 +23,7 @@ import { createClient, geminiPricingSource, defineCallSite } from '@gullabs/core
 import { geminiAdapter } from '@gullabs/google'
 import {
   FakeClock, FakeIds, RecordingSink,
-  fakeAuth, fakeGeminiResponse, makeFakeGemini,
+  fakeGeminiResponse, makeFakeGemini,
 } from '@gullabs/testing'
 
 const fakeClient = makeFakeGemini(
@@ -40,7 +40,6 @@ const fakeClient = makeFakeGemini(
 const sink = new RecordingSink()
 const client = createClient({
   adapters: [geminiAdapter({ client: fakeClient })],
-  auth: fakeAuth({ apiKey: 'fake' }),
   pricing: geminiPricingSource(),
   sink,
   clock: new FakeClock(0),
@@ -55,7 +54,8 @@ const callSite = defineCallSite({
   config: { reasoning: { includeThoughts: true } },
 })
 
-const result = await client.runStructured(callSite, {})
+// Auth is required per call.
+const result = await client.runStructured(callSite, {}, { auth: { apiKey: 'fake' } })
 
 // Assertions
 console.assert(result.output?.ok === true)

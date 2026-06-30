@@ -1174,7 +1174,7 @@ export function createClient(config: ClientConfig): Client {
       request: LlmRequest<S>,
       opts: GenerateOptions,
     ): Promise<LlmResult<StandardSchemaV1.InferOutput<S>>> {
-      const callAuth = requireAuth(opts.auth)
+      const callAuth = requireAuth(opts?.auth)
       // Config resolution: libDefaults → request.config
       const merged = deepMergeConfig(libDefaults, request.config)
       const serviceTier = merged.serviceTier ?? 'flex'
@@ -1203,7 +1203,7 @@ export function createClient(config: ClientConfig): Client {
         resolvedOpts = varsOrOpts as RunStructuredOptions
       }
 
-      const callAuth = requireAuth(resolvedOpts.auth)
+      const callAuth = requireAuth(resolvedOpts?.auth)
 
       // Config resolution: libDefaults → callSite.config → opts.config
       const merged = deepMergeConfig(libDefaults, callSite.config, resolvedOpts.config)

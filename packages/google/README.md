@@ -21,14 +21,18 @@ import { geminiAdapter } from '@gullabs/google'
 import { createClient, geminiPricingSource } from '@gullabs/core'
 
 const client = createClient({
-  adapters: [geminiAdapter()],  // uses buildGoogleClient(auth) at call time
-  auth: {
-    async credentials(_provider) {
-      return { apiKey: process.env.GEMINI_API_KEY! }
-    },
-  },
+  adapters: [geminiAdapter()],
   pricing: geminiPricingSource(),
 })
+
+// Auth is required on every call — the library never reads environment variables.
+const result = await client.generate(
+  {
+    model: 'gemini-2.5-flash',
+    messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hello' }] }],
+  },
+  { auth: { apiKey: 'YOUR_GEMINI_API_KEY' } },
+)
 ```
 
 ## What it maps

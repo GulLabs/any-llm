@@ -121,4 +121,44 @@ describe('no-ambient-auth: removed symbols absent from @gullabs/core public expo
     expect(exports['envAuth']).toBeUndefined()
     expect(exports['AuthProvider']).toBeUndefined()
   })
+
+  // -------------------------------------------------------------------------
+  // Source-text check: catch re-introduction via `export type { AuthProvider }`
+  // or any other export form. Runtime Object.keys() only catches value exports;
+  // `export type { AuthProvider }` would slip through — this test catches it.
+  // -------------------------------------------------------------------------
+
+  it('packages/core/src/index.ts contains no export of AuthProvider or envAuth (value OR type)', () => {
+    const INDEX_TS = resolve(CORE_SRC, 'index.ts')
+    const source = readFileSync(INDEX_TS, 'utf-8')
+
+    // Match any export statement that mentions the banned identifier.
+    // Covers: `export { AuthProvider }`, `export type { AuthProvider }`,
+    //         `export { foo, AuthProvider, bar }`, and re-export forms.
+    // The regex looks for an export block whose brace-content contains the word.
+    const BANNED = ['AuthProvider', 'envAuth']
+
+    for (const name of BANNED) {
+      // Match export { ... <name> ... } or export type { ... <name> ... }
+      // Use word-boundary-like check: preceded/followed by non-word chars.
+      const inExportBlock = /export\s+(?:type\s+)?\{[^}]*\}/g
+      let match: RegExpExecArray | null
+      const violations: string[] = []
+      while ((match = inExportBlock.exec(source)) !== null) {
+        // Check if the banned identifier appears as a standalone word in this block
+        if (new RegExp(`\\b${name}\\b`).test(match[0])) {
+          violations.push(match[0].trim())
+        }
+      }
+      // Also catch direct named-export forms: `export const envAuth = ...`
+      // or `export function AuthProvider` etc.
+      if (new RegExp(`^export\\s+(?:const|let|var|function|class|type|interface)\\s+${name}\\b`, 'm').test(source)) {
+        violations.push(`direct export of ${name}`)
+      }
+      expect(
+        violations,
+        `packages/core/src/index.ts must not export '${name}' in any form (value or type):\n${violations.join('\n')}`,
+      ).toHaveLength(0)
+    }
+  })
 })

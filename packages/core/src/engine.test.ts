@@ -1322,3 +1322,55 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
     expect(successEvents[0]!.latencyMs).toBeGreaterThanOrEqual(0)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Fail-closed: missing opts or empty apiKey must throw LlmError(invalid_auth)
+// ---------------------------------------------------------------------------
+
+describe('engine — fail-closed auth guard', () => {
+  const req = {
+    model: 'gemini-2.5-pro',
+    messages: [{ role: 'user' as const, parts: [{ kind: 'text' as const, text: 'Hi' }] }],
+  }
+  const callSite = { id: 'test', model: 'gemini-2.5-pro', userTemplate: 'Hi' }
+
+  it('generate() with no opts arg throws LlmError invalid_auth (not TypeError)', async () => {
+    const { client } = makeClient()
+    // Simulate a JS/any-typed caller omitting the options object entirely.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await expect((client.generate as any)(req)).rejects.toMatchObject({
+      kind: 'invalid_auth',
+      retryable: false,
+    })
+    // Must be LlmError, not a raw TypeError.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await expect((client.generate as any)(req)).rejects.toBeInstanceOf(LlmError)
+  })
+
+  it('generate() with { auth: { apiKey: "" } } throws LlmError invalid_auth', async () => {
+    const { client } = makeClient()
+    await expect(
+      client.generate(req, { auth: { apiKey: '' } }),
+    ).rejects.toMatchObject({ kind: 'invalid_auth', retryable: false })
+  })
+
+  it('runStructured() with no opts arg (one arg form) throws LlmError invalid_auth', async () => {
+    const { client } = makeClient()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await expect((client.runStructured as any)(callSite)).rejects.toMatchObject({
+      kind: 'invalid_auth',
+      retryable: false,
+    })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await expect((client.runStructured as any)(callSite)).rejects.toBeInstanceOf(LlmError)
+  })
+
+  it('runStructured() with (callSite, vars) and no opts throws LlmError invalid_auth', async () => {
+    const { client } = makeClient()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await expect((client.runStructured as any)(callSite, { x: 'y' })).rejects.toMatchObject({
+      kind: 'invalid_auth',
+      retryable: false,
+    })
+  })
+})
