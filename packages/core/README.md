@@ -4,45 +4,102 @@ The provider-agnostic heart of any-llm. Contains all types, port interfaces, the
 
 ## Key exports
 
-| Export | What it is |
-|---|---|
-| `createClient(config)` | Wires ports into a `{ generate, runStructured }` client |
-| `defineCallSite(opts)` | Defines a typed, reusable prompt template bound to a model |
+| Export                  | What it is                                                               |
+| ----------------------- | ------------------------------------------------------------------------ |
+| `createClient(config)`  | Wires ports into a `{ generate, runStructured }` client                  |
+| `defineCallSite(opts)`  | Defines a typed, reusable prompt template bound to a model               |
 | `geminiPricingSource()` | Returns a `PricingSource` backed by the built-in Gemini pricing snapshot |
-| `LlmError` | Typed error class — always thrown on call failure |
-| `buildRecord(input)` | Assembles an `LlmCallRecord` from engine state (used internally) |
+| `LlmError`              | Typed error class — always thrown on call failure                        |
+| `buildRecord(input)`    | Assembles an `LlmCallRecord` from engine state (used internally)         |
 
 Port interfaces you implement: `ProviderAdapter`, `UsageSink`, `PricingSource`, `Clock`, `IdGenerator`, `Logger`, `Telemetry`.
 
 ## Quick example
 
 ```ts
-import { createClient, geminiPricingSource, defineCallSite } from '@gullabs/core'
-import { z } from 'zod'
+import { createClient, geminiPricingSource, defineCallSite } from "@gullabs/core";
+import { z } from "zod";
 
 const client = createClient({
   adapters: [myAdapter],
   pricing: geminiPricingSource(),
   sink: mySink,
-})
+});
 
 const callSite = defineCallSite({
-  id: 'summarise',
-  model: 'gemini-2.5-flash',
+  id: "summarise",
+  model: "gemini-2.5-flash",
   schema: z.object({ summary: z.string() }),
-  userTemplate: 'Summarise: {{text}}',
+  userTemplate: "Summarise: {{text}}",
   config: { reasoning: { includeThoughts: true } },
-})
+});
 
 // Auth is required per call — never read from the environment.
-const result = await client.runStructured(callSite, { text: 'hello world' }, {
-  auth: { apiKey: 'YOUR_KEY' },
-})
+const result = await client.runStructured(
+  callSite,
+  { text: "hello world" },
+  {
+    auth: { apiKey: "YOUR_KEY" },
+  }
+);
 // result.output   — Zod-validated
 // result.usage    — { inputTokens, outputTokens, thinkingTokens, cachedInputTokens }
 // result.cost     — { microUsd, pricingVersion, details: { input, cached, output } }
 // result.reasoningText — thought summary if includeThoughts was set
 ```
+
+## Logging & Observability
+
+### Logger
+
+Inject a pino-compatible structured logger via `ClientConfig.logger`. The `Logger` port uses an
+object-first `(o, m)` signature:
+
+```ts
+import pino from "pino";
+
+const client = createClient({
+  adapters: [myAdapter],
+  pricing: geminiPricingSource(),
+  logger: pino(),
+});
+```
+
+Four levels: `debug`, `info`, `warn`, `error`. Engine events:
+
+| Event                    | Level                                                                   |
+| ------------------------ | ----------------------------------------------------------------------- |
+| `llm.call.start`         | `info`                                                                  |
+| `llm.call.attempt.start` | `debug`                                                                 |
+| `llm.call.retry`         | `debug` — includes `attemptNumber`, `delayMs`, `errorKind`, `retryable` |
+| `llm.call.success`       | `info`                                                                  |
+| `llm.call.error`         | `error`                                                                 |
+| `llm.call.cost.failed`   | `warn`                                                                  |
+| `llm.call.sink.success`  | `debug`                                                                 |
+| `llm.call.sink.failed`   | `error` (redacted)                                                      |
+
+Host logger exceptions are swallowed by `makeSafeLogger` — fail-open; a bad logger never breaks a
+call.
+
+### Telemetry
+
+Inject a `Telemetry` hook via `ClientConfig.telemetry` for OTel / Sentry / PostHog integration.
+All three methods (`onStart`, `onSuccess`, `onError`) are optional and fire once per logical call
+(not per attempt). The opaque value returned by `onStart` is forwarded as `span` to `onSuccess`
+and `onError`. Hook failures are swallowed fail-open.
+
+### LlmCallRecord and UsageSink
+
+Every call attempt is persisted via `UsageSink.record(r: LlmCallRecord)`. The sink must be
+idempotent on `r.attemptId`. Key traceability fields: `callId` (stable across retries),
+`attemptId`, `attemptNumber` (1-based), `latencyMs`, token counts, `costMicroUsd`, `errorKind`,
+and `metadata` (host-supplied, stored verbatim).
+
+### Redaction
+
+`redactSecrets` runs automatically on `errorMessage`, `generationConfig.providerOptions`, and
+`generationConfig.httpOptions.headers` before persistence. Standard knobs and `metadata` are not
+scanned — do **not** put secrets in `metadata`.
 
 ## Token convention
 

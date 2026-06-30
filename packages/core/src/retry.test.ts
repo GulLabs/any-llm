@@ -26,6 +26,7 @@ const NOOP_LOGGER = {
   info() {},
   warn() {},
   error() {},
+  debug() {},
 }
 
 const NOOP_CLOCK = { now: () => 0 }

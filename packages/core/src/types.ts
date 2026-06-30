@@ -205,7 +205,11 @@ export interface GenConfig {
   timeoutMs?: number
   /**
    * Verbatim provider-specific options forwarded to the raw SDK.
-   * Logged when used so operators can audit non-standard settings.
+   * This is the caller's escape hatch for non-standard provider settings.
+   * Values are persisted in the record's `generationConfig` JSONB lane; the
+   * secret-bearing sub-fields (`providerOptions` itself and `httpOptions.headers`)
+   * are run through `redactSecrets` before storage so credentials injected here
+   * do not appear in the audit log.  Standard generation knobs are NOT scanned.
    */
   providerOptions?: Record<string, JsonValue>
 }

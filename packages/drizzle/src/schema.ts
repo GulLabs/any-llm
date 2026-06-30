@@ -39,10 +39,11 @@ export const llmCalls = pgTable(
     reasoningText: text('reasoning_text'),
     errorKind: text('error_kind'),
     errorMessage: text('error_message'),
+    attemptNumber: integer('attempt_number').notNull(),
     metadata: jsonb('metadata').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   },
-  (table) => ({
-    attemptIdIdx: uniqueIndex('llm_calls_attempt_id_idx').on(table.attemptId),
-  }),
+  (table) => [
+    uniqueIndex('llm_calls_attempt_id_idx').on(table.attemptId),
+  ],
 )

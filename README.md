@@ -20,44 +20,47 @@ pnpm add @gullabs/testing    # test fakes (dev only)
 The four v1 goals in ~25 lines:
 
 ```ts
-import { z } from 'zod'
-import { createClient, geminiPricingSource, defineCallSite } from '@gullabs/core'
-import { geminiAdapter } from '@gullabs/google'
-import { drizzleUsageSink, llmCalls } from '@gullabs/drizzle'
+import { z } from "zod";
+import { createClient, geminiPricingSource, defineCallSite } from "@gullabs/core";
+import { geminiAdapter } from "@gullabs/google";
+import { drizzleUsageSink, llmCalls } from "@gullabs/drizzle";
 
 // 1. Wire up the client — no auth here; the library never reads credentials
 const client = createClient({
   adapters: [geminiAdapter()],
   pricing: geminiPricingSource(),
   sink: drizzleUsageSink(db, llmCalls),
-})
+});
 
 // 2. Define a typed, reusable call site
-const ReviewSchema = z.object({ rating: z.number().int().min(1).max(5), summary: z.string() })
+const ReviewSchema = z.object({
+  rating: z.number().int().min(1).max(5),
+  summary: z.string(),
+});
 
 const codeReview = defineCallSite({
-  id: 'code-review',
-  model: 'gemini-2.5-flash',
+  id: "code-review",
+  model: "gemini-2.5-flash",
   schema: ReviewSchema,
-  system: 'You are a senior code reviewer.',
-  userTemplate: 'Review this diff:\n\n{{diff}}',
+  system: "You are a senior code reviewer.",
+  userTemplate: "Review this diff:\n\n{{diff}}",
   config: {
-    reasoning: { includeThoughts: true, effort: 'medium' },
-    serviceTier: 'flex',
+    reasoning: { includeThoughts: true, effort: "medium" },
+    serviceTier: "flex",
   },
-})
+});
 
 // 3. Your application owns the key — bring it from wherever makes sense
-const auth = { apiKey: process.env.MY_APP_GEMINI_KEY! }
+const auth = { apiKey: process.env.MY_APP_GEMINI_KEY! };
 
 // 4. Run it — pass auth on every call
-const result = await client.runStructured(codeReview, { diff: myDiff }, { auth })
+const result = await client.runStructured(codeReview, { diff: myDiff }, { auth });
 
 // All four goals satisfied:
-console.log(result.output)          // { rating: 4, summary: '...' }  — Zod-validated
-console.log(result.usage)           // { inputTokens, outputTokens, cachedInputTokens, thinkingTokens }
-console.log(result.cost?.microUsd)  // integer micro-USD, frozen at call time
-console.log(result.reasoningText)   // thought summary from the model
+console.log(result.output); // { rating: 4, summary: '...' }  — Zod-validated
+console.log(result.usage); // { inputTokens, outputTokens, cachedInputTokens, thinkingTokens }
+console.log(result.cost?.microUsd); // integer micro-USD, frozen at call time
+console.log(result.reasoningText); // thought summary from the model
 // The record has already been persisted to llm_calls via the Drizzle sink.
 ```
 
@@ -70,9 +73,9 @@ no `AuthProvider` port, and no client-level `auth` on `createClient`. The caller
 every call:
 
 ```ts
-client.generate(request, { auth: { apiKey } })
-client.runStructured(callSite, { auth: { apiKey } })           // no template vars
-client.runStructured(callSite, { ...vars }, { auth: { apiKey } })  // with template vars
+client.generate(request, { auth: { apiKey } });
+client.runStructured(callSite, { auth: { apiKey } }); // no template vars
+client.runStructured(callSite, { ...vars }, { auth: { apiKey } }); // with template vars
 ```
 
 `auth` is required. `AuthMaterial` is `{ apiKey: string }`. Where the key comes from is entirely
@@ -80,9 +83,9 @@ your concern — read it from an environment variable, a secret vault, a databas
 
 ```ts
 // For an 18-call loop, build auth once and pass it each time:
-const auth = { apiKey: process.env.MY_APP_GEMINI_KEY! }
+const auth = { apiKey: process.env.MY_APP_GEMINI_KEY! };
 for (const item of items) {
-  results.push(await client.runStructured(callSite, { item }, { auth }))
+  results.push(await client.runStructured(callSite, { item }, { auth }));
 }
 ```
 
@@ -113,12 +116,12 @@ The design is **Ports & Adapters (hexagonal)**: the core engine depends only on 
 
 ## Packages
 
-| Package | Description |
-|---|---|
-| [`@gullabs/core`](./packages/core) | Types, ports, engine (`createClient`, `generate`, `runStructured`), cost computation, record builder. No provider dependencies. |
-| [`@gullabs/google`](./packages/google) | Gemini adapter over `@google/genai`. Maps Flex tier, thinking config, multimodal parts, structured output, and error classification. Optional `GoogleFileStore` and `GoogleCacheStore` helpers for Gemini Files API and Context Cache API. |
-| [`@gullabs/drizzle`](./packages/drizzle) | Reference Postgres schema (`llm_calls` table) and `drizzleUsageSink` — a `UsageSink` port implementation for Drizzle ORM. |
-| [`@gullabs/testing`](./packages/testing) | Test fakes: `FakeClock`, `FakeIds`, `RecordingSink`, `FakeAdapter`, `makeFakeGemini`, `fakeGeminiResponse`. No network in tests. |
+| Package                                  | Description                                                                                                                                                                                                                                |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`@gullabs/core`](./packages/core)       | Types, ports, engine (`createClient`, `generate`, `runStructured`), cost computation, record builder. No provider dependencies.                                                                                                            |
+| [`@gullabs/google`](./packages/google)   | Gemini adapter over `@google/genai`. Maps Flex tier, thinking config, multimodal parts, structured output, and error classification. Optional `GoogleFileStore` and `GoogleCacheStore` helpers for Gemini Files API and Context Cache API. |
+| [`@gullabs/drizzle`](./packages/drizzle) | Reference Postgres schema (`llm_calls` table) and `drizzleUsageSink` — a `UsageSink` port implementation for Drizzle ORM.                                                                                                                  |
+| [`@gullabs/testing`](./packages/testing) | Test fakes: `FakeClock`, `FakeIds`, `RecordingSink`, `FakeAdapter`, `makeFakeGemini`, `fakeGeminiResponse`. No network in tests.                                                                                                           |
 
 ## Multimodal parts
 
@@ -127,36 +130,40 @@ The design is **Ports & Adapters (hexagonal)**: the core engine depends only on 
 ```ts
 // Inline image (base64, no data: prefix)
 const result = await client.generate({
-  model: 'gemini-2.5-flash',
-  messages: [{
-    role: 'user',
-    parts: [
-      { kind: 'text', text: 'What is in this image?' },
-      {
-        kind: 'inline-media',
-        mimeType: 'image/png',
-        data: Buffer.from(pngBytes).toString('base64'),
-        mediaResolution: 'high',   // optional; adapter maps to PartMediaResolutionLevel
-      },
-    ],
-  }],
-})
+  model: "gemini-2.5-flash",
+  messages: [
+    {
+      role: "user",
+      parts: [
+        { kind: "text", text: "What is in this image?" },
+        {
+          kind: "inline-media",
+          mimeType: "image/png",
+          data: Buffer.from(pngBytes).toString("base64"),
+          mediaResolution: "high", // optional; adapter maps to PartMediaResolutionLevel
+        },
+      ],
+    },
+  ],
+});
 
 // File already uploaded to Gemini Files API
 const result2 = await client.generate({
-  model: 'gemini-2.5-flash',
-  messages: [{
-    role: 'user',
-    parts: [
-      { kind: 'text', text: 'Summarise this video.' },
-      {
-        kind: 'file-uri',
-        uri: 'https://generativelanguage.googleapis.com/v1beta/files/abc123',
-        mimeType: 'video/mp4',
-      },
-    ],
-  }],
-})
+  model: "gemini-2.5-flash",
+  messages: [
+    {
+      role: "user",
+      parts: [
+        { kind: "text", text: "Summarise this video." },
+        {
+          kind: "file-uri",
+          uri: "https://generativelanguage.googleapis.com/v1beta/files/abc123",
+          mimeType: "video/mp4",
+        },
+      ],
+    },
+  ],
+});
 ```
 
 ## Files API (`GoogleFileStore`)
@@ -164,61 +171,67 @@ const result2 = await client.generate({
 Upload bytes once, reuse the URI across many calls. The provider auto-deletes files after ~48 h.
 
 ```ts
-import { GoogleFileStore } from '@gullabs/google'
+import { GoogleFileStore } from "@gullabs/google";
 
-const auth = { apiKey: process.env.GEMINI_API_KEY! }
-const store = new GoogleFileStore({ auth })
+const auth = { apiKey: process.env.GEMINI_API_KEY! };
+const store = new GoogleFileStore({ auth });
 
 // Upload and wait for ACTIVE (polls until ready, default timeout 120 s)
-const handle = await store.upload(pdfBytes, 'application/pdf', { displayName: 'report.pdf' })
+const handle = await store.upload(pdfBytes, "application/pdf", {
+  displayName: "report.pdf",
+});
 
 // handle.uri → FileUriPart.uri
 const result = await client.generate({
-  model: 'gemini-2.5-pro',
-  messages: [{
-    role: 'user',
-    parts: [
-      { kind: 'text', text: 'Extract the key figures from this document.' },
-      { kind: 'file-uri', uri: handle.uri, mimeType: 'application/pdf' },
-    ],
-  }],
-})
+  model: "gemini-2.5-pro",
+  messages: [
+    {
+      role: "user",
+      parts: [
+        { kind: "text", text: "Extract the key figures from this document." },
+        { kind: "file-uri", uri: handle.uri, mimeType: "application/pdf" },
+      ],
+    },
+  ],
+});
 
 // Delete when done (fail-open — errors go to onDeleteError, not rethrown)
-await store.delete(handle)
+await store.delete(handle);
 ```
 
 ## Context caching (`GoogleCacheStore`)
 
 ```ts
-import { GoogleCacheStore } from '@gullabs/google'
+import { GoogleCacheStore } from "@gullabs/google";
 
-const auth = { apiKey: process.env.GEMINI_API_KEY! }
-const cacheStore = new GoogleCacheStore({ auth })
+const auth = { apiKey: process.env.GEMINI_API_KEY! };
+const cacheStore = new GoogleCacheStore({ auth });
 
 // getOrCreate returns a live handle; creates at most once per process lifetime
 const cacheHandle = await cacheStore.getOrCreate(
-  { model: 'gemini-2.5-pro', stableKey: 'system-docs-v3' },
+  { model: "gemini-2.5-pro", stableKey: "system-docs-v3" },
   async () => ({
     ttlSeconds: 3600,
-    contents: [/* large content to cache */],
-    systemInstruction: 'You are a helpful assistant with access to the following docs.',
-  }),
-)
+    contents: [
+      /* large content to cache */
+    ],
+    systemInstruction: "You are a helpful assistant with access to the following docs.",
+  })
+);
 
 // Pass the cache name via providerOptions; the adapter forwards it verbatim
 const result = await client.generate({
-  model: 'gemini-2.5-pro',
-  messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Summarise section 3.' }] }],
+  model: "gemini-2.5-pro",
+  messages: [{ role: "user", parts: [{ kind: "text", text: "Summarise section 3." }] }],
   config: {
     providerOptions: {
       google: { cachedContent: cacheHandle.cacheName },
     },
   },
-})
+});
 
 // Extend the TTL if it is expiring within 5 minutes (default threshold)
-const refreshed = await cacheStore.refreshIfExpiringSoon(cacheHandle)
+const refreshed = await cacheStore.refreshIfExpiringSoon(cacheHandle);
 ```
 
 ## Flex long-timeout calls
@@ -229,13 +242,18 @@ per-call deadline on top of that:
 
 ```ts
 const result = await client.generate({
-  model: 'gemini-2.5-pro',
-  messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Write a very long essay.' }] }],
+  model: "gemini-2.5-pro",
+  messages: [
+    {
+      role: "user",
+      parts: [{ kind: "text", text: "Write a very long essay." }],
+    },
+  ],
   config: {
-    serviceTier: 'flex',
-    timeoutMs: 600_000,  // 10 min engine deadline; SDK transport timeout = 605 000 ms
+    serviceTier: "flex",
+    timeoutMs: 600_000, // 10 min engine deadline; SDK transport timeout = 605 000 ms
   },
-})
+});
 ```
 
 **Verified field syntax for Flex:** set `serviceTier: 'flex'` in `config` (not in
@@ -251,10 +269,10 @@ buffer. **Vertex AI caveat:** on Vertex, the `serviceTier` body field is silentl
 calculations and aggregation, use `microUsd` from the persisted record.
 
 ```ts
-const result = await client.generate({ model: 'gemini-2.5-flash', messages })
+const result = await client.generate({ model: "gemini-2.5-flash", messages });
 if (result.cost) {
-  console.log(`$${result.cost.usd?.toFixed(6)}`)   // display
-  console.log(result.cost.microUsd)                  // canonical integer, stored in the sink
+  console.log(`$${result.cost.usd?.toFixed(6)}`); // display
+  console.log(result.cost.microUsd); // canonical integer, stored in the sink
 }
 ```
 
@@ -302,6 +320,7 @@ const result = await client.generate({
 ```
 
 The retry middleware enforces this ceiling by:
+
 - Refusing to start a new attempt when the remaining budget is ≤ 0 (throws `LlmError('timeout')`).
 - Passing the shrinking remaining budget as the per-attempt `timeoutMs` so each attempt's internal
   `AbortSignal` deadline shrinks with elapsed time.
@@ -309,6 +328,107 @@ The retry middleware enforces this ceiling by:
 
 Without the retry middleware, `timeoutMs` applies only to the single attempt (the engine arms an
 `AbortSignal` at that value for the adapter).
+
+## Logging & Observability
+
+### Logger
+
+Inject a structured logger via `ClientConfig.logger`. The `Logger` port uses an object-first
+signature (`(o, m)`) compatible with pino, bunyan, and similar libraries:
+
+```ts
+import pino from "pino";
+const logger = pino();
+
+const client = createClient({
+  adapters: [geminiAdapter()],
+  pricing: geminiPricingSource(),
+  sink: drizzleUsageSink(db, llmCalls),
+  logger, // inject your logger here
+});
+```
+
+Four levels are supported: `debug`, `info`, `warn`, `error`. The engine emits structured events at
+these levels:
+
+| Event                    | Level   | When                                                                                     |
+| ------------------------ | ------- | ---------------------------------------------------------------------------------------- |
+| `llm.call.start`         | `info`  | Before the middleware chain runs                                                         |
+| `llm.call.attempt.start` | `debug` | Before each adapter invocation                                                           |
+| `llm.call.retry`         | `debug` | After a retryable failure; includes `attemptNumber`, `delayMs`, `errorKind`, `retryable` |
+| `llm.call.success`       | `info`  | After a successful call                                                                  |
+| `llm.call.error`         | `error` | After all retries are exhausted                                                          |
+| `llm.call.cost.failed`   | `warn`  | When cost computation throws (fail-open)                                                 |
+| `llm.call.sink.success`  | `debug` | After the sink write succeeds                                                            |
+| `llm.call.sink.failed`   | `error` | After a sink write fails (fail-open; message is redacted)                                |
+
+**Fail-open**: host logger exceptions are caught and swallowed by `makeSafeLogger` — a misbehaving
+logger can never break or mask an LLM call result.
+
+### Telemetry (OTel / Sentry / PostHog seam)
+
+Inject a `Telemetry` hook via `ClientConfig.telemetry`. All methods are optional; implement only
+what you need. Events fire once per logical call (not per retry attempt):
+
+```ts
+const client = createClient({
+  // …
+  telemetry: {
+    onStart(e) {
+      // e: { callId, model, callSiteId?, metadata }
+      return myTracer.startSpan("llm.call", { attributes: { model: e.model } });
+    },
+    onSuccess(e, span) {
+      // e: { callId, attemptId, model, latencyMs, usage, cost?, metadata }
+      span?.setStatus({ code: SpanStatusCode.OK });
+      span?.end();
+    },
+    onError(e, span) {
+      // e: { callId, attemptId?, model, latencyMs, errorKind, retryable, metadata }
+      span?.setStatus({ code: SpanStatusCode.ERROR });
+      span?.end();
+    },
+  },
+});
+```
+
+Telemetry hook failures are swallowed (fail-open) and emit a `debug` breadcrumb
+(`llm.telemetry.hook.failed`) so they never mask the real LLM result or error.
+
+### UsageSink and LlmCallRecord
+
+Every call attempt produces an `LlmCallRecord` that is persisted via `UsageSink`. Key traceability
+fields:
+
+| Field                          | Description                                                             |
+| ------------------------------ | ----------------------------------------------------------------------- | ----------- | --------- | --------- | ------------- | ---------------- |
+| `callId`                       | Stable identifier shared across all retry attempts of a logical call    |
+| `attemptId`                    | Unique per-attempt idempotency key (use `onConflictDoNothing` in sinks) |
+| `attemptNumber`                | 1-based ordinal (1 = first attempt, 2 = first retry, …)                 |
+| `latencyMs`                    | Wall-clock time from dispatch to response for this attempt              |
+| `inputTokens` / `outputTokens` | GROSS token counts (cached and thinking are subsets)                    |
+| `costMicroUsd`                 | Frozen micro-USD cost; `null` if model is unpriced                      |
+| `errorKind`                    | Classified error kind (absent on success)                               |
+| `status`                       | `ok`                                                                    | `api_error` | `timeout` | `aborted` | `parse_error` | `content_filter` |
+| `metadata`                     | Host-supplied `CallMetadata` — persisted verbatim                       |
+
+Records are per-attempt and correlated by `callId`. The `@gullabs/drizzle` sink is idempotent on
+`attemptId`.
+
+### Secret redaction
+
+`redactSecrets` is applied automatically before persistence:
+
+- `errorMessage` in the persisted record (API keys / Bearer tokens in provider error URLs).
+- The `providerOptions` and `httpOptions.headers` lanes of `generationConfig` (escape-hatch fields
+  that may carry credentials).
+
+Standard generation knobs (`temperature`, `topP`, etc.) are NOT scanned. Host-supplied `metadata`
+is stored **verbatim** — do not put secrets there.
+
+`redactSecrets` is also exported from `@gullabs/core` for use in application log lines.
+
+---
 
 ## What v1 does NOT do yet
 

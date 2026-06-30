@@ -723,6 +723,7 @@ describe('engine — logger', () => {
       info: (_o, m) => { events.push(m) },
       warn: (_o, m) => { events.push(m) },
       error: (_o, m) => { events.push(m) },
+      debug: (_o, m) => { events.push(m) },
     }
 
     const client = createClient({
@@ -750,6 +751,7 @@ describe('engine — logger', () => {
       info: (_o, m) => { events.push(m) },
       warn: (_o, m) => { events.push(m) },
       error: (_o, m) => { events.push(m) },
+      debug: (_o, m) => { events.push(m) },
     }
 
     const client = createClient({

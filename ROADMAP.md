@@ -15,6 +15,7 @@ tests/examples/config.
 
 Defer a deeper lint audit until this baseline is stable in day-to-day use. That later pass should
 re-evaluate:
+
 - whether any additional correctness rules are worth the noise,
 - whether docs/examples need their own stricter gate,
 - whether the repo should stay on ESLint or switch part of the surface to another tool,
@@ -69,6 +70,35 @@ A port for scrubbing sensitive content from messages and results before persiste
 `redactSecrets` (regex-based, applied to `errorMessage`) exists. A proper `Redactor` port would
 allow host-supplied DLP logic and would be fail-closed to prevent accidental persistence of
 unredacted content.
+
+### Deferred observability
+
+The following observability features are explicitly deferred by design — they are consumer concerns
+or future companion packages, not library responsibilities.
+
+- **First-party OpenTelemetry package** — the `Telemetry` port is the designed seam; ship an
+  integration example or a thin `@gullabs/otel` wrapper, not an OTel SDK dependency in core.
+- **W3C `traceparent` propagation into provider calls** — requires per-call header injection into
+  `httpOptions`; the host can do this today via `providerOptions.google.httpOptions.headers`.
+- **In-library metrics runtime / `/metrics` endpoint / cache-hit & rate-limiter gauges** — consumers
+  derive metrics from `LlmCallRecord` rows and `Telemetry` events; the library should not own a
+  Prometheus registry or HTTP server.
+- **Error sampling / dedup** — call-level `errorKind` is in every record; sampling policy belongs
+  in the host's error-reporting integration (e.g. Sentry's `sampleRate`).
+- **Persisted stack traces** — stack frames carry no operational value in production error records
+  and inflate storage; `errorKind` + `errorMessage` are sufficient for postmortems.
+- **Typed provider-error schema** — a first-class `providerError` field on `LlmCallRecord` with
+  structured provider-specific fields (HTTP status, provider error code, etc.) is useful but
+  requires per-adapter schema work.
+- **TTFB / streaming latency** — time-to-first-byte and per-token streaming latency require a
+  streaming pipeline (`stream()`) which is not yet implemented.
+- **Rate-limiter wait-time attribution** — the time spent inside `RateLimiter.acquire` is not
+  currently broken out from `latencyMs`; this requires instrumenting the acquire/release cycle.
+- **Sink-side logical-call latency** — `latencyMs` is per-attempt; deriving the total logical-call
+  latency from the sink requires a terminal-row marker or an aggregation over `attemptNumber`.
+- **Configurable custom-redaction-pattern API** — a `Redactor` port (see existing roadmap item)
+  would allow host-supplied DLP patterns; today only the built-in regex patterns in `redactSecrets`
+  are applied.
 
 ### `ResultCache` port
 

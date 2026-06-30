@@ -12,7 +12,17 @@
  */
 
 import type { StandardSchemaV1 } from './standard-schema.js'
-import type { JsonValue, Usage, FinishReason, Warning, Message, GenConfig, LlmResult, CallMetadata, Cost } from './types.js'
+import type {
+  JsonValue,
+  Usage,
+  FinishReason,
+  Warning,
+  Message,
+  GenConfig,
+  LlmResult,
+  CallMetadata,
+  Cost,
+} from './types.js'
 import type { LlmCallRecord } from './record.js'
 import type { LlmError, LlmErrorKind } from './errors.js'
 import type { ModelDescriptor } from './registry.js'
@@ -59,6 +69,13 @@ export interface ResolvedRequest {
    * `config.timeoutMs` equal to the caller's original value in the audit record.
    */
   attemptTimeoutMs?: number
+  /**
+   * Internal-use field set by the retry middleware (the type is exported, but consumers should
+   * not set this; it is overwritten per attempt and never persisted). Carries the 1-based
+   * ordinal of the current attempt so the engine can record and log which attempt produced
+   * the result or failure.
+   */
+  attemptNumber?: number
 }
 
 /**
@@ -297,7 +314,7 @@ export type AuthMaterial = { apiKey: string }
  */
 export interface Clock {
   /** Returns the current time as milliseconds since the Unix epoch. */
-  now(): number
+  now(this: void): number
 }
 
 /**
@@ -306,9 +323,9 @@ export interface Clock {
  */
 export interface IdGenerator {
   /** Generate a new call-scoped ID. */
-  callId(): string
+  callId(this: void): string
   /** Generate a new attempt-scoped ID (unique within a call). */
-  attemptId(): string
+  attemptId(this: void): string
 }
 
 /**
@@ -324,6 +341,8 @@ export interface Logger {
   warn(o: object, m: string): void
   /** Error event (call failed, sink error, etc.). */
   error(o: object, m: string): void
+  /** Low-level diagnostic event (telemetry breadcrumbs, sink success, etc.). */
+  debug(o: object, m: string): void
 }
 
 /**

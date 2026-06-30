@@ -48,7 +48,7 @@ function makeResolvedReq(
 /** Minimal adapter context for unit tests. */
 const FAKE_CTX: AdapterCtx = {
   auth: { apiKey: 'test-key' },
-  logger: { info() {}, warn() {}, error() {} },
+  logger: { info() {}, warn() {}, error() {}, debug() {} },
 }
 
 // ---------------------------------------------------------------------------

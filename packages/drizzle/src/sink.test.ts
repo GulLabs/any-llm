@@ -14,6 +14,7 @@ function makeRecord(overrides: Partial<LlmCallRecord> = {}): LlmCallRecord {
     recordSchemaVersion: 1,
     callId: 'call_1',
     attemptId: 'attempt_1',
+    attemptNumber: 1,
     callSiteId: 'site_1',
     provider: 'google',
     model: 'gemini-2.5-pro',
@@ -51,7 +52,12 @@ function makeDb(spy: InsertCall[]): InsertableDb {
         values(values: Record<string, unknown>) {
           return {
             async onConflictDoNothing({ target }: { target: unknown }) {
-              spy.push({ table, values, conflictTarget: target, conflictIgnored: true })
+              spy.push({
+                table,
+                values,
+                conflictTarget: target,
+                conflictIgnored: true,
+              })
               return undefined
             },
           }
@@ -103,6 +109,7 @@ describe('drizzleUsageSink', () => {
       reasoningText: 'thought summary',
       errorKind: 'server',
       errorMessage: 'boom',
+      attemptNumber: 1,
       metadata: { tenantId: 'tenant_1' },
       createdAt: new Date('2026-06-27T00:00:00.000Z'),
     })

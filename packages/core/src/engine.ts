@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto'
 import type { StandardSchemaV1 } from './standard-schema.js'
 import { LlmError, classifyError } from './errors.js'
 import { buildRecord, normalizeUsage } from './record.js'
+import { redactSecrets } from './redact.js'
 import type { ModelRegistry } from './registry.js'
 import { defaultGeminiRegistry } from './registry.js'
 import type {
@@ -113,7 +114,7 @@ export interface ClientConfig {
    * derived provider prefix (`gemini-*` → `'google'`); no match → throw
    * `LlmError('bad_request')`.
    */
-  route?(model: string, adapters: ProviderAdapter[]): ProviderAdapter
+  route?(this: void, model: string, adapters: ProviderAdapter[]): ProviderAdapter
   /**
    * Model registry used to derive the provider from a model string.
    * Defaults to {@link defaultGeminiRegistry} (all models in the Gemini
@@ -225,6 +226,36 @@ const NOOP_LOGGER: Logger = {
   info() {},
   warn() {},
   error() {},
+  debug() {},
+}
+
+/**
+ * Wraps a {@link Logger} so that any thrown error from a log method is silently
+ * swallowed.  A host logger that throws must NEVER break or mask an LLM call.
+ */
+function makeSafeLogger(logger: Logger): Logger {
+  return {
+    info(o: object, m: string): void {
+      try {
+        logger.info(o, m)
+      } catch {}
+    },
+    warn(o: object, m: string): void {
+      try {
+        logger.warn(o, m)
+      } catch {}
+    },
+    error(o: object, m: string): void {
+      try {
+        logger.error(o, m)
+      } catch {}
+    },
+    debug(o: object, m: string): void {
+      try {
+        logger.debug(o, m)
+      } catch {}
+    },
+  }
 }
 
 const NOOP_TELEMETRY: Telemetry = {}
@@ -234,8 +265,8 @@ const NOOP_TELEMETRY: Telemetry = {}
  * Used when no `rateLimiter` is configured in {@link ClientConfig}.
  */
 const NOOP_RATE_LIMITER: RateLimiter = {
-  async acquire(_key: string, _signal?: AbortSignal): Promise<Release> {
-    return () => {}
+  acquire(_key: string, _signal?: AbortSignal): Promise<Release> {
+    return Promise.resolve(() => {})
   },
 }
 
@@ -273,9 +304,7 @@ const EMPTY_USAGE: Usage = {
  */
 function interpolate(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{(\w+)\}\}/g, (match, key: string) => {
-    return Object.prototype.hasOwnProperty.call(vars, key)
-      ? (vars[key] ?? match)
-      : match
+    return Object.prototype.hasOwnProperty.call(vars, key) ? vars[key] ?? match : match
   })
 }
 
@@ -341,7 +370,7 @@ function deepMergeConfig(...configs: Array<GenConfig | undefined>): GenConfig {
       }
     }
   }
-  return acc as GenConfig
+  return acc
 }
 
 /**
@@ -350,7 +379,10 @@ function deepMergeConfig(...configs: Array<GenConfig | undefined>): GenConfig {
  * Returns both the merged signal and a cleanup function that removes all
  * registered event listeners to prevent leaks.
  */
-function mergeSignals(signals: AbortSignal[]): { signal: AbortSignal; cleanup(): void } {
+function mergeSignals(signals: AbortSignal[]): {
+  signal: AbortSignal
+  cleanup(this: void): void
+} {
   const controller = new AbortController()
   const cleanups: Array<() => void> = []
   for (const sig of signals) {
@@ -358,9 +390,13 @@ function mergeSignals(signals: AbortSignal[]): { signal: AbortSignal; cleanup():
       controller.abort(sig.reason)
       return { signal: controller.signal, cleanup() {} }
     }
-    const handler = () => { controller.abort(sig.reason) }
+    const handler = () => {
+      controller.abort(sig.reason)
+    }
     sig.addEventListener('abort', handler, { once: true })
-    cleanups.push(() => sig.removeEventListener('abort', handler))
+    cleanups.push(() => {
+      sig.removeEventListener('abort', handler)
+    })
   }
   return {
     signal: controller.signal,
@@ -405,7 +441,14 @@ function defaultRoute(
     })
   }
   if (adapters.length === 1) {
-    return adapters[0]!
+    const singleAdapter = adapters[0]
+    if (singleAdapter !== undefined) {
+      return singleAdapter
+    }
+    throw new LlmError('Adapter routing invariant violated: missing single adapter', {
+      kind: 'unknown',
+      retryable: false,
+    })
   }
   const provider = deriveProvider(model, registry)
   const found = adapterMap.get(provider)
@@ -441,7 +484,11 @@ function defaultRoute(
 function buildCancellationRace(
   callerSignal: AbortSignal | undefined,
   timeoutMs: number | undefined,
-): { raceParts: Array<Promise<never>>; combinedSignal: AbortSignal | undefined; cleanup(): void } {
+): {
+  raceParts: Array<Promise<never>>
+  combinedSignal: AbortSignal | undefined
+  cleanup(this: void): void
+} {
   const raceParts: Array<Promise<never>> = []
 
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -456,7 +503,7 @@ function buildCancellationRace(
     if (callerSignal.aborted) {
       // Already aborted — pre-rejected promise settles the race immediately.
       raceParts.push(
-        Promise.reject<never>(
+        Promise.reject(
           new LlmError('Request aborted by caller', {
             kind: 'aborted',
             retryable: false,
@@ -484,8 +531,9 @@ function buildCancellationRace(
         )
       }
       callerSignal.addEventListener('abort', abortHandler, { once: true })
-      callerAbortCleanup = () =>
+      callerAbortCleanup = () => {
         callerSignal.removeEventListener('abort', abortHandler)
+      }
       raceParts.push(abortPromise)
     }
   }
@@ -498,7 +546,8 @@ function buildCancellationRace(
   //   when the real cause was a timeout.
   let timeoutController: AbortController | undefined
   if (timeoutMs !== undefined) {
-    timeoutController = new AbortController()
+    const controller = new AbortController()
+    timeoutController = controller
     const ms = timeoutMs
     let timeoutRejectFn!: (err: LlmError) => void
     const timeoutPromise = new Promise<never>((_, reject) => {
@@ -515,7 +564,7 @@ function buildCancellationRace(
         }),
       )
       // Abort AFTER scheduling the rejection — cooperative adapters stop early.
-      timeoutController!.abort()
+      controller.abort()
     }, ms)
     raceParts.push(timeoutPromise)
   }
@@ -530,12 +579,12 @@ function buildCancellationRace(
     signalParts.length === 0
       ? undefined
       : signalParts.length === 1
-        ? signalParts[0]
-        : (() => {
-            const merged = mergeSignals(signalParts)
-            mergedSignalCleanup = merged.cleanup
-            return merged.signal
-          })()
+      ? signalParts[0]
+      : (() => {
+          const merged = mergeSignals(signalParts)
+          mergedSignalCleanup = merged.cleanup
+          return merged.signal
+        })()
 
   // Idempotent cleanup — safe to call on both success and error paths.
   function cleanup(): void {
@@ -576,10 +625,12 @@ function buildSuccessRecord(
   allWarnings: Warning[],
   latencyMs: number,
   startMs: number,
+  attemptNumber: number,
 ): ReturnType<typeof buildRecord> {
   return buildRecord({
     callId,
     attemptId,
+    attemptNumber,
     ...(callSiteId !== undefined ? { callSiteId } : {}),
     provider,
     model,
@@ -625,10 +676,12 @@ function buildErrorRecord(
   latencyMs: number,
   startMs: number,
   err: LlmError,
+  attemptNumber: number,
 ): ReturnType<typeof buildRecord> {
   return buildRecord({
     callId,
     attemptId,
+    attemptNumber,
     ...(callSiteId !== undefined ? { callSiteId } : {}),
     provider,
     model,
@@ -661,8 +714,12 @@ async function recordToSink(
   if (sink !== undefined) {
     try {
       await sink.record(record)
+      logger.debug({ callId }, 'llm.call.sink.success')
     } catch (sinkErr) {
-      logger.error({ callId, error: String(sinkErr) }, 'llm.call.sink.failed')
+      logger.error(
+        { callId, error: redactSecrets(String(sinkErr)) },
+        'llm.call.sink.failed',
+      )
     }
   }
 }
@@ -752,7 +809,11 @@ function attachCallContext(
  * empty/non-string apiKey.
  */
 function requireAuth(auth: AuthMaterial | undefined): AuthMaterial {
-  if (auth === undefined || typeof auth.apiKey !== 'string' || auth.apiKey.trim() === '') {
+  if (
+    auth === undefined ||
+    typeof auth.apiKey !== 'string' ||
+    auth.apiKey.trim() === ''
+  ) {
     throw new LlmError('Missing or invalid auth; pass { auth: { apiKey } } per call', {
       kind: 'invalid_auth',
       retryable: false,
@@ -767,6 +828,7 @@ export function createClient(config: ClientConfig): Client {
   const clock: Clock = config.clock ?? DEFAULT_CLOCK
   const ids: IdGenerator = config.ids ?? DEFAULT_IDS
   const logger: Logger = config.logger ?? NOOP_LOGGER
+  const safeLogger: Logger = makeSafeLogger(logger)
   const telemetry: Telemetry = config.telemetry ?? NOOP_TELEMETRY
   const rateLimiter: RateLimiter = config.rateLimiter ?? NOOP_RATE_LIMITER
   const libDefaults: GenConfig = config.defaults ?? {}
@@ -829,9 +891,10 @@ export function createClient(config: ClientConfig): Client {
     const callStartMs = clock.now()
     const callId = ids.callId()
 
-    // lastAttemptId is assigned ONLY when runAttempt actually begins.
-    // It stays undefined if a middleware throws before next() is called.
+    // lastAttemptId / lastAttemptNumber are assigned ONLY when runAttempt actually begins.
+    // They stay undefined if a middleware throws before next() is called.
     let lastAttemptId: string | undefined
+    let lastAttemptNumber: number | undefined
 
     let span: unknown
     try {
@@ -842,9 +905,22 @@ export function createClient(config: ClientConfig): Client {
         ...(callSiteId !== undefined ? { callSiteId } : {}),
       }
       span = telemetry.onStart?.(startEvent)
-    } catch { /* telemetry failures are always swallowed */ }
+    } catch (err) {
+      safeLogger.debug(
+        { callId, phase: 'onStart', error: redactSecrets(String(err)) },
+        'llm.telemetry.hook.failed',
+      )
+    }
 
-    logger.info({ callId, model: request.model, callSiteId, metadata: request.metadata ?? {} }, 'llm.call.start')
+    safeLogger.info(
+      {
+        callId,
+        model: request.model,
+        callSiteId,
+        metadata: request.metadata ?? {},
+      },
+      'llm.call.start',
+    )
 
     // Build the pre-resolved request for the middleware chain.
     // The per-attempt signal is NOT included here — each attempt builds its
@@ -866,7 +942,7 @@ export function createClient(config: ClientConfig): Client {
     const engineCtx: EngineCtx = {
       callId,
       clock,
-      logger,
+      logger: safeLogger,
       ...(callerSignal !== undefined ? { signal: callerSignal } : {}),
     }
 
@@ -881,12 +957,26 @@ export function createClient(config: ClientConfig): Client {
     // Errors: classify → build error record → sink (fail-open) → rethrow.
     // The call-level telemetry.onError and logger.error are fired by the
     // epilogue after the chain settles, NOT here.
-    async function runAttempt(req: ResolvedRequest, ctx: EngineCtx): Promise<LlmResult<StandardSchemaV1.InferOutput<S>>> {
+    async function runAttempt(
+      req: ResolvedRequest,
+      ctx: EngineCtx,
+    ): Promise<LlmResult<StandardSchemaV1.InferOutput<S>>> {
       const attemptStartMs = ctx.clock.now()
       // Generate a fresh attemptId on every invocation.
       // Assign to lastAttemptId so the call-level epilogue can reference it.
       const attemptId = ids.attemptId()
       lastAttemptId = attemptId
+
+      // Resolve 1-based attempt ordinal (set by retry middleware; defaults to 1
+      // for direct calls that bypass the retry middleware).
+      const attemptNumber = req.attemptNumber ?? 1
+      lastAttemptNumber = attemptNumber
+
+      // A2: Attempt-start debug log so operators can trace individual attempts.
+      ctx.logger.debug(
+        { callId: ctx.callId, attemptNumber, model: req.model },
+        'llm.call.attempt.start',
+      )
 
       // Track progressive state for the error-path record builder.
       let provider = deriveProvider(req.model, registry)
@@ -903,17 +993,26 @@ export function createClient(config: ClientConfig): Client {
         // fields (timeoutMs, providerOptions), keeping only the generation knobs
         // that belong to the model's schema.
         if (req.modelDescriptor?.validateConfig !== undefined) {
-          const { temperature, topP, topK, maxOutputTokens, stopSequences, reasoning, serviceTier } =
-            req.config
+          const {
+            temperature,
+            topP,
+            topK,
+            maxOutputTokens,
+            stopSequences,
+            reasoning,
+            serviceTier,
+          } = req.config
           const projection: Record<string, unknown> = { serviceTier }
           if (temperature !== undefined) projection['temperature'] = temperature
           if (topP !== undefined) projection['topP'] = topP
           if (topK !== undefined) projection['topK'] = topK
-          if (maxOutputTokens !== undefined) projection['maxOutputTokens'] = maxOutputTokens
+          if (maxOutputTokens !== undefined)
+            projection['maxOutputTokens'] = maxOutputTokens
           if (stopSequences !== undefined) projection['stopSequences'] = stopSequences
           if (reasoning !== undefined) projection['reasoning'] = reasoning
 
-          const syncOrAsync = req.modelDescriptor.validateConfig['~standard'].validate(projection)
+          const syncOrAsync =
+            req.modelDescriptor.validateConfig['~standard'].validate(projection)
           const validationResult =
             syncOrAsync instanceof Promise ? await syncOrAsync : syncOrAsync
 
@@ -942,12 +1041,18 @@ export function createClient(config: ClientConfig): Client {
         // Invariant A (timeout-beats-abort microtask ordering): the timeout
         // promise rejects BEFORE its AbortController is fired — guaranteed by
         // buildCancellationRace.  Do not reorder.
-        const cancellation = buildCancellationRace(ctx.signal, req.attemptTimeoutMs ?? req.config.timeoutMs)
+        const cancellation = buildCancellationRace(
+          ctx.signal,
+          req.attemptTimeoutMs ?? req.config.timeoutMs,
+        )
         cleanup = cancellation.cleanup
         const { raceParts, combinedSignal } = cancellation
 
         // Step 6b: Rate-limiter acquire — PRE-SEND backpressure.
-        const acquirePromise = rateLimiter.acquire(`${provider}:${req.model}`, combinedSignal)
+        const acquirePromise = rateLimiter.acquire(
+          `${provider}:${req.model}`,
+          combinedSignal,
+        )
         release =
           raceParts.length > 0
             ? await Promise.race([acquirePromise, ...raceParts])
@@ -955,9 +1060,8 @@ export function createClient(config: ClientConfig): Client {
 
         // Step 6c: Build adapter-specific request (with the combined signal)
         // and the AdapterCtx.
-        const adapterReq: ResolvedRequest = combinedSignal !== undefined
-          ? { ...req, signal: combinedSignal }
-          : req
+        const adapterReq: ResolvedRequest =
+          combinedSignal !== undefined ? { ...req, signal: combinedSignal } : req
 
         const adapterCtx: AdapterCtx = {
           auth: callAuth,
@@ -976,7 +1080,11 @@ export function createClient(config: ClientConfig): Client {
         cleanup()
         // Release the rate-limiter slot — swallow errors so a broken Release
         // cannot mask the successful result.
-        try { release?.() } catch { /* intentionally swallowed */ }
+        try {
+          release()
+        } catch {
+          /* intentionally swallowed */
+        }
         release = undefined
 
         // Step 7b: Normalize usage ONCE.
@@ -987,30 +1095,38 @@ export function createClient(config: ClientConfig): Client {
         if (req.outputSchema !== undefined) {
           const schema = req.outputSchema
           // Standard Schema: validate() may return sync or async — await handles both.
-          const validateResult = await schema['~standard'].validate(adapterResult.rawStructured)
+          const validateResult = await schema['~standard'].validate(
+            adapterResult.rawStructured,
+          )
           if (validateResult.issues !== undefined) {
-            const message = validateResult.issues
-              .map((issue) => issue.message)
-              .join('; ')
-            throw new LlmError(
-              `Structured output validation failed: ${message}`,
-              { kind: 'parse_error', retryable: false, cause: validateResult.issues },
-            )
+            const message = validateResult.issues.map((issue) => issue.message).join('; ')
+            throw new LlmError(`Structured output validation failed: ${message}`, {
+              kind: 'parse_error',
+              retryable: false,
+              cause: validateResult.issues,
+            })
           }
-          output = validateResult.value as StandardSchemaV1.InferOutput<S>
+          output = validateResult.value
         }
 
         // Step 9: Cost — fail-open (never fail the call for costing).
         const costWarnings: Warning[] = []
         try {
           const pricingKey = req.modelDescriptor?.pricingFamily ?? req.model
-          cost = pricing.price(pricingKey, normalizedResult.usage, resolvedConfig.serviceTier)
+          cost = pricing.price(
+            pricingKey,
+            normalizedResult.usage,
+            resolvedConfig.serviceTier,
+          )
         } catch (costErr) {
           costWarnings.push({
             type: 'other',
             message: `Cost computation failed: ${String(costErr)}`,
           })
-          ctx.logger.warn({ callId: ctx.callId, error: String(costErr) }, 'llm.call.cost.failed')
+          ctx.logger.warn(
+            { callId: ctx.callId, error: String(costErr) },
+            'llm.call.cost.failed',
+          )
         }
 
         // Collect all warnings (adapter + normalize + cost).
@@ -1036,6 +1152,7 @@ export function createClient(config: ClientConfig): Client {
           allWarnings,
           latencyMs,
           attemptStartMs,
+          attemptNumber,
         )
 
         // Step 11: Sink — fail-open.
@@ -1069,11 +1186,14 @@ export function createClient(config: ClientConfig): Client {
             : {}),
         }
         return result
-
       } catch (rawErr) {
         // Invariant B: cleanup on every error path.
         cleanup()
-        try { release?.() } catch { /* intentionally swallowed */ }
+        try {
+          release?.()
+        } catch {
+          /* intentionally swallowed */
+        }
         release = undefined
 
         // Classify error (LlmError passes through unchanged).
@@ -1093,6 +1213,7 @@ export function createClient(config: ClientConfig): Client {
           latencyMs,
           attemptStartMs,
           err,
+          attemptNumber,
         )
 
         // Sink error record — fail-open.
@@ -1114,8 +1235,9 @@ export function createClient(config: ClientConfig): Client {
     const middlewareList = config.middleware ?? []
     const chain: Handler = middlewareList.reduceRight(
       (next: Handler, mw: Middleware): Handler =>
-        (req, ctx) => mw.intercept(req, ctx, next),
-      runAttempt as Handler,
+        (req, ctx) =>
+          mw.intercept(req, ctx, next),
+      runAttempt,
     )
 
     // ── (c) Execute the chain with call-level epilogue ─────────────────────
@@ -1136,15 +1258,31 @@ export function createClient(config: ClientConfig): Client {
           ...(callSiteId !== undefined ? { callSiteId } : {}),
         }
         telemetry.onSuccess?.(successEvent, span)
-      } catch { /* swallowed */ }
-      logger.info({ callId, latencyMs, metadata: request.metadata ?? {} }, 'llm.call.success')
-      return result as LlmResult<StandardSchemaV1.InferOutput<S>>
+      } catch (err) {
+        safeLogger.debug(
+          { callId, phase: 'onSuccess', error: redactSecrets(String(err)) },
+          'llm.telemetry.hook.failed',
+        )
+      }
+      safeLogger.info(
+        {
+          callId,
+          latencyMs,
+          metadata: request.metadata ?? {},
+          attemptNumber: lastAttemptNumber ?? 1,
+        },
+        'llm.call.success',
+      )
+      return result
     } catch (rawErr) {
       const err = classifyError(rawErr)
       // Ensure the error carries call context (idempotent — runAttempt already
       // calls attachCallContext, but middleware-thrown errors may not have it).
       // Only stamp attemptId when a real attempt ran (lastAttemptId is defined).
-      attachCallContext(err, { callId, ...(lastAttemptId !== undefined ? { attemptId: lastAttemptId } : {}) })
+      attachCallContext(err, {
+        callId,
+        ...(lastAttemptId !== undefined ? { attemptId: lastAttemptId } : {}),
+      })
       const latencyMs = clock.now() - callStartMs
       try {
         const attemptIdForEvent = err.attemptId ?? lastAttemptId
@@ -1159,8 +1297,26 @@ export function createClient(config: ClientConfig): Client {
           ...(attemptIdForEvent !== undefined ? { attemptId: attemptIdForEvent } : {}),
         }
         telemetry.onError?.(errorEvent, span)
-      } catch { /* swallowed */ }
-      logger.error({ callId, errorKind: err.kind, latencyMs, metadata: request.metadata ?? {} }, 'llm.call.error')
+      } catch (hookErr) {
+        safeLogger.debug(
+          {
+            callId,
+            phase: 'onError',
+            error: redactSecrets(String(hookErr)),
+          },
+          'llm.telemetry.hook.failed',
+        )
+      }
+      safeLogger.error(
+        {
+          callId,
+          errorKind: err.kind,
+          latencyMs,
+          metadata: request.metadata ?? {},
+          attemptNumber: lastAttemptNumber ?? 0,
+        },
+        'llm.call.error',
+      )
       throw err
     }
   }
@@ -1174,7 +1330,8 @@ export function createClient(config: ClientConfig): Client {
       request: LlmRequest<S>,
       opts: GenerateOptions,
     ): Promise<LlmResult<StandardSchemaV1.InferOutput<S>>> {
-      const callAuth = requireAuth(opts?.auth)
+      const runtimeOpts = opts as GenerateOptions | undefined
+      const callAuth = requireAuth(runtimeOpts?.auth)
       // Config resolution: libDefaults → request.config
       const merged = deepMergeConfig(libDefaults, request.config)
       const serviceTier = merged.serviceTier ?? 'flex'
@@ -1182,7 +1339,13 @@ export function createClient(config: ClientConfig): Client {
         ...merged,
         serviceTier,
       }
-      return runPipeline<S>(request, resolvedConfig, undefined, opts.signal, callAuth)
+      return runPipeline<S>(
+        request,
+        resolvedConfig,
+        undefined,
+        runtimeOpts?.signal,
+        callAuth,
+      )
     },
 
     async runStructured<S extends StandardSchemaV1>(
@@ -1203,10 +1366,11 @@ export function createClient(config: ClientConfig): Client {
         resolvedOpts = varsOrOpts as RunStructuredOptions
       }
 
-      const callAuth = requireAuth(resolvedOpts?.auth)
+      const runtimeOpts = resolvedOpts as RunStructuredOptions | undefined
+      const callAuth = requireAuth(runtimeOpts?.auth)
 
       // Config resolution: libDefaults → callSite.config → opts.config
-      const merged = deepMergeConfig(libDefaults, callSite.config, resolvedOpts.config)
+      const merged = deepMergeConfig(libDefaults, callSite.config, runtimeOpts?.config)
       const serviceTier = merged.serviceTier ?? 'flex'
       const resolvedConfig: ResolvedConfig = {
         ...merged,
@@ -1219,22 +1383,26 @@ export function createClient(config: ClientConfig): Client {
           ? interpolate(callSite.userTemplate, vars)
           : ''
       const renderedSystem =
-        callSite.system !== undefined
-          ? interpolate(callSite.system, vars)
-          : undefined
+        callSite.system !== undefined ? interpolate(callSite.system, vars) : undefined
 
       // Build the rendered request (no config on the request — already merged).
       const request: LlmRequest<S> = {
         model: callSite.model,
         messages: [{ role: 'user', parts: [{ kind: 'text', text: userText }] }],
         ...(renderedSystem !== undefined ? { system: renderedSystem } : {}),
-        ...(callSite.schema !== undefined
-          ? { output: { schema: callSite.schema } }
+        ...(callSite.schema !== undefined ? { output: { schema: callSite.schema } } : {}),
+        ...(runtimeOpts?.metadata !== undefined
+          ? { metadata: runtimeOpts.metadata }
           : {}),
-        ...(resolvedOpts.metadata !== undefined ? { metadata: resolvedOpts.metadata } : {}),
       }
 
-      return runPipeline<S>(request, resolvedConfig, callSite.id, resolvedOpts.signal, callAuth)
+      return runPipeline<S>(
+        request,
+        resolvedConfig,
+        callSite.id,
+        runtimeOpts?.signal,
+        callAuth,
+      )
     },
   }
 }

@@ -175,11 +175,12 @@ export class GoogleCacheStore {
     this.skewMs = (opts.expirySkewSeconds ?? DEFAULT_SKEW_SECONDS) * 1000
     this.onDeleteError =
       opts.onDeleteError ??
-      ((cacheName, err) =>
+      ((cacheName, err) => {
         console.error(
           `[GoogleCacheStore] delete failed for "${cacheName}":`,
           redactSecrets(classifyError(err).message),
-        ))
+        )
+      })
     this.now = opts.now ?? (() => Date.now())
   }
 
@@ -229,7 +230,7 @@ export class GoogleCacheStore {
       throw classifyError(e)
     }
 
-    if (!resp.name) {
+    if (resp.name === undefined || resp.name.length === 0) {
       throw new LlmError('Cache create response missing required field: name', {
         kind: 'bad_request',
         retryable: false,
@@ -237,7 +238,10 @@ export class GoogleCacheStore {
     }
 
     const fallbackExpiry = new Date(this.now() + input.ttlSeconds * 1000)
-    const expiresAt = resp.expireTime ? new Date(resp.expireTime) : fallbackExpiry
+    const expiresAt =
+      resp.expireTime !== undefined && resp.expireTime.length > 0
+        ? new Date(resp.expireTime)
+        : fallbackExpiry
 
     return {
       cacheName: resp.name,
@@ -347,7 +351,10 @@ export class GoogleCacheStore {
       })
 
       const fallbackExpiry = new Date(this.now() + extensionSeconds * 1000)
-      const newExpiresAt = resp.expireTime ? new Date(resp.expireTime) : fallbackExpiry
+      const newExpiresAt =
+        resp.expireTime !== undefined && resp.expireTime.length > 0
+          ? new Date(resp.expireTime)
+          : fallbackExpiry
 
       const newHandle: GoogleCacheHandle = {
         cacheName: handle.cacheName,

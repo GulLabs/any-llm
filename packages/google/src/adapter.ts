@@ -478,10 +478,9 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
             ' (@google/genai #1277 belt-and-suspenders)',
           'TimeoutError',
         )
-        _flexTimeoutHandle = setTimeout(
-          () => flexController.abort(timeoutReason),
-          FLEX_DEFAULT_TIMEOUT_MS,
-        )
+        _flexTimeoutHandle = setTimeout(() => {
+          flexController.abort(timeoutReason)
+        }, FLEX_DEFAULT_TIMEOUT_MS)
         // Combine with caller signal if present — either aborting cancels the request.
         if (ctx.signal !== undefined) {
           config.abortSignal = AbortSignal.any([flexController.signal, ctx.signal])
@@ -531,7 +530,7 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       }
 
       if (Object.keys(mergedHttpOptions).length > 0) {
-        config.httpOptions = mergedHttpOptions as { timeout?: number; headers?: Record<string, string> }
+        config.httpOptions = mergedHttpOptions
       }
 
       // ------------------------------------------------------------------
@@ -599,7 +598,22 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       // ------------------------------------------------------------------
       // 9. Map response
       // ------------------------------------------------------------------
-      const candidate = response.candidates![0]!
+      const candidates = response.candidates
+      if (candidates === undefined || candidates.length === 0) {
+        throw new LlmError('Gemini response blocked: NO_CANDIDATES', {
+          kind: 'content_filter',
+          retryable: false,
+          provider: 'google',
+        })
+      }
+      const candidate = candidates[0]
+      if (candidate === undefined) {
+        throw new LlmError('Gemini response blocked: NO_CANDIDATES', {
+          kind: 'content_filter',
+          retryable: false,
+          provider: 'google',
+        })
+      }
       const parts = candidate.content?.parts ?? []
 
       // Separate thought parts from text parts.

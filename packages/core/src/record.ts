@@ -35,6 +35,8 @@ export interface LlmCallRecord {
   callId: string
   /** Unique ID for this specific attempt (the idempotency key). */
   attemptId: string
+  /** 1-based ordinal of this attempt within the logical call (1 = first attempt, 2 = first retry, …). */
+  attemptNumber: number
   /** Optional call-site identifier for grouping by prompt template. */
   callSiteId?: string
 
@@ -137,6 +139,8 @@ export interface BuildRecordInput {
   callId: string
   /** Unique attempt ID (idempotency key). */
   attemptId: string
+  /** 1-based ordinal of this attempt within the logical call. */
+  attemptNumber: number
   /** Optional call-site identifier. */
   callSiteId?: string
   /** Provider identifier. */
@@ -230,7 +234,10 @@ export { errorKindToStatus }
  * @param usage - Raw usage from the adapter.
  * @returns The clamped `usage` and any `warnings` about violations.
  */
-export function normalizeUsage(usage: Usage): { usage: Usage; warnings: Warning[] } {
+export function normalizeUsage(usage: Usage): {
+  usage: Usage
+  warnings: Warning[]
+} {
   const { usage: normalized, clampWarnings } = sanitizeUsage(usage)
   return { usage: normalized, warnings: clampWarnings }
 }
@@ -250,18 +257,22 @@ export function normalizeUsage(usage: Usage): { usage: Usage; warnings: Warning[
  * @param value - Any JSON-compatible value.
  * @returns `{ sanitized, hadNonFinite }` — a safe copy and a changed flag.
  */
-function sanitizeRawJson(value: JsonValue): { sanitized: JsonValue; hadNonFinite: boolean } {
+function sanitizeRawJson(value: JsonValue): {
+  sanitized: JsonValue
+  hadNonFinite: boolean
+} {
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) return { sanitized: null, hadNonFinite: true }
     return { sanitized: value, hadNonFinite: false }
   }
   if (Array.isArray(value)) {
     let hadNonFinite = false
-    const out: JsonValue[] = value.map((item) => {
+    const out: JsonValue[] = []
+    for (const item of value) {
       const r = sanitizeRawJson(item)
       if (r.hadNonFinite) hadNonFinite = true
-      return r.sanitized
-    })
+      out.push(r.sanitized)
+    }
     return { sanitized: hadNonFinite ? out : value, hadNonFinite }
   }
   if (value !== null && typeof value === 'object') {
@@ -298,7 +309,9 @@ function sanitizeDetails(
     if (!Number.isFinite(val) || val < 0) {
       warnings.push({
         type: 'other',
-        message: `usage.details["${key}"] (${String(val)}) is non-finite or negative; clamped to 0`,
+        message: `usage.details["${key}"] (${String(
+          val,
+        )}) is non-finite or negative; clamped to 0`,
       })
       sanitized[key] = 0
       hadFix = true
@@ -320,9 +333,16 @@ function sanitizeDetails(
  * negative, pushing a warning.  Returns `{ value: val, changed: false }` when
  * the value is already valid.
  */
-function clampToken(name: string, val: number, warnings: Warning[]): { value: number; changed: boolean } {
+function clampToken(
+  name: string,
+  val: number,
+  warnings: Warning[],
+): { value: number; changed: boolean } {
   if (Number.isFinite(val) && val >= 0) return { value: val, changed: false }
-  warnings.push({ type: 'other', message: `${name} (${String(val)}) is non-finite or negative; clamped to 0` })
+  warnings.push({
+    type: 'other',
+    message: `${name} (${String(val)}) is non-finite or negative; clamped to 0`,
+  })
   return { value: 0, changed: true }
 }
 
@@ -383,12 +403,18 @@ function sanitizeUsage(usage: Usage): SanitizeUsageResult {
   // Clamp non-finite or negative SUBSET token counts to 0 before GROSS check.
   if (cachedInputTokens !== undefined) {
     const r = clampToken('cachedInputTokens', cachedInputTokens, warnings)
-    if (r.changed) { cachedInputTokens = r.value; needsRebuild = true }
+    if (r.changed) {
+      cachedInputTokens = r.value
+      needsRebuild = true
+    }
   }
 
   if (thinkingTokens !== undefined) {
     const r = clampToken('thinkingTokens', thinkingTokens, warnings)
-    if (r.changed) { thinkingTokens = r.value; needsRebuild = true }
+    if (r.changed) {
+      thinkingTokens = r.value
+      needsRebuild = true
+    }
   }
 
   // ------------------------------------------------------------------
@@ -435,10 +461,11 @@ function sanitizeUsage(usage: Usage): SanitizeUsageResult {
   // raw (JsonValue): recursively replace non-finite numbers with null so
   // the stored JSONB is always valid and round-trips without silent mutation.
   // ------------------------------------------------------------------
-  const { sanitized: sanitizedDetails, hadFix: detailsFixed } =
-    sanitizeDetails(usage.details, warnings)
-  const { sanitized: sanitizedRaw, hadNonFinite: rawFixed } =
-    sanitizeRawJson(usage.raw)
+  const { sanitized: sanitizedDetails, hadFix: detailsFixed } = sanitizeDetails(
+    usage.details,
+    warnings,
+  )
+  const { sanitized: sanitizedRaw, hadNonFinite: rawFixed } = sanitizeRawJson(usage.raw)
 
   if (detailsFixed || rawFixed) {
     needsRebuild = true
@@ -488,23 +515,50 @@ export function buildRecord(input: BuildRecordInput): LlmCallRecord {
   // Derive status from the error kind when an error is present, overriding the
   // caller-supplied status only when it provides more specificity.
   const status: LlmCallRecord['status'] =
-    input.error !== undefined
-      ? errorKindToStatus(input.error.kind)
-      : input.status
+    input.error !== undefined ? errorKindToStatus(input.error.kind) : input.status
 
   // Validate and clamp usage subset invariants (fail-open: clamp + warn).
   const { usage, clampWarnings } = sanitizeUsage(input.usage)
 
   // Merge caller warnings with any clamp warnings.
-  const allWarnings: Warning[] = [
-    ...(input.warnings ?? []),
-    ...clampWarnings,
-  ]
+  const allWarnings: Warning[] = [...(input.warnings ?? []), ...clampWarnings]
 
+  // C1: Scoped providerOptions / httpOptions.headers redaction.
+  // Only the secret-bearing escape-hatch lanes are redacted; all standard generation
+  // knobs (temperature, topP, maxOutputTokens, stopSequences, serviceTier, etc.) pass
+  // through untouched.  We shallow-copy before redacting so the caller's original
+  // config object is never mutated.
+  let gcMut: Record<string, unknown> = {
+    ...(input.generationConfig as unknown as Record<string, unknown>),
+  }
+  if (gcMut['providerOptions'] !== undefined) {
+    gcMut = {
+      ...gcMut,
+      providerOptions: JSON.parse(
+        redactSecrets(JSON.stringify(gcMut['providerOptions'])),
+      ) as unknown,
+    }
+  }
+  if (
+    gcMut['httpOptions'] !== null &&
+    typeof gcMut['httpOptions'] === 'object' &&
+    (gcMut['httpOptions'] as Record<string, unknown>)['headers'] !== undefined
+  ) {
+    const httpOpts = gcMut['httpOptions'] as Record<string, unknown>
+    gcMut = {
+      ...gcMut,
+      httpOptions: {
+        ...httpOpts,
+        headers: JSON.parse(
+          redactSecrets(JSON.stringify(httpOpts['headers'])),
+        ) as unknown,
+      },
+    }
+  }
   // Cast GenConfig → JsonValue.
   // GenConfig only contains JSON-serialisable values (numbers, strings, booleans,
   // string arrays, and Record<string, JsonValue>), so this is safe.
-  const generationConfig = input.generationConfig as unknown as JsonValue
+  const generationConfig = gcMut as unknown as JsonValue
 
   // Cast Usage.details → JsonValue.
   // Record<string, number> is a valid JSON object when all values are numbers.
@@ -516,6 +570,7 @@ export function buildRecord(input: BuildRecordInput): LlmCallRecord {
     recordSchemaVersion: 1,
     callId: input.callId,
     attemptId: input.attemptId,
+    attemptNumber: input.attemptNumber,
     ...(input.callSiteId !== undefined ? { callSiteId: input.callSiteId } : {}),
     provider: input.provider,
     model: input.model,
@@ -534,12 +589,13 @@ export function buildRecord(input: BuildRecordInput): LlmCallRecord {
     ...(usage.thinkingTokens !== undefined
       ? { thinkingTokens: usage.thinkingTokens }
       : {}),
-    ...(usage.totalTokens !== undefined
-      ? { totalTokens: usage.totalTokens }
-      : {}),
+    ...(usage.totalTokens !== undefined ? { totalTokens: usage.totalTokens } : {}),
     // Cost fields — only when a Cost object is present.
     ...(input.cost !== undefined
-      ? { costMicroUsd: input.cost.microUsd, pricingVersion: input.cost.pricingVersion }
+      ? {
+          costMicroUsd: input.cost.microUsd,
+          pricingVersion: input.cost.pricingVersion,
+        }
       : {}),
     // JSONB lanes.
     tokenDetails,
@@ -547,9 +603,7 @@ export function buildRecord(input: BuildRecordInput): LlmCallRecord {
     ...(input.providerMetadata !== undefined
       ? { providerMetadata: input.providerMetadata }
       : {}),
-    ...(allWarnings.length > 0
-      ? { warnings: allWarnings as unknown as JsonValue }
-      : {}),
+    ...(allWarnings.length > 0 ? { warnings: allWarnings } : {}),
     generationConfig,
     // Reasoning capture.
     ...(input.reasoningText !== undefined ? { reasoningText: input.reasoningText } : {}),

@@ -20,10 +20,7 @@ export interface InsertableDb {
   }
 }
 
-export function drizzleUsageSink(
-  db: InsertableDb,
-  table = llmCalls,
-): UsageSink {
+export function drizzleUsageSink(db: InsertableDb, table = llmCalls): UsageSink {
   return {
     async record(r: LlmCallRecord): Promise<void> {
       const row: Record<string, unknown> = {
@@ -54,6 +51,7 @@ export function drizzleUsageSink(
         reasoningText: r.reasoningText,
         errorKind: r.errorKind,
         errorMessage: r.errorMessage,
+        attemptNumber: r.attemptNumber,
         metadata: r.metadata,
         createdAt: new Date(r.createdAt),
       }

@@ -26,6 +26,7 @@ implementations live in separate packages (`@gullabs/google`, `@gullabs/drizzle`
 engine never imports directly.
 
 **Consequences:**
+
 - The engine can be unit-tested with in-memory fakes without any network dependency.
 - Adding a new provider requires only implementing `ProviderAdapter`; the rest of the pipeline
   (retry, cost, record, telemetry) comes for free.
@@ -56,6 +57,7 @@ propagates to the caller. The entire point of the rate-limiter port is to be abl
 refuse calls; swallowing its errors would make it inert.
 
 **Consequences:**
+
 - LLM call results always reach the caller even when observability infrastructure is degraded.
 - Sink failures are visible in logs but not in the returned `LlmResult`. Callers that need
   guaranteed persistence must check the sink independently.
@@ -75,8 +77,9 @@ respect a backoff hint — without parsing error message strings.
 
 **Decision:**
 Every throw from the engine or adapters is an `LlmError`. The class carries:
+
 - `kind`: a closed union (`invalid_auth | rate_limited | server | timeout | aborted | bad_request |
-  content_filter | parse_error | unknown`) that drives retry decisions and record status.
+content_filter | parse_error | unknown`) that drives retry decisions and record status.
 - `retryable`: a boolean derived deterministically from `kind`; callers and retry middleware read
   this flag rather than switching on `kind` themselves.
 - `retryAfterMs`: populated from the provider's `Retry-After` header when a 429 carries one.
@@ -86,6 +89,7 @@ field, `AbortError`, `TimeoutError`, strings) into `LlmError` with a single, tes
 Adapters call `classifyError` in their catch block and re-throw the result tagged with `provider`.
 
 **Consequences:**
+
 - The retry middleware reads `err.retryable` and `err.retryAfterMs` without any knowledge of
   provider-specific error shapes.
 - The record's `errorKind` and `status` fields are derived from the same classification, keeping
@@ -107,6 +111,7 @@ them produces under-counting when the subset is absent.
 
 **Decision:**
 The `Usage` type uses a GROSS convention throughout:
+
 - `inputTokens` is the total billed input, **including** cached tokens.
 - `outputTokens` is the total billed output, **including** thinking tokens.
 - `cachedInputTokens` and `thinkingTokens` are subsets of their respective totals, not additive.
@@ -117,8 +122,9 @@ and `sanitizeUsage` in `record.ts` clamps any subset that exceeds its parent to 
 emitting a `Warning`.
 
 **Consequences:**
+
 - Cost math is: `(inputTokens - cachedInputTokens) × inputRate + cachedInputTokens × cachedRate +
-  outputTokens × outputRate`. This formula is correct regardless of whether any subset is absent.
+outputTokens × outputRate`. This formula is correct regardless of whether any subset is absent.
 - Adapters for future providers must document how their raw fields map to GROSS fields.
 - `Usage.raw` preserves the provider's original usage object verbatim so cost can be recalculated
   from scratch if the convention mapping is later found to be wrong.
@@ -146,6 +152,7 @@ forking the library. The `pricingFamily` field on `ModelDescriptor` allows model
 enumerating every version string in the pricing table.
 
 **Consequences:**
+
 - Pricing snapshots go stale when providers update rates. The `pricingVersion` on each record
   makes it straightforward to identify records that need backfill when a snapshot is updated.
 - `Cost.microUsd` is `null` when the model is not in the pricing table. The tokens are still
@@ -179,6 +186,7 @@ Hosts supply a custom registry via `ClientConfig.modelRegistry` to add new model
 provider mappings without a library release.
 
 **Consequences:**
+
 - Model-specific logic in the adapter is data-driven (a switch on `reasoningApi`) rather than
   string-matching (fragile against new version suffixes).
 - An unknown model is still routable when only one adapter is configured; it falls back to that
@@ -214,6 +222,7 @@ Each invocation of `next()` (i.e., each attempt) generates a fresh `attemptId` a
 one record. The `callId` is stable across all attempts of a logical call.
 
 **Consequences:**
+
 - Retry policy is configurable without patching the engine: `maxAttempts`, `baseDelayMs`,
   `maxDelayMs`, and a custom `shouldRetry` predicate are all overridable.
 - The middleware contract is simple enough that hosts can implement circuit-breakers, request
@@ -250,6 +259,7 @@ running inside Temporal use Temporal's own task-queue rate limiting; the engine'
 port is a no-op in that context.
 
 **Consequences:**
+
 - No Redis, Upstash, or any other infrastructure dependency in the library itself.
 - The app (or a companion package) owns rate-limit policy: per-key vs global, distributed vs
   in-process, token bucket vs sliding window.
@@ -280,6 +290,7 @@ object at the API level; this instructs the model to return conformant JSON rath
 solely on prompt engineering.
 
 **Consequences:**
+
 - `zod` becomes a peer dependency that consumers must install. This is preferable to bundling Zod
   (which would duplicate it for hosts that already depend on Zod).
 - The public surface is coupled to Zod's major version. Migrating to Standard Schema as the
@@ -322,14 +333,16 @@ with issues throws `LlmError('bad_request', retryable: false)` before auth or ra
 see every violation at once.
 
 **Rejected alternatives:**
-- *Per-model TypeScript types* — would leak model-specific types into the public API surface and
+
+- _Per-model TypeScript types_ — would leak model-specific types into the public API surface and
   require callers to import and narrow types manually. Compile-time safety does not help when
   the model is a runtime string from a database.
-- *One generic superset type* — a single config type that accepts all parameters for all models
+- _One generic superset type_ — a single config type that accepts all parameters for all models
   cannot express per-model constraints; the only enforcement would be at the provider, which
   produces an opaque error after auth and network roundtrip.
 
 **Consequences:**
+
 - Config validation fires before auth, rate-limiter, and adapter — the fastest possible rejection
   for a misconfigured call.
 - The `configJsonSchema` field can be serialized to JSON and returned to clients as part of a
@@ -358,6 +371,7 @@ resource name, respectively. The engine passes them to the adapter verbatim; it 
 cache lifecycle.
 
 Stateful resource management lives in `@gullabs/google` as opt-in helper classes:
+
 - `GoogleFileStore` — wraps the Gemini Files API. `upload(bytes, mimeType)` uploads and polls
   until `ACTIVE`, returning a `GoogleFileHandle` whose `uri` field can be used directly in a
   `FileUriPart`. `delete` / `deleteAll` are fail-open (errors go to `onDeleteError`, not rethrown).
@@ -370,6 +384,7 @@ Stateful resource management lives in `@gullabs/google` as opt-in helper classes
 
 **Considered and rejected:** a generic `ResourceManager` port in `@gullabs/core` that the engine
 would call to resolve URIs or inject cached content. Rejected for three reasons:
+
 1. Upload-once-reuse-N means resource identity is process-scoped or database-backed — there is no
    single correct abstraction the library should own.
 2. Entangling the engine with resource lifecycle would require a new port, new injection point in
@@ -380,6 +395,7 @@ would call to resolve URIs or inject cached content. Rejected for three reasons:
    the one that introduced it.
 
 **Consequences:**
+
 - Callers that do not need Files or Context Caching import neither class; the helpers are
   additional exports from `@gullabs/google`, not engine dependencies.
 - The `GoogleFileHandle.uri` field maps directly to `FileUriPart.uri`; no conversion step needed.
@@ -424,6 +440,7 @@ fallback is a disguised retry that crosses tier boundaries without the caller's 
 and fallback logic belongs in the middleware chain where it is explicit and auditable.
 
 **Consequences:**
+
 - Long Flex calls complete without being killed by the SDK transport layer.
 - When `timeoutMs` is set, the engine's `AbortSignal` is always the hard ceiling; the SDK transport
   timer cannot preempt it.
@@ -473,6 +490,7 @@ grounding attribution from `result.providerMetadata['groundingMetadata']` as `Js
 library does not model the grounding metadata structure as a typed field.
 
 **Consequences:**
+
 - Grounding support requires no new typed fields on `GenConfig` or `LlmRequest`; it uses the
   existing `providerOptions` passthrough.
 - The `bad_request` guard surfaces the mutual-exclusion constraint at call time with a human-
@@ -501,6 +519,7 @@ financial calculations or aggregation. Micro-USD is canonical and is the only va
 sink.
 
 **Consequences:**
+
 - `result.cost?.usd` is available for immediate display without division at the call site.
 - Aggregations (summing cost across records) must use `microUsd` from the persisted record to avoid
   floating-point accumulation error.
@@ -515,25 +534,25 @@ sink.
 
 **Context:**
 `GenConfig.timeoutMs` was originally documented and implemented as a per-attempt timeout: the
-engine arms an `AbortSignal` at that value for each individual adapter invocation.  With retry
+engine arms an `AbortSignal` at that value for each individual adapter invocation. With retry
 middleware installed, a caller setting `timeoutMs: 30_000` expected a 30-second total budget for
-the entire logical call (all attempts + back-off), but the actual behavior was 30 seconds *per
-attempt* — a 3-attempt retry could run for up to 90 seconds before surfacing an error.  This is
+the entire logical call (all attempts + back-off), but the actual behavior was 30 seconds _per
+attempt_ — a 3-attempt retry could run for up to 90 seconds before surfacing an error. This is
 confusing and makes `timeoutMs` unpredictable as a scheduling primitive in production.
 
 **Decision:**
 When the retry middleware is installed and `req.config.timeoutMs` is set, `retryMiddleware`
-enforces it as an **overall wall-clock ceiling** for the logical call.  Implementation:
+enforces it as an **overall wall-clock ceiling** for the logical call. Implementation:
 
 1. `start = Date.now()` is captured once before the first attempt.
-2. Before each attempt, `remaining = timeoutMs - (Date.now() - start)` is computed.  If
+2. Before each attempt, `remaining = timeoutMs - (Date.now() - start)` is computed. If
    `remaining ≤ 0`, the middleware throws `LlmError('timeout', retryable: false)` without starting
    another attempt.
 3. The shrinking remaining budget is passed as `attemptTimeoutMs` on the cloned request (an
    internal field on `ResolvedRequest` set by the retry middleware; the engine reads it to arm the
    per-attempt `AbortSignal`, leaving `config.timeoutMs` unchanged so the persisted audit record
    always reflects the caller's original value).
-4. After a failed attempt, `remainingAfter` is recomputed.  If `≤ 0`, the classified error from
+4. After a failed attempt, `remainingAfter` is recomputed. If `≤ 0`, the classified error from
    the attempt is rethrown immediately (no sleep; no next attempt).
 5. Back-off sleep is clamped: `delayMs = Math.min(delayMs, remainingAfter)` so the sleep never
    overshoots the deadline.
@@ -544,17 +563,18 @@ The `retryMiddleware` opts object gains an optional `now?: () => number` injecta
 deadline logic can be tested deterministically without real timers.
 
 **Considered and rejected:** moving the deadline enforcement into the engine's `runPipeline`
-function.  Rejected because: (a) the retry loop lives in middleware, not in the engine; (b) the
+function. Rejected because: (a) the retry loop lives in middleware, not in the engine; (b) the
 engine already handles per-attempt timeouts via `buildCancellationRace`; (c) placing overall-budget
 logic in the middleware keeps the engine pipeline simple and separates the two concerns cleanly.
 
 **Consequences:**
+
 - `timeoutMs` now means what callers expect: the total wall-clock budget for the logical call,
   not a per-attempt limit.
 - Retry policies that previously relied on `timeoutMs` as a per-attempt limit must either increase
-  the value or remove it.  This is a behavior change (though not a type-level breaking change).
+  the value or remove it. This is a behavior change (though not a type-level breaking change).
 - `buildCancellationRace` in the engine continues to arm per-attempt `AbortSignal` at the
-  *remaining* budget, so each attempt's HTTP timeout also shrinks — the ceiling is respected at
+  _remaining_ budget, so each attempt's HTTP timeout also shrinks — the ceiling is respected at
   both the retry level and the transport level.
 
 ---
@@ -565,9 +585,9 @@ logic in the middleware keeps the engine pipeline simple and separates the two c
 
 **Context:**
 Provider SDKs sometimes include the raw request URL (which may contain an API key as a `key=`
-query parameter or a signed-URL `X-Goog-Signature`) in their error messages.  When these errors
+query parameter or a signed-URL `X-Goog-Signature`) in their error messages. When these errors
 are classified and persisted as `LlmCallRecord.errorMessage`, secrets from the transient error
-message end up in the append-only audit log.  This is a credential-hygiene risk: the log may be
+message end up in the append-only audit log. This is a credential-hygiene risk: the log may be
 readable by more operators than the running service, and secrets written to a database are harder
 to rotate than secrets in memory.
 
@@ -576,34 +596,37 @@ A `redactSecrets(text: string): string` utility is added to `@gullabs/core` and 
 `errorMessage` at the single point where it is written into `LlmCallRecord` (inside `buildRecord`
 in `record.ts`).
 
-`redactSecrets` is a best-effort, regex-based scrubber.  It covers the most common patterns:
+`redactSecrets` is a best-effort, regex-based scrubber. It covers the most common patterns:
+
 - Google API keys (`AIza[0-9A-Za-z_\-]{20,}` → `AIza…REDACTED`)
 - HTTP Bearer tokens (`Bearer\s+[A-Za-z0-9._\-]+` → `Bearer …REDACTED`)
 - Sensitive URL query-parameter values for keys: `X-Goog-*`, `key`, `api_key`, `access_token`,
   `token`, `signature`, `sig` — value replaced with `REDACTED`.
 
-The live `LlmError` thrown to the caller is **not** modified.  Redaction is applied only to the
-persisted copy.  This preserves the full error context for the caller (who already has the secret)
+The live `LlmError` thrown to the caller is **not** modified. Redaction is applied only to the
+persisted copy. This preserves the full error context for the caller (who already has the secret)
 while protecting the audit log from accidental exposure.
 
 **Considered and rejected:**
-- *Full DLP pipeline*: a proper DLP solution with content-type detection, entropy analysis, and
-  provider-specific patterns would be more thorough but is a substantial dependency.  The
+
+- _Full DLP pipeline_: a proper DLP solution with content-type detection, entropy analysis, and
+  provider-specific patterns would be more thorough but is a substantial dependency. The
   risk-vs-cost trade-off favors a simple regex scrubber for v1.
-- *Redacting the live error*: callers may need the full error text for debugging (e.g. to see which
-  URL failed).  Redacting the thrown error would make operational debugging harder without
+- _Redacting the live error_: callers may need the full error text for debugging (e.g. to see which
+  URL failed). Redacting the thrown error would make operational debugging harder without
   meaningfully improving security (the caller already holds the secret).
-- *Provider-adapter responsibility*: redaction in each adapter is fragile because adapters may not
-  know which parts of SDK error messages contain secrets.  Centralising in `buildRecord` ensures
+- _Provider-adapter responsibility_: redaction in each adapter is fragile because adapters may not
+  know which parts of SDK error messages contain secrets. Centralising in `buildRecord` ensures
   every error path — regardless of provider — goes through one redaction point.
 
 **Consequences:**
+
 - API keys and Bearer tokens that appear in provider error messages are scrubbed from persisted
   records; the audit log is safe to export to less-privileged storage.
-- False negatives are possible: custom or future secret formats may not be caught.  The JSDoc on
+- False negatives are possible: custom or future secret formats may not be caught. The JSDoc on
   `redactSecrets` makes this limitation explicit.
 - False positives are unlikely given the specific patterns used, but `keyword=` or `sig=` in
-  benign text would be redacted.  This is acceptable for error text.
+  benign text would be redacted. This is acceptable for error text.
 - `redactSecrets` is exported from `@gullabs/core` so host applications can apply it to their own
   log lines or error reporting integrations.
 
@@ -614,7 +637,7 @@ while protecting the audit log from accidental exposure.
 **Status:** Accepted
 
 **Context:**
-Google's documentation for Gemini 3.x models *discourages* the use of `temperature`, `topP`, and
+Google's documentation for Gemini 3.x models _discourages_ the use of `temperature`, `topP`, and
 `topK`, recommending `temperature=1.0` and noting that changing sampling parameters "may lead to
 unexpected behavior." Google does **not** hard-reject these parameters at the API level — a
 request with `temperature=0.7` on a Gemini 3.x model is accepted and processed.
@@ -657,7 +680,7 @@ bug in how the SDK wires the timeout into the underlying fetch/HTTP layer, the t
 enforced for `generateContent` requests. This means a Flex-tier call that stalls at the network
 layer may hang indefinitely even with `httpOptions.timeout` set.
 
-*Mitigation:* The Gemini adapter (`@gullabs/google`) arms a client-side `AbortSignal` to enforce
+_Mitigation:_ The Gemini adapter (`@gullabs/google`) arms a client-side `AbortSignal` to enforce
 the effective timeout. For Flex calls without an explicit `timeoutMs`, the signal is set at
 `FLEX_DEFAULT_TIMEOUT_MS` (1 500 000 ms, 25 min). When `timeoutMs` is set, the remaining budget from the
 retry middleware is the signal deadline. The `AbortSignal` is passed as `config.abortSignal` so the
@@ -668,7 +691,8 @@ When targeting Vertex AI (as opposed to the Gemini Developer API), the `serviceT
 field in the generation config body is silently ignored. Flex calls on Vertex are billed at the
 standard tier rate without any indication that the tier selection was not honoured.
 
-*Mitigation:* On the Vertex flex path, the adapter injects two HTTP headers:
+_Mitigation:_ On the Vertex flex path, the adapter injects two HTTP headers:
+
 - `X-Vertex-AI-LLM-Request-Type: shared`
 - `X-Vertex-AI-LLM-Shared-Request-Type: flex`
 
@@ -676,6 +700,7 @@ These headers are the correct Vertex-native mechanism for requesting Flex tier a
 by the Vertex AI backend independently of the body field.
 
 **Consequences:**
+
 - Flex calls will time out correctly via `AbortSignal` even if the SDK's transport timeout is
   silently dropped.
 - Vertex Flex calls are billed at the Flex rate when the headers are injected correctly. Hosts
@@ -713,23 +738,26 @@ Vertex AI auth is removed entirely for this version. It will return when an expl
 credential shape is designed (see ROADMAP.md).
 
 A CI source-invariant test asserts:
+
 1. No file under `packages/core/src` or `packages/google/src` reads `process.env`.
 2. Neither `AuthProvider` nor `envAuth` appears in any package entrypoint export.
 
 **Alternatives considered:**
-- *AuthProvider port + context-aware resolver + per-call override* — the original design. Rejected
+
+- _AuthProvider port + context-aware resolver + per-call override_ — the original design. Rejected
   as over-engineering for v0: it added a port, an injection point in `ClientConfig`, three
   implementations, and a resolution step in the engine pipeline, all to solve a problem that host
   application code solves trivially in one line (`const auth = { apiKey: process.env.KEY! }`).
-- *Client-level auth with per-call override* — a single `createClient({ auth })` plus optional
+- _Client-level auth with per-call override_ — a single `createClient({ auth })` plus optional
   per-call override. Rejected because the "optional override" path is the only path callers
   actually need; the client-level default adds implicit state and makes the engine impure relative
   to its inputs.
-- *Keep envAuth for convenience* — rejected; convenience functions that read ambient env are the
+- _Keep envAuth for convenience_ — rejected; convenience functions that read ambient env are the
   entire class of bug this decision eliminates. Documenting "don't use envAuth in prod" is weaker
   than not shipping envAuth.
 
 **Consequences:**
+
 - **Breaking.** All callers must pass `auth` on every call. There is no migration path that
   preserves the old client-level auth; callers must add `{ auth: { apiKey } }` to each call site.
 - Vertex AI is not supported in this version. Callers targeting Vertex must wait for the roadmap
@@ -762,7 +790,7 @@ client-construction sites remain as independent leaf constructors.
 
 1. **Single-kind discriminant is dead metadata.** With exactly one credential kind, a `kind`
    field carries no information and taxes every caller that must now type `{ kind: 'api-key',
-   apiKey: '...' }` instead of `{ apiKey: '...' }`. A discriminant earns its keep only when there
+apiKey: '...' }` instead of `{ apiKey: '...' }`. A discriminant earns its keep only when there
    are two or more kinds to discriminate between.
 
 2. **Adding a kind later is a trivial, safe additive change.** When a second kind exists (e.g.
@@ -791,8 +819,74 @@ expiry handling, and resolver-failure classification. See the JSDoc on `requireA
 `engine.ts` for the full set of open questions.
 
 **Consequences:**
+
 - No code change from this ADR. All changes are documentation and comments.
 - The three `buildXxxClient` sites and `requireAuth()` are marked as the exact update targets for
   the future second credential kind.
 - Future contributors adding a credential kind should start from this ADR and the annotated
   seams rather than searching the codebase.
+
+---
+
+## ADR-021: Observability — Leveled Fail-Open Logging, Per-Attempt Records, and Consumer-Owned Metrics/OTel/Traceparent
+
+**Status:** Accepted
+
+**Context:**
+As the engine gained retry middleware and per-attempt record persistence, the observability surface
+expanded to cover: structured logging at four levels, telemetry hooks for APM integration, and
+richer `LlmCallRecord` fields (notably `attemptNumber` for retry correlation). Several related
+capabilities were proposed during design: a first-party OTel package, W3C `traceparent`
+propagation, an in-library metrics runtime, and configurable secret-redaction patterns. A decision
+was needed on which of these belong in the library and which belong in the host or in companion
+packages.
+
+**Decision:**
+The library ships three observability primitives:
+
+1. **Leveled `Logger` port** (`debug` / `info` / `warn` / `error`, object-first `(o, m)` signature
+   compatible with pino/bunyan). A `makeSafeLogger` wrapper catches and swallows any exception
+   thrown by the host logger so a misbehaving logger can never break or mask an LLM call result
+   (fail-open).
+
+2. **`Telemetry` port** (`onStart` / `onSuccess` / `onError`, all optional) for OTel / Sentry /
+   PostHog integration. Events fire once per logical call; `onStart` may return an opaque span
+   handle that is forwarded to the terminal hooks. Hook failures are swallowed fail-open and emit a
+   `debug` breadcrumb (`llm.telemetry.hook.failed`).
+
+3. **Per-attempt `LlmCallRecord`** with `callId` (stable across retries), `attemptId`
+   (idempotency key), `attemptNumber` (1-based ordinal), `latencyMs`, token counts, `costMicroUsd`,
+   `errorKind`, and verbatim `metadata`. Records are written via `UsageSink` (fail-open). Secret
+   redaction (`redactSecrets`) is applied before persistence to `errorMessage`,
+   `generationConfig.providerOptions`, and `generationConfig.httpOptions.headers`. Standard
+   generation knobs and host-supplied `metadata` are not scanned.
+
+The following are **explicitly deferred as consumer concerns**:
+
+- First-party OTel package (the `Telemetry` port is the seam; publish an integration example).
+- W3C `traceparent` propagation (hosts inject headers today via `providerOptions`).
+- In-library metrics runtime, `/metrics` endpoint, cache-hit gauges (derive from records +
+  `Telemetry`).
+- Error sampling/dedup, persisted stack traces, typed provider-error schema.
+- TTFB/streaming latency (requires `stream()` pipeline).
+- Rate-limiter wait-time attribution, sink-side logical-call latency.
+- Configurable custom-redaction-pattern API (deferred to the `Redactor` port; see ROADMAP).
+
+**Rationale:**
+This is a library, not a service. The library's job is to provide rich, accurate data (records and
+events) and stable seams (ports). Owning a metrics runtime, an OTel SDK, or an HTTP `/metrics`
+endpoint would impose infrastructure dependencies on every host and duplicate concerns the host
+already solves. The `Telemetry` port is deliberately OTel-shaped (start/success/error with a span
+handle) so a one-file wrapper is all a host needs to bridge it to any APM system.
+
+**Consequences:**
+
+- Host applications get structured log events and telemetry hooks without taking on any transitive
+  infrastructure dependency from the library.
+- `LlmCallRecord` fields are sufficient to derive dashboards, cost aggregations, retry rates, and
+  error-kind breakdowns at the sink level.
+- Hosts that need `traceparent` propagation pass it today via
+  `providerOptions.google.httpOptions.headers` — no library change required.
+- The `metadata` field is the caller's domain anchor (tenantId, runId, traceId, etc.) and is
+  stored verbatim; it must not contain secrets.
+- Items listed as deferred are tracked in ROADMAP.md under "Deferred observability."

@@ -147,12 +147,18 @@ export class SignalAwareFakeAdapter implements ProviderAdapter {
           // Synchronous path — reject in the same microtask as the signal dispatch.
           // This is the adversarial scenario that tests the engine's ordering guarantee
           // (timeout reject-first strategy must win even against this).
-          settle(() => reject(abortErr))
+          settle(() => {
+            reject(abortErr)
+          })
         } else {
           // Async path — queue the rejection via a resolved-promise microtask so
           // the abort is observed but does not race synchronously.
           Promise.resolve()
-            .then(() => settle(() => reject(abortErr)))
+            .then(() => {
+              settle(() => {
+                reject(abortErr)
+              })
+            })
             .catch(() => { /* settled flag prevents double-rejection */ })
         }
       }
@@ -176,13 +182,19 @@ export class SignalAwareFakeAdapter implements ProviderAdapter {
 
         const entry = this._entry
         if (entry instanceof Error) {
-          settle(() => reject(entry))
+          settle(() => {
+            reject(entry)
+          })
         } else if ('usage' in entry) {
-          settle(() => resolve(entry as AdapterResult))
+          settle(() => {
+            resolve(entry as AdapterResult)
+          })
         } else {
           // Plain-object error (e.g. `{ status: 429 }`) — throw as-is so
           // the engine's `classifyError` can extract the HTTP status.
-          settle(() => reject(entry))
+          settle(() => {
+            reject(entry)
+          })
         }
       }, this._delayMs)
     })

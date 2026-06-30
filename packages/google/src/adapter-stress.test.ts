@@ -77,7 +77,7 @@ function makeReq(overrides: Partial<ResolvedRequest> = {}): ResolvedRequest {
 /** Minimal adapter context for direct adapter.run() tests. */
 const FAKE_CTX: AdapterCtx = {
   auth: { apiKey: 'test-key' },
-  logger: { info() {}, warn() {}, error() {} },
+  logger: { info() {}, warn() {}, error() {}, debug() {} },
 }
 
 // ---------------------------------------------------------------------------

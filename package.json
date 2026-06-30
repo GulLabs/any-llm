@@ -12,7 +12,7 @@
     "test:watch": "vitest",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "quality": "pnpm lint && pnpm typecheck && pnpm test && pnpm -r build",
+    "quality": "pnpm -r build && pnpm lint && pnpm typecheck && pnpm test",
     "clean": "pnpm -r exec rm -rf dist",
     "example": "tsx examples/basic.ts",
     "changeset": "changeset",

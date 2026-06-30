@@ -134,7 +134,9 @@ export function inMemoryRateLimiter(
             )
           }
           signal.addEventListener('abort', abortHandler, { once: true })
-          abortCleanup = () => signal.removeEventListener('abort', abortHandler)
+          abortCleanup = () => {
+            signal.removeEventListener('abort', abortHandler)
+          }
         }
       })
     },

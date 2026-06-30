@@ -48,7 +48,7 @@ export interface RetryPolicy {
    * Called with the `LlmError` and the 1-based attempt number that just failed.
    * @default `(err) => err.retryable === true`
    */
-  shouldRetry?(err: LlmError, attempt: number): boolean
+  shouldRetry?(this: void, err: LlmError, attempt: number): boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -81,7 +81,10 @@ export function computeBackoffMs(
     return Math.min(retryAfterMs, policy.maxDelayMs)
   }
   // Exponential back-off ceiling, capped at maxDelayMs.
-  const ceiling = Math.min(policy.maxDelayMs, policy.baseDelayMs * Math.pow(2, attempt - 1))
+  const ceiling = Math.min(
+    policy.maxDelayMs,
+    policy.baseDelayMs * Math.pow(2, attempt - 1),
+  )
   // Full jitter: uniform in [0, ceiling).
   return ceiling * rand()
 }
@@ -99,7 +102,7 @@ export function computeBackoffMs(
  */
 function abortableSleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    if (signal?.aborted) {
+    if (signal?.aborted === true) {
       reject(
         new LlmError('Request aborted during retry delay', {
           kind: 'aborted',
@@ -192,14 +195,14 @@ export function retryMiddleware(
   policy?: RetryPolicy,
   opts?: {
     /** Injected sleep function for testing (default: `abortableSleep`). */
-    sleep?(ms: number, signal?: AbortSignal): Promise<void>
+    sleep?(this: void, ms: number, signal?: AbortSignal): Promise<void>
     /** Injected RNG for deterministic back-off tests (default: `Math.random`). */
-    random?(): number
+    random?(this: void): number
     /**
      * Injected clock for deterministic deadline tests (default: `Date.now`).
      * Returns elapsed milliseconds since the Unix epoch.
      */
-    now?(): number
+    now?(this: void): number
   },
 ): Middleware {
   const maxAttempts = policy?.maxAttempts ?? 3
@@ -226,13 +229,14 @@ export function retryMiddleware(
       const start = nowFn()
       let attempt = 0
 
-      while (true) {
+      for (;;) {
         attempt++
 
         // ── Pre-attempt budget check ─────────────────────────────────────────
-        // Build a (possibly shrunk) request for this attempt.  When no overall
-        // timeout is set we pass req through unchanged.
-        let currentReq = req
+        // Build a (possibly shrunk) request for this attempt.  Always stamp
+        // attemptNumber so the engine can record/log which attempt this is.
+        // When no overall timeout is set only attemptNumber is added.
+        let currentReq: ResolvedRequest = { ...req, attemptNumber: attempt }
         if (timeoutMs !== undefined) {
           const remaining = timeoutMs - (nowFn() - start)
           if (remaining <= 0) {
@@ -245,10 +249,7 @@ export function retryMiddleware(
           // the engine's per-attempt AbortSignal respects the overall ceiling.
           // Uses attemptTimeoutMs (not config.timeoutMs) so the caller's original
           // timeoutMs is never mutated and thus never mis-recorded in the audit record.
-          currentReq = {
-            ...req,
-            attemptTimeoutMs: remaining,
-          }
+          currentReq = { ...currentReq, attemptTimeoutMs: remaining }
         }
 
         try {
@@ -265,9 +266,9 @@ export function retryMiddleware(
           // Policy veto — propagate without sleeping.
           if (!shouldRetryFn(err, attempt)) throw err
 
-          // ── Post-attempt budget check ──────────────────────────────────────
-          // When an overall budget is set, check whether anything is left
-          // before sleeping into the next attempt.
+          // ── Post-attempt budget check + back-off ───────────────────────────
+          // Compute the delay once so it can be logged before sleeping.
+          let delayMs: number
           if (timeoutMs !== undefined) {
             const remainingAfter = timeoutMs - (nowFn() - start)
             if (remainingAfter <= 0) {
@@ -275,27 +276,40 @@ export function retryMiddleware(
               // and retry; surface the classified error from this attempt.
               throw err
             }
-
             // Cap the back-off so we never sleep past the deadline.
-            let delayMs = computeBackoffMs(
-              attempt,
-              { baseDelayMs, maxDelayMs },
-              err.retryAfterMs,
-              rand,
+            delayMs = Math.min(
+              computeBackoffMs(
+                attempt,
+                { baseDelayMs, maxDelayMs },
+                err.retryAfterMs,
+                rand,
+              ),
+              remainingAfter,
             )
-            delayMs = Math.min(delayMs, remainingAfter)
-
-            await sleepFn(delayMs, ctx.signal)
           } else {
             // No overall budget — original behavior unchanged.
-            const delayMs = computeBackoffMs(
+            delayMs = computeBackoffMs(
               attempt,
               { baseDelayMs, maxDelayMs },
               err.retryAfterMs,
               rand,
             )
-            await sleepFn(delayMs, ctx.signal)
           }
+
+          // A3: Emit debug log at the retry decision point so operators can see
+          // which attempt failed, how long we back off, and the error kind.
+          ctx.logger.debug(
+            {
+              callId: ctx.callId,
+              attemptNumber: attempt,
+              delayMs,
+              errorKind: err.kind,
+              retryable: err.retryable,
+            },
+            'llm.call.retry',
+          )
+
+          await sleepFn(delayMs, ctx.signal)
         }
       }
     },

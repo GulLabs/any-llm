@@ -50,7 +50,10 @@ export type { GeminiSchema }
  */
 function isOptionalField(schema: ZodTypeAny): boolean {
   if (schema instanceof ZodOptional || schema instanceof ZodDefault) return true
-  if (schema instanceof ZodNullable) return isOptionalField(schema.unwrap())
+  if (schema instanceof ZodNullable) {
+    const unwrapped = schema.unwrap() as unknown as ZodTypeAny
+    return isOptionalField(unwrapped)
+  }
   return false
 }
 
@@ -70,18 +73,20 @@ function convertSchema(schema: ZodTypeAny, nullable: boolean): GeminiSchema | un
 
   // ---- ZodOptional → unwrap, mark non-required at parent level ----
   if (schema instanceof ZodOptional) {
-    return convertSchema(schema.unwrap(), nullable)
+    const unwrapped = schema.unwrap() as unknown as ZodTypeAny
+    return convertSchema(unwrapped, nullable)
   }
 
   // ---- ZodNullable → unwrap, set nullable:true ----
   if (schema instanceof ZodNullable) {
-    return convertSchema(schema.unwrap(), true)
+    const unwrapped = schema.unwrap() as unknown as ZodTypeAny
+    return convertSchema(unwrapped, true)
   }
 
   // ---- ZodDefault → unwrap inner type ----
   if (schema instanceof ZodDefault) {
     // Access via _def.innerType (the internal storage field).
-    const innerType = (schema._def as { innerType: ZodTypeAny }).innerType
+    const innerType = (schema._def as unknown as { innerType: ZodTypeAny }).innerType
     return convertSchema(innerType, nullable)
   }
 
@@ -143,7 +148,8 @@ function convertSchema(schema: ZodTypeAny, nullable: boolean): GeminiSchema | un
 
   // ---- ZodArray ----
   if (schema instanceof ZodArray) {
-    const items = convertSchema(schema.element, false)
+    const element = schema.element as unknown as ZodTypeAny
+    const items = convertSchema(element, false)
     if (items === undefined) return undefined
     return {
       type: 'array',

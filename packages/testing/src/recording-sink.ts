@@ -42,14 +42,15 @@ export class RecordingSink implements UsageSink {
     this._failOnRecord = opts.failOnRecord ?? false
   }
 
-  async record(r: LlmCallRecord): Promise<void> {
+  record(r: LlmCallRecord): Promise<void> {
     if (this._failOnRecord !== false) {
       if (this._failOnRecord instanceof Error) {
-        throw this._failOnRecord
+        return Promise.reject(this._failOnRecord)
       }
-      throw new Error('RecordingSink: configured to fail on record')
+      return Promise.reject(new Error('RecordingSink: configured to fail on record'))
     }
     this.records.push(r)
+    return Promise.resolve()
   }
 
   /**

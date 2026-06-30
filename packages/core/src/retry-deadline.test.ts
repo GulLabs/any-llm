@@ -27,6 +27,7 @@ const NOOP_LOGGER = {
   info() {},
   warn() {},
   error() {},
+  debug() {},
 }
 
 const GOOD_USAGE: Usage = {

@@ -7,6 +7,7 @@ function makeRecord(overrides: Partial<LlmCallRecord> = {}): LlmCallRecord {
     recordSchemaVersion: 1,
     callId: 'call_1',
     attemptId: 'attempt_1',
+    attemptNumber: 1,
     provider: 'google',
     model: 'gemini-2.5-pro',
     status: 'ok',

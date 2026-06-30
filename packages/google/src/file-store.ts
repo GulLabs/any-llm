@@ -88,7 +88,12 @@ async function buildFilesClient(auth: AuthMaterial): Promise<GeminiFilesClientLi
       // Real SDK accepts string | Blob; convert Uint8Array → Blob.
       const fileArg: Blob =
         params.file instanceof Uint8Array
-          ? new Blob([params.file], params.config?.mimeType ? { type: params.config.mimeType } : {})
+          ? new Blob(
+              [params.file],
+              params.config?.mimeType !== undefined && params.config.mimeType.length > 0
+                ? { type: params.config.mimeType }
+                : {},
+            )
           : params.file
 
       const result = await (
@@ -99,7 +104,10 @@ async function buildFilesClient(auth: AuthMaterial): Promise<GeminiFilesClientLi
           state?: string
           expirationTime?: string
         }>
-      )({ file: fileArg, ...(params.config !== undefined ? { config: params.config } : {}) })
+      )({
+        file: fileArg,
+        ...(params.config !== undefined ? { config: params.config } : {}),
+      })
       return result
     },
 
@@ -139,7 +147,7 @@ function makeHandle(
     name: resp.name ?? fallback.name,
     uri: resp.uri ?? fallback.uri,
     mimeType: resp.mimeType ?? fallback.mimeType,
-    ...(et ? { expiresAt: new Date(et) } : {}),
+    ...(et !== undefined && et.length > 0 ? { expiresAt: new Date(et) } : {}),
   }
 }
 
@@ -174,11 +182,12 @@ export class GoogleFileStore {
     this.clientOverride = opts.client
     this.onDeleteError =
       opts.onDeleteError ??
-      ((name, err) =>
+      ((name, err) => {
         console.error(
           `[GoogleFileStore] delete failed for "${name}":`,
           redactSecrets(classifyError(err).message),
-        ))
+        )
+      })
     this.intervalMs = opts.poll?.intervalMs ?? DEFAULT_INTERVAL_MS
     this.timeoutMs = opts.poll?.timeoutMs ?? DEFAULT_TIMEOUT_MS
     this.sleep = opts.sleep ?? realSleep
@@ -229,7 +238,12 @@ export class GoogleFileStore {
 
     const { name, uri } = uploadResp
 
-    if (!name || !uri) {
+    if (
+      name === undefined ||
+      name.length === 0 ||
+      uri === undefined ||
+      uri.length === 0
+    ) {
       throw new LlmError('File upload response missing required fields (name or uri)', {
         kind: 'bad_request',
         retryable: false,
@@ -254,7 +268,7 @@ export class GoogleFileStore {
 
     // Pre-flight: if the signal is already aborted, throw before creating any
     // promise so we never produce an unhandled rejection.
-    if (signal?.aborted) {
+    if (signal?.aborted === true) {
       throw new LlmError('File upload polling aborted', {
         kind: 'aborted',
         retryable: false,
@@ -290,15 +304,6 @@ export class GoogleFileStore {
         })
       }
 
-      // Also guard here: the signal may have fired during client.get() from
-      // the previous iteration, before we looped back to the sleep race.
-      if (signal?.aborted) {
-        throw new LlmError('File upload polling aborted', {
-          kind: 'aborted',
-          retryable: false,
-        })
-      }
-
       // Sleep — race against the abort promise so we wake up immediately
       // when the signal fires rather than waiting the full interval.
       const sleepCall = this.sleep(this.intervalMs)
@@ -317,6 +322,17 @@ export class GoogleFileStore {
         pollResp = await client.get({ name })
       } catch (e) {
         throw classifyError(e)
+      }
+
+      // Also guard here: the signal may have fired during client.get()
+      // before we looped back to the sleep race.
+      // Cast needed: TS 5.6 persists readonly-property narrowing across awaits,
+      // making it think `aborted` is still `false | undefined` after the preflight.
+      if ((signal?.aborted as boolean | undefined) === true) {
+        throw new LlmError('File upload polling aborted', {
+          kind: 'aborted',
+          retryable: false,
+        })
       }
 
       if (pollResp.state === 'ACTIVE') {

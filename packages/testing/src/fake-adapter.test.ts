@@ -33,6 +33,7 @@ const STUB_CTX: AdapterCtx = {
     info: () => undefined,
     warn: () => undefined,
     error: () => undefined,
+    debug: () => undefined,
   },
 }
 

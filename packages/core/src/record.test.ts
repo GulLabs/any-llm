@@ -45,6 +45,7 @@ function makeBaseInput(overrides: Partial<BuildRecordInput> = {}): BuildRecordIn
   return {
     callId: 'call-001',
     attemptId: 'attempt-001',
+    attemptNumber: 1,
     provider: 'google',
     model: 'gemini-2.5-pro',
     usage: makeUsage(),
@@ -176,13 +177,21 @@ describe('buildRecord — success path', () => {
   })
 
   it('maps rawUsage from usage.raw', () => {
-    const raw = { promptTokenCount: 100, candidatesTokenCount: 50, thoughtsTokenCount: 20 }
+    const raw = {
+      promptTokenCount: 100,
+      candidatesTokenCount: 50,
+      thoughtsTokenCount: 20,
+    }
     const r = buildRecord(makeBaseInput({ usage: makeUsage({ raw }) }))
     expect(r.rawUsage).toEqual(raw)
   })
 
   it('maps providerMetadata when provided', () => {
-    const meta = { safetyRatings: [{ category: 'HARM_CATEGORY_HATE_SPEECH', probability: 'NEGLIGIBLE' }] }
+    const meta = {
+      safetyRatings: [
+        { category: 'HARM_CATEGORY_HATE_SPEECH', probability: 'NEGLIGIBLE' },
+      ],
+    }
     const r = buildRecord(makeBaseInput({ providerMetadata: meta }))
     expect(r.providerMetadata).toEqual(meta)
   })
@@ -240,7 +249,9 @@ describe('buildRecord — success path', () => {
 
 describe('buildRecord — reasoning capture', () => {
   it('maps reasoningText when provided', () => {
-    const r = buildRecord(makeBaseInput({ reasoningText: 'Let me think step by step...' }))
+    const r = buildRecord(
+      makeBaseInput({ reasoningText: 'Let me think step by step...' }),
+    )
     expect(r.reasoningText).toBe('Let me think step by step...')
   })
 
@@ -266,15 +277,16 @@ describe('buildRecord — error path', () => {
       retryable: true,
       httpStatus: 503,
     })
-    const r = buildRecord(
-      makeBaseInput({ status: 'api_error', error }),
-    )
+    const r = buildRecord(makeBaseInput({ status: 'api_error', error }))
     expect(r.errorKind).toBe('server')
     expect(r.errorMessage).toBe('Service temporarily unavailable')
   })
 
   it('derives status from error.kind — parse_error', () => {
-    const error = new LlmError('schema mismatch', { kind: 'parse_error', retryable: false })
+    const error = new LlmError('schema mismatch', {
+      kind: 'parse_error',
+      retryable: false,
+    })
     const r = buildRecord(makeBaseInput({ status: 'ok', error }))
     expect(r.status).toBe('parse_error')
   })
@@ -292,7 +304,10 @@ describe('buildRecord — error path', () => {
   })
 
   it('derives status from error.kind — content_filter', () => {
-    const error = new LlmError('content filtered', { kind: 'content_filter', retryable: false })
+    const error = new LlmError('content filtered', {
+      kind: 'content_filter',
+      retryable: false,
+    })
     const r = buildRecord(makeBaseInput({ status: 'ok', error }))
     expect(r.status).toBe('content_filter')
   })
@@ -372,7 +387,7 @@ describe('buildRecord — gross/subset usage invariant', () => {
       totalTokens: 255_000,
     })
     const cost = makeCost({
-      microUsd: 1_750_000,  // example: 150k*input + 100k*cached + 5k*output
+      microUsd: 1_750_000, // example: 150k*input + 100k*cached + 5k*output
       details: { input: 1_500_000, cached: 200_000, output: 50_000 },
     })
     const r = buildRecord(makeBaseInput({ usage, cost }))
@@ -397,7 +412,7 @@ describe('buildRecord — usage invariant clamping (fail-open)', () => {
   it('clamps cachedInputTokens > inputTokens and emits an other warning', () => {
     const usage = makeUsage({
       inputTokens: 100,
-      cachedInputTokens: 200,  // violates: cached > input
+      cachedInputTokens: 200, // violates: cached > input
     })
     const r = buildRecord(makeBaseInput({ usage }))
 
@@ -408,15 +423,15 @@ describe('buildRecord — usage invariant clamping (fail-open)', () => {
     const warnings = r.warnings as Array<{ type: string; message: string }>
     expect(warnings).toBeDefined()
     expect(Array.isArray(warnings)).toBe(true)
-    expect(warnings.some(
-      w => w.type === 'other' && /cachedInputTokens/.test(w.message),
-    )).toBe(true)
+    expect(
+      warnings.some((w) => w.type === 'other' && /cachedInputTokens/.test(w.message)),
+    ).toBe(true)
   })
 
   it('clamps thinkingTokens > outputTokens and emits an other warning', () => {
     const usage = makeUsage({
       outputTokens: 50,
-      thinkingTokens: 100,  // violates: thinking > output
+      thinkingTokens: 100, // violates: thinking > output
     })
     const r = buildRecord(makeBaseInput({ usage }))
 
@@ -425,9 +440,9 @@ describe('buildRecord — usage invariant clamping (fail-open)', () => {
 
     const warnings = r.warnings as Array<{ type: string; message: string }>
     expect(warnings).toBeDefined()
-    expect(warnings.some(
-      w => w.type === 'other' && /thinkingTokens/.test(w.message),
-    )).toBe(true)
+    expect(
+      warnings.some((w) => w.type === 'other' && /thinkingTokens/.test(w.message)),
+    ).toBe(true)
   })
 
   it('does not modify valid usage — cached<=input and thinking<=output', () => {
@@ -448,7 +463,7 @@ describe('buildRecord — usage invariant clamping (fail-open)', () => {
   it('merges clamp warnings with any pre-existing caller warnings', () => {
     const usage = makeUsage({
       inputTokens: 100,
-      cachedInputTokens: 150,  // violates
+      cachedInputTokens: 150, // violates
     })
     const callerWarning = { type: 'unsupported-setting' as const, setting: 'topK' }
     const r = buildRecord(makeBaseInput({ usage, warnings: [callerWarning] }))
@@ -456,16 +471,16 @@ describe('buildRecord — usage invariant clamping (fail-open)', () => {
     const warnings = r.warnings as Array<{ type: string }>
     expect(warnings).toBeDefined()
     // Both the caller warning and the clamp warning are present.
-    expect(warnings.some(w => w.type === 'unsupported-setting')).toBe(true)
-    expect(warnings.some(w => w.type === 'other')).toBe(true)
+    expect(warnings.some((w) => w.type === 'unsupported-setting')).toBe(true)
+    expect(warnings.some((w) => w.type === 'other')).toBe(true)
   })
 
   it('clamps both cachedInputTokens and thinkingTokens when both violate', () => {
     const usage = makeUsage({
       inputTokens: 10,
       outputTokens: 20,
-      cachedInputTokens: 50,   // > inputTokens
-      thinkingTokens: 40,      // > outputTokens
+      cachedInputTokens: 50, // > inputTokens
+      thinkingTokens: 40, // > outputTokens
     })
     const r = buildRecord(makeBaseInput({ usage }))
 

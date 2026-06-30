@@ -50,6 +50,7 @@ import type { LlmCallRecord, JsonValue } from '@gullabs/core'
 //   reasoning_text:      text (nullable)
 //   error_kind:          text (nullable)
 //   error_message:       text (nullable)
+//   attempt_number:      integer NOT NULL
 //   metadata:            jsonb NOT NULL
 //   created_at:          timestamptz DEFAULT now()
 // ---------------------------------------------------------------------------
@@ -83,6 +84,7 @@ const CREATE_TABLE_SQL = /* sql */ `
     reasoning_text        TEXT,
     error_kind            TEXT,
     error_message         TEXT,
+    attempt_number        INTEGER      NOT NULL,
     metadata              JSONB        NOT NULL,
     created_at            TIMESTAMPTZ  DEFAULT now()
   );
@@ -99,6 +101,7 @@ function makeRecord(overrides: Partial<LlmCallRecord> = {}): LlmCallRecord {
     recordSchemaVersion: 1,
     callId: 'call_integration_1',
     attemptId: 'attempt_integration_1',
+    attemptNumber: 1,
     callSiteId: 'site_integration',
     provider: 'google',
     model: 'gemini-2.5-pro',
@@ -116,8 +119,15 @@ function makeRecord(overrides: Partial<LlmCallRecord> = {}): LlmCallRecord {
     costMicroUsd: 789,
     pricingVersion: 'gemini-2026-06-29',
     tokenDetails: { input: 200, output: 40 } satisfies JsonValue,
-    rawUsage: { promptTokenCount: 200, candidatesTokenCount: 40 } satisfies JsonValue,
-    providerMetadata: { safetyRatings: [{ category: 'HARM_CATEGORY_HATE_SPEECH', probability: 'NEGLIGIBLE' }] } satisfies JsonValue,
+    rawUsage: {
+      promptTokenCount: 200,
+      candidatesTokenCount: 40,
+    } satisfies JsonValue,
+    providerMetadata: {
+      safetyRatings: [
+        { category: 'HARM_CATEGORY_HATE_SPEECH', probability: 'NEGLIGIBLE' },
+      ],
+    } satisfies JsonValue,
     warnings: [{ type: 'other', message: 'test warning' }] satisfies JsonValue,
     generationConfig: { temperature: 0.7, topP: 0.9 } satisfies JsonValue,
     reasoningText: 'integration thought summary',
@@ -201,9 +211,14 @@ describe('drizzleUsageSink — real PGlite integration', () => {
 
     // JSONB lanes — verify deep equality (real DB deserialization)
     expect(row.tokenDetails).toEqual({ input: 200, output: 40 })
-    expect(row.rawUsage).toEqual({ promptTokenCount: 200, candidatesTokenCount: 40 })
+    expect(row.rawUsage).toEqual({
+      promptTokenCount: 200,
+      candidatesTokenCount: 40,
+    })
     expect(row.providerMetadata).toEqual({
-      safetyRatings: [{ category: 'HARM_CATEGORY_HATE_SPEECH', probability: 'NEGLIGIBLE' }],
+      safetyRatings: [
+        { category: 'HARM_CATEGORY_HATE_SPEECH', probability: 'NEGLIGIBLE' },
+      ],
     })
     expect(row.warnings).toEqual([{ type: 'other', message: 'test warning' }])
     expect(row.generationConfig).toEqual({ temperature: 0.7, topP: 0.9 })
@@ -212,6 +227,9 @@ describe('drizzleUsageSink — real PGlite integration', () => {
     expect(row.reasoningText).toBe('integration thought summary')
     expect(row.errorKind).toBeNull()
     expect(row.errorMessage).toBeNull()
+
+    // attemptNumber round-trips through the real DB.
+    expect(row.attemptNumber).toBe(1)
 
     // Host metadata JSONB
     expect(row.metadata).toEqual({ tenantId: 'tenant_int', runId: 'run_42' })
@@ -232,7 +250,10 @@ describe('drizzleUsageSink — real PGlite integration', () => {
     // Second insert with same attemptId — should be silently ignored
     await sink.record(record)
 
-    const rows = await db.select().from(llmCalls).where(eq(llmCalls.attemptId, 'idempotent_attempt'))
+    const rows = await db
+      .select()
+      .from(llmCalls)
+      .where(eq(llmCalls.attemptId, 'idempotent_attempt'))
     expect(rows).toHaveLength(1)
   })
 
@@ -241,13 +262,24 @@ describe('drizzleUsageSink — real PGlite integration', () => {
     const db = await createTestDb()
     const sink = drizzleUsageSink(asInsertableDb(db))
 
-    const first = makeRecord({ attemptId: 'dup_attempt', status: 'ok', latencyMs: 100 })
-    const second = makeRecord({ attemptId: 'dup_attempt', status: 'api_error', latencyMs: 999 })
+    const first = makeRecord({
+      attemptId: 'dup_attempt',
+      status: 'ok',
+      latencyMs: 100,
+    })
+    const second = makeRecord({
+      attemptId: 'dup_attempt',
+      status: 'api_error',
+      latencyMs: 999,
+    })
 
     await sink.record(first)
     await sink.record(second)
 
-    const rows = await db.select().from(llmCalls).where(eq(llmCalls.attemptId, 'dup_attempt'))
+    const rows = await db
+      .select()
+      .from(llmCalls)
+      .where(eq(llmCalls.attemptId, 'dup_attempt'))
     expect(rows).toHaveLength(1)
     // The first row must be preserved, not the second.
     expect(rows[0]!.status).toBe('ok')
@@ -273,7 +305,10 @@ describe('drizzleUsageSink — real PGlite integration', () => {
 
     await sink.record(record)
 
-    const rows = await db.select().from(llmCalls).where(eq(llmCalls.attemptId, 'ts_test_attempt'))
+    const rows = await db
+      .select()
+      .from(llmCalls)
+      .where(eq(llmCalls.attemptId, 'ts_test_attempt'))
     expect(rows).toHaveLength(1)
     const row = rows[0]!
 
@@ -300,7 +335,10 @@ describe('drizzleUsageSink — real PGlite integration', () => {
 
     await sink.record(record)
 
-    const rows = await db.select().from(llmCalls).where(eq(llmCalls.attemptId, 'error_attempt'))
+    const rows = await db
+      .select()
+      .from(llmCalls)
+      .where(eq(llmCalls.attemptId, 'error_attempt'))
     expect(rows).toHaveLength(1)
     const row = rows[0]!
     expect(row.status).toBe('api_error')
@@ -313,9 +351,27 @@ describe('drizzleUsageSink — real PGlite integration', () => {
     const db = await createTestDb()
     const sink = drizzleUsageSink(asInsertableDb(db))
 
-    await sink.record(makeRecord({ attemptId: 'multi_1', callId: 'call_multi_1', latencyMs: 111 }))
-    await sink.record(makeRecord({ attemptId: 'multi_2', callId: 'call_multi_2', latencyMs: 222 }))
-    await sink.record(makeRecord({ attemptId: 'multi_3', callId: 'call_multi_3', latencyMs: 333 }))
+    await sink.record(
+      makeRecord({
+        attemptId: 'multi_1',
+        callId: 'call_multi_1',
+        latencyMs: 111,
+      }),
+    )
+    await sink.record(
+      makeRecord({
+        attemptId: 'multi_2',
+        callId: 'call_multi_2',
+        latencyMs: 222,
+      }),
+    )
+    await sink.record(
+      makeRecord({
+        attemptId: 'multi_3',
+        callId: 'call_multi_3',
+        latencyMs: 333,
+      }),
+    )
 
     const rows = await db.select().from(llmCalls)
     expect(rows).toHaveLength(3)
