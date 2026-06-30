@@ -51,7 +51,7 @@ const codeReview = defineCallSite({
 const auth = { apiKey: process.env.MY_APP_GEMINI_KEY! }
 
 // 4. Run it — pass auth on every call
-const result = await client.runStructured(codeReview, { auth, vars: { diff: myDiff } })
+const result = await client.runStructured(codeReview, { diff: myDiff }, { auth })
 
 // All four goals satisfied:
 console.log(result.output)          // { rating: 4, summary: '...' }  — Zod-validated
@@ -71,7 +71,8 @@ every call:
 
 ```ts
 client.generate(request, { auth: { apiKey } })
-client.runStructured(callSite, { auth: { apiKey }, vars: { ... } })
+client.runStructured(callSite, { auth: { apiKey } })           // no template vars
+client.runStructured(callSite, { ...vars }, { auth: { apiKey } })  // with template vars
 ```
 
 `auth` is required. `AuthMaterial` is `{ apiKey: string }`. Where the key comes from is entirely
@@ -81,7 +82,7 @@ your concern — read it from an environment variable, a secret vault, a databas
 // For an 18-call loop, build auth once and pass it each time:
 const auth = { apiKey: process.env.MY_APP_GEMINI_KEY! }
 for (const item of items) {
-  results.push(await client.runStructured(callSite, { auth, vars: { item } }))
+  results.push(await client.runStructured(callSite, { item }, { auth }))
 }
 ```
 
@@ -117,7 +118,7 @@ The design is **Ports & Adapters (hexagonal)**: the core engine depends only on 
 | [`@gullabs/core`](./packages/core) | Types, ports, engine (`createClient`, `generate`, `runStructured`), cost computation, record builder. No provider dependencies. |
 | [`@gullabs/google`](./packages/google) | Gemini adapter over `@google/genai`. Maps Flex tier, thinking config, multimodal parts, structured output, and error classification. Optional `GoogleFileStore` and `GoogleCacheStore` helpers for Gemini Files API and Context Cache API. |
 | [`@gullabs/drizzle`](./packages/drizzle) | Reference Postgres schema (`llm_calls` table) and `drizzleUsageSink` — a `UsageSink` port implementation for Drizzle ORM. |
-| [`@gullabs/testing`](./packages/testing) | Test fakes: `FakeClock`, `FakeIds`, `RecordingSink`, `makeFakeGemini`, `fakeGeminiResponse`, `fakeAuth`. No network in tests. |
+| [`@gullabs/testing`](./packages/testing) | Test fakes: `FakeClock`, `FakeIds`, `RecordingSink`, `FakeAdapter`, `makeFakeGemini`, `fakeGeminiResponse`. No network in tests. |
 
 ## Multimodal parts
 
