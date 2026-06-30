@@ -10,7 +10,7 @@
 import { describe, it, expect } from 'vitest'
 import { createClient, geminiPricingSource, LlmError } from './index.js'
 import type { RateLimiter, Release } from './index.js'
-import { FakeAdapter, fakeAuth, FakeClock, FakeIds } from '@gullabs/testing'
+import { FakeAdapter, FakeClock, FakeIds } from '@gullabs/testing'
 import type { AdapterResult, Usage } from './index.js'
 
 // ---------------------------------------------------------------------------
@@ -35,7 +35,7 @@ function makeSuccessResult(overrides?: Partial<AdapterResult>): AdapterResult {
 }
 
 const PRICING = geminiPricingSource()
-const AUTH = fakeAuth({ apiKey: 'test-key' })
+const TEST_AUTH = { apiKey: 'test-key' }
 
 // ---------------------------------------------------------------------------
 // Spy limiter factory
@@ -71,7 +71,6 @@ function makeClientWithSpy(spy: SpyLimiter) {
   const adapter = new FakeAdapter('google', makeSuccessResult())
   const client = createClient({
     adapters: [adapter],
-    auth: AUTH,
     pricing: PRICING,
     clock,
     ids,
@@ -101,7 +100,7 @@ describe('engine — rateLimiter integration', () => {
     await client.generate({
       model: 'gemini-2.5-flash',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
-    })
+    }, { auth: TEST_AUTH })
 
     expect(acquireCalledBeforeAdapter).toBe(true)
     expect(spy.acquireCalls).toHaveLength(1)
@@ -115,7 +114,7 @@ describe('engine — rateLimiter integration', () => {
     await client.generate({
       model: 'gemini-2.5-flash',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
-    })
+    }, { auth: TEST_AUTH })
 
     expect(spy.releaseCalls).toBe(1)
   })
@@ -127,7 +126,6 @@ describe('engine — rateLimiter integration', () => {
     const adapter = new FakeAdapter('google', { status: 500 })
     const client = createClient({
       adapters: [adapter],
-      auth: AUTH,
       pricing: PRICING,
       clock,
       ids,
@@ -138,7 +136,7 @@ describe('engine — rateLimiter integration', () => {
       client.generate({
         model: 'gemini-2.5-flash',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
-      }),
+      }, { auth: TEST_AUTH }),
     ).rejects.toBeInstanceOf(LlmError)
 
     // Release must still have been called despite the adapter error.
@@ -157,7 +155,6 @@ describe('engine — rateLimiter integration', () => {
     const adapter = new FakeAdapter('google', makeSuccessResult())
     const client = createClient({
       adapters: [adapter],
-      auth: AUTH,
       pricing: PRICING,
       clock,
       ids,
@@ -168,7 +165,7 @@ describe('engine — rateLimiter integration', () => {
       .generate({
         model: 'gemini-2.5-flash',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
-      })
+      }, { auth: TEST_AUTH })
       .catch((e: unknown) => e)
 
     expect(err).toBeInstanceOf(LlmError)
@@ -203,7 +200,6 @@ describe('engine — rateLimiter integration', () => {
 
     const client = createClient({
       adapters: [adapter],
-      auth: AUTH,
       pricing: PRICING,
       clock,
       ids,
@@ -215,7 +211,7 @@ describe('engine — rateLimiter integration', () => {
         model: 'gemini-2.5-flash',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
         config: { timeoutMs: 20 },
-      })
+      }, { auth: TEST_AUTH })
       .catch((e: unknown) => e)
 
     expect(err).toBeInstanceOf(LlmError)
@@ -245,7 +241,6 @@ describe('engine — rateLimiter integration', () => {
 
     const client = createClient({
       adapters: [adapter],
-      auth: AUTH,
       pricing: PRICING,
       clock,
       ids,
@@ -262,7 +257,7 @@ describe('engine — rateLimiter integration', () => {
           model: 'gemini-2.5-flash',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
         },
-        { signal: ac.signal },
+        { auth: TEST_AUTH, signal: ac.signal },
       )
       .catch((e: unknown) => e)
 

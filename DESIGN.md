@@ -12,7 +12,9 @@ forward-compatibility decisions that don't fit cleanly in either of the above.
 
 **P1 — The host owns the world; the library owns the contract.**
 Everything environmental (DB, logger, telemetry sink, clock, id generation, secrets) is a port
-the host implements. The core is pure and deterministic given its ports.
+the host implements. Credentials are no exception: the caller passes `auth` on every call; the
+library never reads from `process.env` or any ambient source. The core is pure and deterministic
+given its ports.
 
 **P2 — Typed core + raw passthrough + raw capture.**
 Every place where providers diverge has three lanes:
@@ -51,6 +53,36 @@ indexing requires them.
 A call site's provider is derived from the resolved model's descriptor, not hard-coded in source.
 This is what makes a model swap from a UI or DB flag actually work rather than requiring a code
 change.
+
+---
+
+## Auth and Credentials
+
+**No-ambient-reads invariant.** The library never reads credentials from `process.env`, a
+credentials file, an instance metadata service, or any other ambient source. There is no
+`envAuth()` helper and no `AuthProvider` port. The `AuthMaterial` type is `{ apiKey: string }`.
+
+**Per-call model.** `auth` is a required option on every `generate()` and `runStructured()` call:
+
+```ts
+client.generate(request, { auth: { apiKey } })
+client.runStructured(callSite, { auth: { apiKey }, vars: { ... } })
+```
+
+The caller decides where the key comes from. For a multi-call loop, build the `auth` object once
+outside the loop and pass it on each iteration.
+
+**CI enforcement.** A source-invariant test in the CI pipeline asserts that no file under
+`packages/core/src` or `packages/google/src` imports or references `process.env`, and that
+neither `AuthProvider` nor `envAuth` is re-exported from any package entrypoint.
+
+**Vertex AI.** Removed in v0.2.x because it depended on Google Application Default Credentials
+(ADC) — ambient discovery from environment variables, credential files, or the GCE metadata
+service — which contradicts the no-ambient-reads invariant. It is on the roadmap to return with
+an explicit, non-ADC credential shape. See ROADMAP.md.
+
+**Secret redaction.** `auth.apiKey` is redacted from any persisted `LlmCallRecord` and from
+error messages before they are written to the sink (via `redactSecrets` in `buildRecord`).
 
 ---
 
@@ -211,9 +243,9 @@ accommodate a `runStream` method. Records are written on every terminal stream o
 abort, with `usage.source = 'estimated'` when the provider did not return usage before the stream
 ended.
 
-**Additional providers.** The `ProviderAdapter` port and routing infrastructure are ready. The
-`AuthMaterial` union already covers both `{ apiKey }` and `{ vertex }` auth forms; additional
-forms (OAuth token, bearer token) would extend the union.
+**Additional providers.** The `ProviderAdapter` port and routing infrastructure are ready.
+`AuthMaterial` is currently `{ apiKey: string }` only. Additional forms (OAuth token, bearer
+token) would extend the union. Vertex AI specifically is on the roadmap; see ROADMAP.md.
 
 **Function calling.** The `Part` union's `kind` discriminant is reserved for future `tool-call`
 and `tool-result` variants. `LlmRequest` does not yet carry a `tools` field.

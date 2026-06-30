@@ -23,7 +23,6 @@ import {
   FakeClock,
   FakeIds,
   RecordingSink,
-  fakeAuth,
 } from '@gullabs/testing'
 import { geminiAdapter } from './adapter.js'
 import { zodToGeminiSchema } from './schema.js'
@@ -927,7 +926,6 @@ describe('full-stack integration', () => {
 
     const client = createClient({
       adapters: [geminiAdapter({ client: fakeClient })],
-      auth: fakeAuth({ apiKey: 'test-integration-key' }),
       pricing: geminiPricingSource(),
       sink,
       clock,
@@ -950,7 +948,7 @@ describe('full-stack integration', () => {
         serviceTier: 'flex',
         reasoning: { includeThoughts: true, budgetTokens: 4096 },
       },
-    })
+    }, { auth: { apiKey: 'test-integration-key' } })
 
     // Validate the result
     expect(result.output).toEqual({ answer: 'Paris', confidence: 0.99 })
@@ -1000,7 +998,6 @@ describe('full-stack integration', () => {
 
     const client = createClient({
       adapters: [geminiAdapter({ client: fakeClient })],
-      auth: fakeAuth({ apiKey: 'test-key' }),
       pricing: geminiPricingSource(),
       sink,
     })
@@ -1009,7 +1006,7 @@ describe('full-stack integration', () => {
       client.generate({
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Bad prompt' }] }],
-      }),
+      }, { auth: { apiKey: 'test-key' } }),
     ).rejects.toMatchObject({ kind: 'content_filter' })
 
     // Error record should still be persisted (fail-closed call, fail-open sink)
@@ -1080,7 +1077,6 @@ describe('Standard Schema — non-Zod vendor (e.g. valibot)', () => {
     // Use createClient to test the full engine validation path.
     const llmClient = createClient({
       adapters: [geminiAdapter({ client })],
-      auth: fakeAuth({ apiKey: 'test-key' }),
       pricing: geminiPricingSource(),
     })
 
@@ -1088,7 +1084,7 @@ describe('Standard Schema — non-Zod vendor (e.g. valibot)', () => {
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Name?' }] }],
       output: { schema },
-    })
+    }, { auth: { apiKey: 'test-key' } })
 
     // Engine validated and returned the typed output.
     expect(result.output).toEqual({ name: 'Bob' })
@@ -1108,7 +1104,6 @@ describe('Standard Schema — non-Zod vendor (e.g. valibot)', () => {
 
     const llmClient = createClient({
       adapters: [geminiAdapter({ client })],
-      auth: fakeAuth({ apiKey: 'test-key' }),
       pricing: geminiPricingSource(),
     })
 
@@ -1117,7 +1112,7 @@ describe('Standard Schema — non-Zod vendor (e.g. valibot)', () => {
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Name?' }] }],
         output: { schema },
-      }),
+      }, { auth: { apiKey: 'test-key' } }),
     ).rejects.toThrow(LlmError)
 
     // Verify the error kind
@@ -1126,7 +1121,7 @@ describe('Standard Schema — non-Zod vendor (e.g. valibot)', () => {
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Name?' }] }],
         output: { schema },
-      })
+      }, { auth: { apiKey: 'test-key' } })
     } catch (err) {
       expect(err).toBeInstanceOf(LlmError)
       expect((err as LlmError).kind).toBe('parse_error')
@@ -1516,7 +1511,6 @@ describe('grounding — conflict guard', () => {
 
     const llmClient = createClient({
       adapters: [geminiAdapter({ client: fakeClient })],
-      auth: fakeAuth({ apiKey: 'test-key' }),
       pricing: geminiPricingSource(),
       sink,
     })
@@ -1529,7 +1523,7 @@ describe('grounding — conflict guard', () => {
         config: {
           providerOptions: { google: { tools: [{ googleSearch: {} }] } },
         },
-      }),
+      }, { auth: { apiKey: 'test-key' } }),
     ).rejects.toMatchObject({ kind: 'bad_request' })
 
     expect(sink.records).toHaveLength(1)
@@ -1628,7 +1622,6 @@ describe('grounding — providerMetadata merge', () => {
     const sink = new RecordingSink()
     const llmClient = createClient({
       adapters: [geminiAdapter({ client: fakeClient })],
-      auth: fakeAuth({ apiKey: 'test-key' }),
       pricing: geminiPricingSource(),
       sink,
     })
@@ -1637,7 +1630,7 @@ describe('grounding — providerMetadata merge', () => {
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Capital of France?' }] }],
       config: { providerOptions: { google: { tools: [{ googleSearch: {} }] } } },
-    })
+    }, { auth: { apiKey: 'test-key' } })
 
     const resultMeta = result.providerMetadata as Record<string, unknown> | undefined
     expect(resultMeta?.['groundingMetadata']).toEqual(fakeGrounding)
@@ -1744,90 +1737,6 @@ describe('fixed-sampling invariant re-assertion after providerOptions merge', ()
     // SDK MUST receive temperature for tunable models
     const call = client.calls[0] as { config?: { temperature?: number } }
     expect(call?.config?.temperature).toBe(0.7)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// FIX A-1. Vertex flex routing headers
-// ---------------------------------------------------------------------------
-
-/** Vertex auth context (non-apiKey path). */
-const VERTEX_CTX: AdapterCtx = {
-  auth: { vertex: { project: 'my-project', location: 'us-central1' } },
-  logger: { info() {}, warn() {}, error() {} },
-}
-
-describe('FIX A-1: Vertex flex routing headers', () => {
-  it('injects X-Vertex-AI-LLM-* headers when auth is Vertex and tier is flex', async () => {
-    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
-    const adapter = geminiAdapter({ client })
-
-    await adapter.run(makeResolvedReq({ config: { serviceTier: 'flex' } }), VERTEX_CTX)
-
-    const call = client.calls[0] as {
-      config?: { httpOptions?: { headers?: Record<string, string> } }
-    }
-    expect(call?.config?.httpOptions?.headers?.['X-Vertex-AI-LLM-Request-Type']).toBe('shared')
-    expect(call?.config?.httpOptions?.headers?.['X-Vertex-AI-LLM-Shared-Request-Type']).toBe('flex')
-  })
-
-  it('does NOT inject Vertex headers when auth is API key (not Vertex)', async () => {
-    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
-    const adapter = geminiAdapter({ client })
-
-    await adapter.run(makeResolvedReq({ config: { serviceTier: 'flex' } }), FAKE_CTX)
-
-    const call = client.calls[0] as {
-      config?: { httpOptions?: { headers?: Record<string, string> } }
-    }
-    expect(call?.config?.httpOptions?.headers?.['X-Vertex-AI-LLM-Request-Type']).toBeUndefined()
-    expect(call?.config?.httpOptions?.headers?.['X-Vertex-AI-LLM-Shared-Request-Type']).toBeUndefined()
-  })
-
-  it('does NOT inject Vertex headers when tier is standard (even with Vertex auth)', async () => {
-    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
-    const adapter = geminiAdapter({ client })
-
-    await adapter.run(makeResolvedReq({ config: { serviceTier: 'standard' } }), VERTEX_CTX)
-
-    const call = client.calls[0] as {
-      config?: { httpOptions?: { headers?: Record<string, string> } }
-    }
-    expect(call?.config?.httpOptions?.headers?.['X-Vertex-AI-LLM-Request-Type']).toBeUndefined()
-  })
-
-  it('preserves caller httpOptions.headers; our Vertex-tier headers win on conflict', async () => {
-    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
-    const adapter = geminiAdapter({ client })
-
-    await adapter.run(
-      makeResolvedReq({
-        config: {
-          serviceTier: 'flex',
-          providerOptions: {
-            google: {
-              httpOptions: {
-                headers: {
-                  'X-Custom-Header': 'caller-value',
-                  // caller tries to set this; ours must win
-                  'X-Vertex-AI-LLM-Request-Type': 'caller-override',
-                },
-              },
-            },
-          },
-        },
-      }),
-      VERTEX_CTX,
-    )
-
-    const call = client.calls[0] as {
-      config?: { httpOptions?: { headers?: Record<string, string> } }
-    }
-    // Custom caller header preserved
-    expect(call?.config?.httpOptions?.headers?.['X-Custom-Header']).toBe('caller-value')
-    // Our Vertex tier headers win on conflict
-    expect(call?.config?.httpOptions?.headers?.['X-Vertex-AI-LLM-Request-Type']).toBe('shared')
-    expect(call?.config?.httpOptions?.headers?.['X-Vertex-AI-LLM-Shared-Request-Type']).toBe('flex')
   })
 })
 

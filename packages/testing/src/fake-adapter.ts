@@ -1,9 +1,9 @@
 /**
- * FakeAdapter and fakeAuth — port-level fakes for engine integration tests.
+ * FakeAdapter — port-level fake for engine integration tests.
  *
- * These fakes operate at the {@link ProviderAdapter} / {@link AuthProvider}
- * level (not the SDK level), letting tests drive the engine pipeline without
- * any provider SDK or network dependency.
+ * Operates at the {@link ProviderAdapter} level (not the SDK level),
+ * letting tests drive the engine pipeline without any provider SDK or
+ * network dependency.
  *
  * @module
  */
@@ -13,8 +13,6 @@ import type {
   ResolvedRequest,
   AdapterCtx,
   AdapterResult,
-  AuthMaterial,
-  AuthProvider,
 } from '@gullabs/core'
 
 // ---------------------------------------------------------------------------
@@ -149,26 +147,3 @@ export class FakeAdapter implements ProviderAdapter {
   }
 }
 
-// ---------------------------------------------------------------------------
-// fakeAuth
-// ---------------------------------------------------------------------------
-
-/**
- * Returns an {@link AuthProvider} that always resolves to the given material,
- * regardless of the requested provider name.
- *
- * @param material - Credential material to return for every `credentials()` call.
- *
- * @example
- * ```ts
- * const auth = fakeAuth({ apiKey: 'test-key' })
- * await auth.credentials('google')  // → { apiKey: 'test-key' }
- * ```
- */
-export function fakeAuth(material: AuthMaterial): AuthProvider {
-  return {
-    async credentials(_provider: string): Promise<AuthMaterial> {
-      return material
-    },
-  }
-}

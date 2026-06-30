@@ -35,7 +35,6 @@ import {
   FakeClock,
   FakeIds,
   RecordingSink,
-  fakeAuth,
 } from '@gullabs/testing'
 import type {
   GeminiResponseLike,
@@ -62,7 +61,7 @@ function mulberry32(seed: number): () => number {
 // ---------------------------------------------------------------------------
 
 const PRICING = geminiPricingSource()
-const AUTH = fakeAuth({ apiKey: 'test-key' })
+const TEST_AUTH = { apiKey: 'test-key' }
 const MESSAGES = [{ role: 'user' as const, parts: [{ kind: 'text' as const, text: 'Hi' }] }]
 
 /** Minimal resolved request for direct adapter.run() tests. */
@@ -576,7 +575,6 @@ describe('adapter-stress: non-JSON text + structured output → parse_error', ()
       const sink = new RecordingSink()
       const client = createClient({
         adapters: [geminiAdapter({ client: fakeClient })],
-        auth: AUTH,
         pricing: PRICING,
         sink,
         clock: new FakeClock(),
@@ -588,7 +586,7 @@ describe('adapter-stress: non-JSON text + structured output → parse_error', ()
           model: 'gemini-2.5-pro',
           messages: MESSAGES,
           output: { schema },
-        }),
+        }, { auth: TEST_AUTH }),
       ).rejects.toMatchObject({ kind: 'parse_error', retryable: false })
 
       const rec = sink.last()!
@@ -639,14 +637,14 @@ describe('adapter-stress: non-JSON text + structured output → parse_error', ()
       const sink = new RecordingSink()
       const client = createClient({
         adapters: [geminiAdapter({ client: fakeClient })],
-        auth: AUTH, pricing: PRICING, sink,
+        pricing: PRICING, sink,
         clock: new FakeClock(), ids: new FakeIds(),
       })
 
       const result = await client.generate({
         model: 'gemini-2.5-pro', messages: MESSAGES,
         output: { schema },
-      })
+      }, { auth: TEST_AUTH })
 
       expect(result.output).toEqual({ answer })
       expect(sink.last()!.status).toBe('ok')
@@ -753,11 +751,11 @@ describe('adapter-stress: injected HTTP errors → correct classification', () =
       const sink = new RecordingSink()
       const client = createClient({
         adapters: [geminiAdapter({ client: fakeClient })],
-        auth: AUTH, pricing: PRICING, sink,
+        pricing: PRICING, sink,
         clock: new FakeClock(), ids: new FakeIds(),
       })
 
-      const caught = await client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES })
+      const caught = await client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES }, { auth: TEST_AUTH })
         .then(() => null, (e: unknown) => e)
 
       expect(caught, `iter ${i} (status ${status}): must be LlmError`).toBeInstanceOf(LlmError)

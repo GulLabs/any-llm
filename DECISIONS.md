@@ -681,3 +681,118 @@ by the Vertex AI backend independently of the body field.
 - Vertex Flex calls are billed at the Flex rate when the headers are injected correctly. Hosts
   that bypass the adapter and call Vertex directly must inject these headers themselves.
 - If Google fixes either bug, the mitigations remain harmless (belt-and-suspenders).
+
+---
+
+## ADR-019: Per-Call API Key Only; No Env/Ambient Auth, No AuthProvider Port
+
+**Status:** Accepted
+
+**Context:**
+Early prototypes of the library included an `AuthProvider` port — a pluggable credential resolver
+with implementations like `envAuth()` (reads `GEMINI_API_KEY` from `process.env`) and a
+context-aware resolver that could select credentials based on request metadata. Client-level auth
+was wired as `createClient({ auth: envAuth() })`.
+
+This design shifted secret-source logic into the library: the engine's pipeline called
+`auth.credentials(provider)` before each adapter invocation, so the library was in the business
+of discovering and supplying credentials. That's a concern that belongs entirely in host
+application code.
+
+A secondary problem: Vertex AI auth used Google Application Default Credentials (ADC) — ambient
+discovery from environment variables (`GOOGLE_APPLICATION_CREDENTIALS`), well-known credential
+files, or the GCE metadata service. ADC is fundamentally an ambient-read pattern that cannot be
+made explicit without a new credential shape.
+
+**Decision:**
+Remove the `AuthProvider` port, `envAuth()`, and all client-level auth. `AuthMaterial` is
+narrowed to `{ apiKey: string }`. The caller passes `{ auth: { apiKey } }` on every `generate()`
+and `runStructured()` call. `auth` is required; there is no default and no fallback.
+
+Vertex AI auth is removed entirely for this version. It will return when an explicit, non-ADC
+credential shape is designed (see ROADMAP.md).
+
+A CI source-invariant test asserts:
+1. No file under `packages/core/src` or `packages/google/src` reads `process.env`.
+2. Neither `AuthProvider` nor `envAuth` appears in any package entrypoint export.
+
+**Alternatives considered:**
+- *AuthProvider port + context-aware resolver + per-call override* — the original design. Rejected
+  as over-engineering for v0: it added a port, an injection point in `ClientConfig`, three
+  implementations, and a resolution step in the engine pipeline, all to solve a problem that host
+  application code solves trivially in one line (`const auth = { apiKey: process.env.KEY! }`).
+- *Client-level auth with per-call override* — a single `createClient({ auth })` plus optional
+  per-call override. Rejected because the "optional override" path is the only path callers
+  actually need; the client-level default adds implicit state and makes the engine impure relative
+  to its inputs.
+- *Keep envAuth for convenience* — rejected; convenience functions that read ambient env are the
+  entire class of bug this decision eliminates. Documenting "don't use envAuth in prod" is weaker
+  than not shipping envAuth.
+
+**Consequences:**
+- **Breaking.** All callers must pass `auth` on every call. There is no migration path that
+  preserves the old client-level auth; callers must add `{ auth: { apiKey } }` to each call site.
+- Vertex AI is not supported in this version. Callers targeting Vertex must wait for the roadmap
+  item or implement their own adapter.
+- The engine pipeline no longer has an `AuthProvider` step. `auth.apiKey` arrives with the call
+  options and is forwarded directly to the adapter.
+- The no-ambient-reads guarantee is enforced by CI, not by convention. Regressions are caught
+  before merge.
+- `AuthMaterial` is a narrower type than before; any host code that branched on `{ vertex: ... }`
+  must be updated.
+
+---
+
+## ADR-020: Auth Extension Seams — Keep `AuthMaterial` Bare; Defer Discriminant and Translator Consolidation
+
+**Status:** Accepted
+
+**Context:**
+Following ADR-019's removal of the `AuthProvider` port, a follow-up panel review (architect +
+YAGNI reviewer + codex signoff) examined whether `AuthMaterial` should proactively grow a `kind`
+discriminant and whether the three `GoogleGenAI` client-construction sites
+(`buildGoogleClient` in `adapter.ts`, `buildCachesClient` in `cache-store.ts`,
+`buildFilesClient` in `file-store.ts`) should be consolidated into a shared translator.
+
+**Decision:**
+Defer both changes. `AuthMaterial` stays as `{ apiKey: string }` with no `kind` field. The three
+client-construction sites remain as independent leaf constructors.
+
+**Rationale:**
+
+1. **Single-kind discriminant is dead metadata.** With exactly one credential kind, a `kind`
+   field carries no information and taxes every caller that must now type `{ kind: 'api-key',
+   apiKey: '...' }` instead of `{ apiKey: '...' }`. A discriminant earns its keep only when there
+   are two or more kinds to discriminate between.
+
+2. **Adding a kind later is a trivial, safe additive change.** When a second kind exists (e.g.
+   Vertex service-account material or an OAuth bearer token), the migration is ~4 files and ~20
+   lines: turn `AuthMaterial` into a discriminated union, update `requireAuth()` in `engine.ts`,
+   and update the three `buildXxxClient` functions. TypeScript exhaustiveness checks will surface
+   every narrowing site automatically; nothing can be silently missed.
+
+3. **Translator consolidation buys nothing now.** The three client-construction sites are leaf
+   constructors that differ only in which `GoogleGenAI` sub-API they wrap (`ai.models`,
+   `ai.caches`, `ai.files`). Sharing a single translator would tie unrelated packages together
+   and add a cross-package import for no practical benefit.
+
+**The real future-design concern is not the `AuthMaterial` shape.** It is the long-lived
+`GoogleCacheStore` and `GoogleFileStore` instances that capture auth at construction time and
+memoize a single SDK client from it. For static API keys this is correct. For short-lived
+refreshable credentials (OAuth/STS tokens) this memoized client would silently hold stale
+credentials for the lifetime of the store. The primary design work when refreshable creds arrive
+is these two stores, not the `AuthMaterial` type or the discriminant. Both stores are annotated
+with this note (see `cache-store.ts` and `file-store.ts`).
+
+**For the engine resolver:** when refreshable credentials are needed, widen `opts.auth` to
+`AuthMaterial | ((ctx) => Promise<AuthMaterial>)` and resolve in `requireAuth()` once per logical
+call. Policy questions deferred to that time: per-call vs. per-attempt resolution, mid-attempt
+expiry handling, and resolver-failure classification. See the JSDoc on `requireAuth()` in
+`engine.ts` for the full set of open questions.
+
+**Consequences:**
+- No code change from this ADR. All changes are documentation and comments.
+- The three `buildXxxClient` sites and `requireAuth()` are marked as the exact update targets for
+  the future second credential kind.
+- Future contributors adding a credential kind should start from this ADR and the annotated
+  seams rather than searching the codebase.

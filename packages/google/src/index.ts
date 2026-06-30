@@ -4,13 +4,17 @@
  * @example
  * ```ts
  * import { geminiAdapter } from '@gullabs/google'
- * import { createClient, geminiPricingSource, envAuth } from '@gullabs/core'
+ * import { createClient, geminiPricingSource } from '@gullabs/core'
  *
  * const client = createClient({
  *   adapters: [geminiAdapter()],
- *   auth: envAuth(),
  *   pricing: geminiPricingSource(),
  * })
+ *
+ * const result = await client.generate(
+ *   { model: 'gemini-2.5-pro', messages: [...] },
+ *   { auth: { apiKey: process.env.GEMINI_API_KEY! } },
+ * )
  * ```
  *
  * @module

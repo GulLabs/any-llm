@@ -94,16 +94,7 @@ const DEFAULT_EXTENSION_SECONDS = 3600
 async function buildCachesClient(auth: AuthMaterial): Promise<GeminiCachesClientLike> {
   const { GoogleGenAI } = await import('@google/genai')
 
-  const options =
-    'apiKey' in auth
-      ? { apiKey: auth.apiKey }
-      : {
-          vertexai: true,
-          project: auth.vertex.project,
-          location: auth.vertex.location,
-        }
-
-  const ai = new GoogleGenAI(options)
+  const ai = new GoogleGenAI({ apiKey: auth.apiKey })
 
   return {
     async create(params) {
@@ -149,6 +140,16 @@ interface EntryRecord {
  * NOTE: `getOrCreate` reuse is PROCESS-SCOPED only.  Entries survive only for
  * the lifetime of this `GoogleCacheStore` instance.  Across restarts, new
  * caches will be created (and old ones will be server-evicted after their TTL).
+ *
+ * **Auth snapshot note:** this store captures the `AuthMaterial` at construction
+ * time and memoizes a single SDK client from it (`clientPromise`).  This is
+ * correct and sufficient for static API keys.  If refreshable credentials
+ * (short-lived OAuth/STS tokens) are added in the future, this memoization is
+ * the seam that will need rework: the cached client would hold stale credentials
+ * for the lifetime of a long-lived store instance.  At that point, the store
+ * will need to either rebuild the client on each operation or accept a
+ * credential-resolver callback rather than a plain `AuthMaterial` value.
+ * See ADR-020 in DECISIONS.md.
  */
 export class GoogleCacheStore {
   private readonly auth: AuthMaterial

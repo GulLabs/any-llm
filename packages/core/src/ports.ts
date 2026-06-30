@@ -261,29 +261,31 @@ export interface PricingSource {
 // ---------------------------------------------------------------------------
 
 /**
- * Credential material passed to the adapter.
+ * Credential material passed to the adapter per call.
  *
- * One of:
- * - `{ apiKey }` — API-key authentication.
- * - `{ vertex }` — Vertex AI Workload Identity Federation.
- */
-export type AuthMaterial =
-  | { apiKey: string }
-  | { vertex: { project: string; location: string } }
-
-/**
- * Resolves credentials for a provider at call time.
+ * API-key only today, by design. The caller supplies `{ apiKey }` on every
+ * `generate` / `runStructured` call; the library never reads credentials from
+ * the environment or any ambient source (see ADR-019).
  *
- * Implementations may fetch from environment variables, secret managers, or
- * token-exchange endpoints.
+ * **Adding a future credential kind** (e.g. explicit Vertex service-account
+ * material, or an OAuth/STS bearer token): turn this into a discriminated
+ * union —
+ * ```ts
+ * type AuthMaterial =
+ *   | { kind: 'api-key'; apiKey: string }
+ *   | { kind: 'bearer'; token: string; ... }
+ * ```
+ * — and update exactly these sites:
+ * - `requireAuth()` in `packages/core/src/engine.ts`
+ * - `buildGoogleClient` in `packages/google/src/adapter.ts`
+ * - `buildCachesClient` in `packages/google/src/cache-store.ts`
+ * - `buildFilesClient` in `packages/google/src/file-store.ts`
+ *
+ * TypeScript exhaustiveness will flag every narrowing site automatically.
+ * Deliberately deferred until a second credential kind has a concrete need
+ * (see ADR-020 in DECISIONS.md).
  */
-export interface AuthProvider {
-  /**
-   * Return credentials for the named provider.
-   * @param provider - Provider identifier (matches `ProviderAdapter.id`).
-   */
-  credentials(provider: string): Promise<AuthMaterial>
-}
+export type AuthMaterial = { apiKey: string }
 
 // ---------------------------------------------------------------------------
 // Infrastructure ports

@@ -34,7 +34,6 @@ import {
   FakeIds,
   RecordingSink,
   SignalAwareFakeAdapter,
-  fakeAuth,
 } from '@gullabs/testing'
 
 // ---------------------------------------------------------------------------
@@ -62,7 +61,7 @@ function makeSuccessResult(overrides?: Partial<AdapterResult>): AdapterResult {
 }
 
 const PRICING = geminiPricingSource()
-const AUTH = fakeAuth({ apiKey: 'test-key' })
+const TEST_AUTH = { apiKey: 'test-key' }
 
 function makeClient(
   overrides?: Parameters<typeof createClient>[0] extends infer C
@@ -76,7 +75,6 @@ function makeClient(
 
   const client = createClient({
     adapters: [adapter],
-    auth: AUTH,
     pricing: PRICING,
     sink,
     clock,
@@ -99,7 +97,7 @@ describe('engine — success path', () => {
     const result = await client.generate({
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    })
+    }, { auth: TEST_AUTH })
 
     // Result fields
     expect(result.text).toBe('Hello, world!')
@@ -136,7 +134,7 @@ describe('engine — success path', () => {
     const result = await client.generate({
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    })
+    }, { auth: TEST_AUTH })
 
     const rec = sink.last()!
     expect(result.cost!.microUsd).toBe(rec.costMicroUsd)
@@ -156,7 +154,7 @@ describe('engine — success path', () => {
     await client.generate({
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    })
+    }, { auth: TEST_AUTH })
 
     expect(starts).toHaveLength(1)
     expect(successes).toHaveLength(1)
@@ -170,7 +168,7 @@ describe('engine — success path', () => {
     const result = await client.generate({
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    })
+    }, { auth: TEST_AUTH })
 
     expect(result.finishReason).toBe('stop')
     expect(result.responseId).toBe('resp-abc123')
@@ -185,7 +183,7 @@ describe('engine — success path', () => {
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       metadata: { tenantId: 'acme', runId: 'run-1' },
-    })
+    }, { auth: TEST_AUTH })
 
     const rec = sink.last()!
     expect(rec.metadata).toEqual({ tenantId: 'acme', runId: 'run-1' })
@@ -197,7 +195,7 @@ describe('engine — success path', () => {
     await client.generate({
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    })
+    }, { auth: TEST_AUTH })
 
     expect(sink.last()!.serviceTier).toBe('flex')
   })
@@ -233,7 +231,7 @@ describe('engine — double-count integration', () => {
 
       const client = createClient({
         adapters: [adapter],
-        auth: AUTH,
+  
         pricing: PRICING,
         sink,
         clock: new FakeClock(),
@@ -244,7 +242,7 @@ describe('engine — double-count integration', () => {
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Test' }] }],
         config: { serviceTier: 'standard' },
-      })
+      }, { auth: TEST_AUTH })
 
       // GROSS invariants preserved
       expect(result.usage.inputTokens).toBe(250_000)
@@ -282,7 +280,7 @@ describe('engine — double-count integration', () => {
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Test' }] }],
         config: { serviceTier: 'flex' },
-      })
+      }, { auth: TEST_AUTH })
       expect(flex.cost!.microUsd).toBe(237_500) // exactly half of 475_000
       expect(flex.cost!.details).toEqual({ input: 187_500, cached: 12_500, output: 37_500 })
     },
@@ -302,7 +300,7 @@ describe('engine — failure path', () => {
 
     const client = createClient({
       adapters: [adapter],
-      auth: AUTH,
+
       pricing: PRICING,
       sink,
       telemetry,
@@ -314,14 +312,14 @@ describe('engine — failure path', () => {
       client.generate({
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      }),
+      }, { auth: TEST_AUTH }),
     ).rejects.toThrow(LlmError)
 
     await expect(
       client.generate({
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      }),
+      }, { auth: TEST_AUTH }),
     ).rejects.toMatchObject({ kind: 'rate_limited', retryable: true })
 
     // Record was written with error kind
@@ -341,7 +339,7 @@ describe('engine — failure path', () => {
 
     const client = createClient({
       adapters: [adapter],
-      auth: AUTH,
+
       pricing: PRICING,
       sink,
       clock: new FakeClock(),
@@ -352,7 +350,7 @@ describe('engine — failure path', () => {
       client.generate({
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      }),
+      }, { auth: TEST_AUTH }),
     ).rejects.toMatchObject({ kind: 'invalid_auth' })
 
     const rec = sink.last()!
@@ -379,7 +377,7 @@ describe('engine — parse_error', () => {
 
     const client = createClient({
       adapters: [adapter],
-      auth: AUTH,
+
       pricing: PRICING,
       sink,
       telemetry,
@@ -392,7 +390,7 @@ describe('engine — parse_error', () => {
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         output: { schema },
-      }),
+      }, { auth: TEST_AUTH }),
     ).rejects.toMatchObject({ kind: 'parse_error', retryable: false })
 
     const rec = sink.last()!
@@ -411,7 +409,7 @@ describe('engine — parse_error', () => {
 
     const client = createClient({
       adapters: [adapter],
-      auth: AUTH,
+
       pricing: PRICING,
       sink,
       clock: new FakeClock(),
@@ -422,7 +420,7 @@ describe('engine — parse_error', () => {
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       output: { schema },
-    })
+    }, { auth: TEST_AUTH })
 
     expect(result.output).toEqual({ answer: 42 })
     expect(sink.last()!.status).toBe('ok')
@@ -439,7 +437,7 @@ describe('engine — fail-open sink', () => {
 
     const client = createClient({
       adapters: [new FakeAdapter('google', makeSuccessResult())],
-      auth: AUTH,
+
       pricing: PRICING,
       sink,
       clock: new FakeClock(),
@@ -450,7 +448,7 @@ describe('engine — fail-open sink', () => {
     const result = await client.generate({
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    })
+    }, { auth: TEST_AUTH })
 
     expect(result.text).toBe('Hello, world!')
     // No records were stored (sink threw before storing)
@@ -463,7 +461,7 @@ describe('engine — fail-open sink', () => {
 
     const client = createClient({
       adapters: [adapter],
-      auth: AUTH,
+
       pricing: PRICING,
       sink,
       clock: new FakeClock(),
@@ -475,7 +473,7 @@ describe('engine — fail-open sink', () => {
       client.generate({
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      }),
+      }, { auth: TEST_AUTH }),
     ).rejects.toMatchObject({ kind: 'server' })
   })
 })
@@ -491,7 +489,7 @@ describe('engine — timeout', () => {
 
     const client = createClient({
       adapters: [slow],
-      auth: AUTH,
+
       pricing: PRICING,
       sink,
       clock: new FakeClock(),
@@ -503,7 +501,7 @@ describe('engine — timeout', () => {
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         config: { timeoutMs: 1 },
-      }),
+      }, { auth: TEST_AUTH }),
     ).rejects.toMatchObject({ kind: 'timeout', retryable: true })
 
     const rec = sink.last()!
@@ -531,7 +529,7 @@ describe('engine — config resolution', () => {
     const sink = new RecordingSink()
     const client = createClient({
       adapters: [capturingAdapter],
-      auth: AUTH,
+
       pricing: PRICING,
       sink,
       clock: new FakeClock(),
@@ -544,7 +542,7 @@ describe('engine — config resolution', () => {
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       config: { temperature: 0.9 },
-    })
+    }, { auth: TEST_AUTH })
 
     expect(calls[0]?.temperature).toBe(0.9)
   })
@@ -553,7 +551,7 @@ describe('engine — config resolution', () => {
     const sink = new RecordingSink()
     const client = createClient({
       adapters: [new FakeAdapter('google', makeSuccessResult())],
-      auth: AUTH,
+
       pricing: PRICING,
       sink,
       clock: new FakeClock(),
@@ -563,7 +561,7 @@ describe('engine — config resolution', () => {
     await client.generate({
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    })
+    }, { auth: TEST_AUTH })
 
     expect(sink.last()!.serviceTier).toBe('flex')
   })
@@ -572,7 +570,7 @@ describe('engine — config resolution', () => {
     const sink = new RecordingSink()
     const client = createClient({
       adapters: [new FakeAdapter('google', makeSuccessResult())],
-      auth: AUTH,
+
       pricing: PRICING,
       sink,
       clock: new FakeClock(),
@@ -584,7 +582,7 @@ describe('engine — config resolution', () => {
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       config: { serviceTier: 'standard' },
-    })
+    }, { auth: TEST_AUTH })
 
     expect(sink.last()!.serviceTier).toBe('standard')
   })
@@ -600,7 +598,7 @@ describe('engine — config resolution', () => {
     }
 
     // The var value itself contains a template placeholder — must NOT expand it
-    await client.runStructured(callSite, { val: '{{secret}}' })
+    await client.runStructured(callSite, { val: '{{secret}}' }, { auth: TEST_AUTH })
 
     // The message delivered to the adapter should contain the literal string
     const req = adapter.calls[0]!
@@ -619,7 +617,7 @@ describe('engine — config resolution', () => {
 
     const client = createClient({
       adapters: [capturingAdapter],
-      auth: AUTH,
+
       pricing: PRICING,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -630,7 +628,7 @@ describe('engine — config resolution', () => {
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       config: { reasoning: { includeThoughts: true } },
-    })
+    }, { auth: TEST_AUTH })
 
     const resolved = calls[0]?.config.reasoning
     // per-call includeThoughts=true wins; effort='low' is inherited from defaults
@@ -648,7 +646,7 @@ describe('engine — routing', () => {
     const adapter = new FakeAdapter('anthropic', makeSuccessResult())
     const client = createClient({
       adapters: [adapter],
-      auth: AUTH,
+
       pricing: PRICING,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -658,7 +656,7 @@ describe('engine — routing', () => {
     await client.generate({
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    })
+    }, { auth: TEST_AUTH })
 
     expect(adapter.calls).toHaveLength(1)
   })
@@ -669,7 +667,7 @@ describe('engine — routing', () => {
 
     const client = createClient({
       adapters: [google, anthropic],
-      auth: AUTH,
+
       pricing: PRICING,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -679,7 +677,7 @@ describe('engine — routing', () => {
     await client.generate({
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    })
+    }, { auth: TEST_AUTH })
     expect(google.calls).toHaveLength(1)
 
     // unknown model → bad_request
@@ -687,7 +685,7 @@ describe('engine — routing', () => {
       client.generate({
         model: 'unknown-model-xyz',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      }),
+      }, { auth: TEST_AUTH }),
     ).rejects.toMatchObject({ kind: 'bad_request' })
   })
 
@@ -697,7 +695,7 @@ describe('engine — routing', () => {
 
     const client = createClient({
       adapters: [a, b],
-      auth: AUTH,
+
       pricing: PRICING,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -707,7 +705,7 @@ describe('engine — routing', () => {
     await client.generate({
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    })
+    }, { auth: TEST_AUTH })
 
     expect(a.calls).toHaveLength(0)
     expect(b.calls).toHaveLength(1)
@@ -729,7 +727,7 @@ describe('engine — logger', () => {
 
     const client = createClient({
       adapters: [new FakeAdapter('google', makeSuccessResult())],
-      auth: AUTH,
+
       pricing: PRICING,
       logger,
       clock: new FakeClock(),
@@ -739,7 +737,7 @@ describe('engine — logger', () => {
     await client.generate({
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    })
+    }, { auth: TEST_AUTH })
 
     expect(events).toContain('llm.call.start')
     expect(events).toContain('llm.call.success')
@@ -756,7 +754,7 @@ describe('engine — logger', () => {
 
     const client = createClient({
       adapters: [new FakeAdapter('google', { status: 500 })],
-      auth: AUTH,
+
       pricing: PRICING,
       logger,
       clock: new FakeClock(),
@@ -767,7 +765,7 @@ describe('engine — logger', () => {
       client.generate({
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      }),
+      }, { auth: TEST_AUTH }),
     ).rejects.toThrow()
 
     expect(events).toContain('llm.call.start')
@@ -790,7 +788,7 @@ describe('engine — reasoning text', () => {
 
     const client = createClient({
       adapters: [adapter],
-      auth: AUTH,
+
       pricing: PRICING,
       sink,
       clock: new FakeClock(),
@@ -800,7 +798,7 @@ describe('engine — reasoning text', () => {
     const result = await client.generate({
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    })
+    }, { auth: TEST_AUTH })
 
     expect(result.reasoningText).toBe('I thought about it...')
     expect(sink.last()!.reasoningText).toBe('I thought about it...')
@@ -824,7 +822,7 @@ describe('engine — caller abort (Finding 1)', () => {
 
       const client = createClient({
         adapters: [adapter],
-        auth: AUTH,
+  
         pricing: PRICING,
         sink,
         clock: new FakeClock(),
@@ -839,7 +837,7 @@ describe('engine — caller abort (Finding 1)', () => {
         client.generate({
           model: 'gemini-2.5-pro',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-        }, { signal: ctrl.signal }),
+        }, { auth: TEST_AUTH, signal: ctrl.signal }),
       ).rejects.toMatchObject({ kind: 'aborted', retryable: false })
 
       // Record must reflect the abort.
@@ -864,7 +862,7 @@ describe('engine — caller abort (Finding 1)', () => {
 
     const client = createClient({
       adapters: [adapter],
-      auth: AUTH,
+
       pricing: PRICING,
       sink,
       clock: new FakeClock(),
@@ -878,7 +876,7 @@ describe('engine — caller abort (Finding 1)', () => {
       client.generate({
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      }, { signal: ctrl.signal }),
+      }, { auth: TEST_AUTH, signal: ctrl.signal }),
     ).rejects.toMatchObject({ kind: 'aborted' })
 
     const rec = sink.last()
@@ -906,7 +904,7 @@ describe('engine — timeout determinism (Finding 2)', () => {
 
       const client = createClient({
         adapters: [adapter],
-        auth: AUTH,
+  
         pricing: PRICING,
         sink,
         clock: new FakeClock(),
@@ -918,7 +916,7 @@ describe('engine — timeout determinism (Finding 2)', () => {
           model: 'gemini-2.5-pro',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
           config: { timeoutMs: 10 },
-        }),
+        }, { auth: TEST_AUTH }),
       ).rejects.toMatchObject({ kind: 'timeout', retryable: true })
 
       const rec = sink.last()
@@ -936,7 +934,7 @@ describe('engine — timeout determinism (Finding 2)', () => {
 
     const client = createClient({
       adapters: [slow],
-      auth: AUTH,
+
       pricing: PRICING,
       sink,
       clock: new FakeClock(),
@@ -948,7 +946,7 @@ describe('engine — timeout determinism (Finding 2)', () => {
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         config: { timeoutMs: 10 },
-      }),
+      }, { auth: TEST_AUTH }),
     ).rejects.toMatchObject({ kind: 'timeout', retryable: true })
 
     const rec = sink.last()
@@ -975,7 +973,7 @@ describe('engine — providerOptions deep-merge (Finding 3)', () => {
 
       const client = createClient({
         adapters: [capturingAdapter],
-        auth: AUTH,
+  
         pricing: PRICING,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -995,7 +993,7 @@ describe('engine — providerOptions deep-merge (Finding 3)', () => {
             google: { a: { x: 99 }, arr: [10, 20] },
           },
         },
-      })
+      }, { auth: TEST_AUTH })
 
       const merged = capturedConfigs[0]?.config.providerOptions
       expect(merged).toBeDefined()
@@ -1027,7 +1025,7 @@ describe('engine — providerOptions deep-merge (Finding 3)', () => {
 
     const client = createClient({
       adapters: [capturingAdapter],
-      auth: AUTH,
+
       pricing: PRICING,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -1042,7 +1040,7 @@ describe('engine — providerOptions deep-merge (Finding 3)', () => {
       config: {
         providerOptions: { google: { tags: ['x'] } },
       },
-    })
+    }, { auth: TEST_AUTH })
 
     const google = capturedConfigs[0]?.config.providerOptions?.['google'] as Record<string, unknown>
     // Array is last-write-wins, not merged.
@@ -1069,7 +1067,7 @@ describe('engine — pricingFamily routing', () => {
     const sink = new RecordingSink()
     const client = createClient({
       adapters: [new FakeAdapter('google', makeSuccessResult())],
-      auth: AUTH,
+
       pricing: PRICING,
       sink,
       clock: new FakeClock(),
@@ -1080,7 +1078,7 @@ describe('engine — pricingFamily routing', () => {
     await client.generate({
       model: 'my-custom-model',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    })
+    }, { auth: TEST_AUTH })
 
     const rec = sink.records[0]!
     // The record's model is the actual model string, not the pricingFamily.
@@ -1133,7 +1131,7 @@ describe('engine — Standard Schema validation (non-Zod)', () => {
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Score?' }] }],
       output: { schema },
-    })
+    }, { auth: TEST_AUTH })
 
     expect(result.output).toEqual({ score: 42 })
   })
@@ -1151,7 +1149,7 @@ describe('engine — Standard Schema validation (non-Zod)', () => {
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Score?' }] }],
         output: { schema },
-      }),
+      }, { auth: TEST_AUTH }),
     ).rejects.toThrow(LlmError)
 
     try {
@@ -1159,7 +1157,7 @@ describe('engine — Standard Schema validation (non-Zod)', () => {
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Score?' }] }],
         output: { schema },
-      })
+      }, { auth: TEST_AUTH })
     } catch (err) {
       expect(err).toBeInstanceOf(LlmError)
       expect((err as LlmError).kind).toBe('parse_error')
@@ -1195,7 +1193,7 @@ describe('engine — Standard Schema validation (non-Zod)', () => {
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'ok?' }] }],
       output: { schema: asyncSchema },
-    })
+    }, { auth: TEST_AUTH })
 
     expect(result.output).toEqual({ ok: true })
   })
@@ -1211,7 +1209,7 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
     const result = await client.generate({
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    })
+    }, { auth: TEST_AUTH })
     const rec = sink.last()!
     expect(result.callId).toBe(rec.callId)
     expect(result.attemptId).toBe(rec.attemptId)
@@ -1236,7 +1234,7 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
     const ids = new FakeIds()
     const client = createClient({
       adapters: [flakyAdapter],
-      auth: AUTH,
+
       pricing: PRICING,
       sink,
       clock: new FakeClock(),
@@ -1247,7 +1245,7 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
     const result = await client.generate({
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    })
+    }, { auth: TEST_AUTH })
 
     // Two records written: one for the failed attempt, one for the success
     expect(sink.records).toHaveLength(2)
@@ -1271,7 +1269,7 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
     const sink = new RecordingSink()
     const client = createClient({
       adapters: [adapter],
-      auth: AUTH,
+
       pricing: PRICING,
       sink,
       clock: new FakeClock(),
@@ -1283,7 +1281,7 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
       await client.generate({
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      })
+      }, { auth: TEST_AUTH })
     } catch (e) {
       caughtErr = e as LlmError
     }
@@ -1309,7 +1307,7 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       metadata: { tenantId: 'acme', traceId: 'trace-99' },
-    })
+    }, { auth: TEST_AUTH })
 
     expect(startEvents).toHaveLength(1)
     expect(startEvents[0]!.callId).toBeTypeOf('string')

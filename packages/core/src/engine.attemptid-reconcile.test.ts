@@ -32,7 +32,7 @@ import type {
   CallErrorEvent,
   Telemetry,
 } from './index.js'
-import { FakeClock, FakeIds, RecordingSink, fakeAuth } from '@gullabs/testing'
+import { FakeClock, FakeIds, RecordingSink } from '@gullabs/testing'
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -46,7 +46,7 @@ const GOOD_USAGE: Usage = {
 }
 
 const PRICING = geminiPricingSource()
-const AUTH = fakeAuth({ apiKey: 'test-key' })
+const TEST_AUTH = { apiKey: 'test-key' }
 const MODEL = 'gemini-2.5-flash'
 const MESSAGES = [{ role: 'user' as const, parts: [{ kind: 'text' as const, text: 'Hi' }] }]
 
@@ -87,7 +87,6 @@ describe('attemptId reconcile — middleware throws before next()', () => {
 
     const client = createClient({
       adapters: [successAdapter],
-      auth: AUTH,
       pricing: PRICING,
       sink,
       clock: new FakeClock(),
@@ -98,7 +97,7 @@ describe('attemptId reconcile — middleware throws before next()', () => {
 
     let caughtErr: unknown
     try {
-      await client.generate({ model: MODEL, messages: MESSAGES })
+      await client.generate({ model: MODEL, messages: MESSAGES }, { auth: TEST_AUTH })
     } catch (e) {
       caughtErr = e
     }
@@ -147,7 +146,6 @@ describe('attemptId reconcile — normal success', () => {
 
     const client = createClient({
       adapters: [adapter],
-      auth: AUTH,
       pricing: PRICING,
       sink,
       clock: new FakeClock(),
@@ -155,7 +153,7 @@ describe('attemptId reconcile — normal success', () => {
       telemetry,
     })
 
-    const result = await client.generate({ model: MODEL, messages: MESSAGES })
+    const result = await client.generate({ model: MODEL, messages: MESSAGES }, { auth: TEST_AUTH })
 
     // Exactly one record.
     expect(sink.records).toHaveLength(1)
@@ -194,7 +192,6 @@ describe('attemptId reconcile — retry-then-success', () => {
 
     const client = createClient({
       adapters: [adapter],
-      auth: AUTH,
       pricing: PRICING,
       sink,
       clock: new FakeClock(),
@@ -202,7 +199,7 @@ describe('attemptId reconcile — retry-then-success', () => {
       middleware: [retryMiddleware({ maxAttempts: 3 }, { sleep: async () => {} })],
     })
 
-    const result = await client.generate({ model: MODEL, messages: MESSAGES })
+    const result = await client.generate({ model: MODEL, messages: MESSAGES }, { auth: TEST_AUTH })
 
     // Two records: error attempt, then success attempt.
     expect(sink.records).toHaveLength(2)
@@ -242,7 +239,6 @@ describe('attemptId reconcile — retries exhausted', () => {
 
     const client = createClient({
       adapters: [adapter],
-      auth: AUTH,
       pricing: PRICING,
       sink,
       clock: new FakeClock(),
@@ -253,7 +249,7 @@ describe('attemptId reconcile — retries exhausted', () => {
 
     let caughtErr: unknown
     try {
-      await client.generate({ model: MODEL, messages: MESSAGES })
+      await client.generate({ model: MODEL, messages: MESSAGES }, { auth: TEST_AUTH })
     } catch (e) {
       caughtErr = e
     }

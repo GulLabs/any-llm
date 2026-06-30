@@ -535,35 +535,6 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       }
 
       // ------------------------------------------------------------------
-      // 7b. FIX A-1: Vertex flex routing headers
-      //
-      // @google/genai issue #1468: on Vertex, body-level serviceTier is ignored;
-      // Vertex reads the service tier from HTTP request headers instead.  Without
-      // these headers a flex call silently bills at standard rate.
-      //
-      // Headers are set AFTER spreading caller-supplied httpOptions.headers so that
-      // OUR Vertex-tier headers always win — they are required for correct billing
-      // and routing, not cosmetic.  Any other caller headers are preserved.
-      //
-      // These headers are Vertex-only; do NOT add them for API-key (Gemini
-      // Developer API) calls where they are meaningless.
-      // ------------------------------------------------------------------
-      if (config.serviceTier === 'flex' && 'vertex' in ctx.auth) {
-        const baseHttpOpts = (config.httpOptions ?? {}) as Record<string, unknown>
-        const callerHeaders =
-          (baseHttpOpts['headers'] as Record<string, string> | undefined) ?? {}
-        config.httpOptions = {
-          ...baseHttpOpts,
-          headers: {
-            ...callerHeaders,
-            // These two headers activate flex routing on Vertex AI.
-            'X-Vertex-AI-LLM-Request-Type': 'shared',
-            'X-Vertex-AI-LLM-Shared-Request-Type': 'flex',
-          },
-        } as { timeout?: number; headers?: Record<string, string> }
-      }
-
-      // ------------------------------------------------------------------
       // 8. Build params + call the SDK
       // ------------------------------------------------------------------
       const params = {

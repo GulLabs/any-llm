@@ -20,7 +20,6 @@ import {
   FakeClock,
   FakeIds,
   RecordingSink,
-  fakeAuth,
 } from '@gullabs/testing'
 
 // ---------------------------------------------------------------------------
@@ -44,13 +43,12 @@ function successResult(overrides?: Partial<AdapterResult>): AdapterResult {
   }
 }
 
-const AUTH = fakeAuth({ apiKey: 'test-key' })
+const TEST_AUTH = { apiKey: 'test-key' }
 const PRICING = geminiPricingSource()
 
 function makeClient(adapter: FakeAdapter, sink?: RecordingSink) {
   return createClient({
     adapters: [adapter],
-    auth: AUTH,
     pricing: PRICING,
     sink: sink ?? new RecordingSink(),
     clock: new FakeClock(),
@@ -95,7 +93,7 @@ describe('runStructured — template rendering', () => {
       userTemplate: 'Hello, {{name}}! You are {{age}} years old.',
     })
 
-    await client.runStructured(cs, { name: 'Alice', age: '30' })
+    await client.runStructured(cs, { name: 'Alice', age: '30' }, { auth: TEST_AUTH })
 
     const req = adapter.calls[0]!
     const part = req.messages[0]?.parts[0] as { kind: string; text: string }
@@ -113,7 +111,7 @@ describe('runStructured — template rendering', () => {
       userTemplate: 'Hello',
     })
 
-    await client.runStructured(cs, { company: 'Acme Corp' })
+    await client.runStructured(cs, { company: 'Acme Corp' }, { auth: TEST_AUTH })
 
     const req = adapter.calls[0]!
     expect(req.system).toBe('You are a bot for Acme Corp.')
@@ -130,7 +128,7 @@ describe('runStructured — template rendering', () => {
     })
 
     // Only provide 'name', not 'unknown'
-    await client.runStructured(cs, { name: 'Bob' })
+    await client.runStructured(cs, { name: 'Bob' }, { auth: TEST_AUTH })
 
     const req = adapter.calls[0]!
     const part = req.messages[0]?.parts[0] as { kind: string; text: string }
@@ -148,7 +146,7 @@ describe('runStructured — template rendering', () => {
     })
 
     // Anti-injection: the value '{{secret}}' must appear literally, not be expanded
-    await client.runStructured(cs, { data: '{{secret}}' })
+    await client.runStructured(cs, { data: '{{secret}}' }, { auth: TEST_AUTH })
 
     const req = adapter.calls[0]!
     const part = req.messages[0]?.parts[0] as { kind: string; text: string }
@@ -160,7 +158,7 @@ describe('runStructured — template rendering', () => {
     const client = makeClient(adapter)
 
     const cs = defineCallSite({ id: 'empty', model: 'gemini-2.5-flash' })
-    await client.runStructured(cs)
+    await client.runStructured(cs, { auth: TEST_AUTH })
 
     const req = adapter.calls[0]!
     const part = req.messages[0]?.parts[0] as { kind: string; text: string }
@@ -177,7 +175,7 @@ describe('runStructured — template rendering', () => {
       userTemplate: 'Hello {{name}}',
     })
 
-    await client.runStructured(cs) // no vars
+    await client.runStructured(cs, { auth: TEST_AUTH }) // no vars
 
     const req = adapter.calls[0]!
     const part = req.messages[0]?.parts[0] as { kind: string; text: string }
@@ -194,7 +192,6 @@ describe('runStructured — config resolution', () => {
     const adapter = new FakeAdapter('google', successResult())
     const client = createClient({
       adapters: [adapter],
-      auth: AUTH,
       pricing: PRICING,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -208,7 +205,7 @@ describe('runStructured — config resolution', () => {
     })
 
     // Per-call overrides callSite
-    await client.runStructured(cs, {}, { config: { temperature: 0.8 } })
+    await client.runStructured(cs, {}, { auth: TEST_AUTH, config: { temperature: 0.8 } })
 
     const req = adapter.calls[0]!
     // per-call temperature wins
@@ -228,7 +225,7 @@ describe('runStructured — config resolution', () => {
       userTemplate: 'Hi',
     })
 
-    await client.runStructured(cs)
+    await client.runStructured(cs, { auth: TEST_AUTH })
 
     expect(sink.last()!.callSiteId).toBe('my-special-site')
   })
@@ -241,6 +238,7 @@ describe('runStructured — config resolution', () => {
     const cs = defineCallSite({ id: 'meta', model: 'gemini-2.5-flash' })
 
     await client.runStructured(cs, {}, {
+      auth: TEST_AUTH,
       metadata: { tenantId: 'org-1', runId: 'run-42' },
     })
 
@@ -267,7 +265,7 @@ describe('runStructured — schema validation', () => {
       schema,
     })
 
-    const result = await client.runStructured(cs)
+    const result = await client.runStructured(cs, { auth: TEST_AUTH })
     expect(result.output).toEqual({ label: 'spam', score: 0.95 })
   })
 
@@ -286,7 +284,7 @@ describe('runStructured — schema validation', () => {
       schema,
     })
 
-    await expect(client.runStructured(cs)).rejects.toMatchObject({
+    await expect(client.runStructured(cs, { auth: TEST_AUTH })).rejects.toMatchObject({
       kind: 'parse_error',
       retryable: false,
     })

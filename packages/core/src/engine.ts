@@ -19,7 +19,7 @@ import { defaultGeminiRegistry } from './registry.js'
 import type {
   ProviderAdapter,
   AdapterResult,
-  AuthProvider,
+  AuthMaterial,
   PricingSource,
   UsageSink,
   Clock,
@@ -63,8 +63,6 @@ export interface ClientConfig {
    * a custom `route` function to override.
    */
   adapters: ProviderAdapter[]
-  /** Resolves credentials for each provider at call time. */
-  auth: AuthProvider
   /** Pricing table used to compute micro-USD cost for each call. */
   pricing: PricingSource
   /**
@@ -145,6 +143,8 @@ export interface ClientConfig {
  * Options accepted by {@link Client.generate}.
  */
 export interface GenerateOptions {
+  /** API key credentials for this call. Required on every call. */
+  auth: AuthMaterial
   /** Caller-supplied abort signal. Classifies as `'aborted'` when fired. */
   signal?: AbortSignal
 }
@@ -153,6 +153,8 @@ export interface GenerateOptions {
  * Options accepted by {@link Client.runStructured}.
  */
 export interface RunStructuredOptions {
+  /** API key credentials for this call. Required on every call. */
+  auth: AuthMaterial
   /**
    * Per-call generation config override.
    * Wins over call-site defaults; loses to nothing.
@@ -172,30 +174,46 @@ export interface Client {
    * Execute a single LLM call described by an {@link LlmRequest}.
    *
    * Config resolution: `clientDefaults → request.config`.
+   * `opts.auth` is required on every call — the library never reads credentials
+   * from the environment.
    *
    * @returns A typed {@link LlmResult} on success; throws {@link LlmError} on failure.
    */
   generate<S extends StandardSchemaV1>(
     request: LlmRequest<S>,
-    opts?: GenerateOptions,
+    opts: GenerateOptions,
   ): Promise<LlmResult<StandardSchemaV1.InferOutput<S>>>
 
   /**
-   * Execute an LLM call described by a {@link CallSite} with optional
-   * template variables and per-call overrides.
+   * Execute an LLM call described by a {@link CallSite} with per-call overrides.
+   *
+   * Config resolution: `clientDefaults → callSite.config → opts.config`.
+   * `opts.auth` is required on every call.
+   *
+   * @returns A typed {@link LlmResult} with `output` typed to the call-site schema.
+   */
+  runStructured<S extends StandardSchemaV1>(
+    callSite: CallSite<S>,
+    opts: RunStructuredOptions,
+  ): Promise<LlmResult<StandardSchemaV1.InferOutput<S>>>
+
+  /**
+   * Execute an LLM call described by a {@link CallSite} with template variables
+   * and per-call overrides.
    *
    * Config resolution: `clientDefaults → callSite.config → opts.config`.
    * Template interpolation: `{{var}}` in `system` and `userTemplate` is
    * replaced with the corresponding value from `vars`.  Var values are NOT
    * themselves interpolated (anti-injection).  Missing vars are left as the
    * literal `{{var}}` placeholder.
+   * `opts.auth` is required on every call.
    *
    * @returns A typed {@link LlmResult} with `output` typed to the call-site schema.
    */
   runStructured<S extends StandardSchemaV1>(
     callSite: CallSite<S>,
-    vars?: Record<string, string>,
-    opts?: RunStructuredOptions,
+    vars: Record<string, string>,
+    opts: RunStructuredOptions,
   ): Promise<LlmResult<StandardSchemaV1.InferOutput<S>>>
 }
 
@@ -696,19 +714,55 @@ function attachCallContext(
  * ```ts
  * const client = createClient({
  *   adapters: [geminiAdapter()],
- *   auth: envAuth(),
  *   pricing: geminiPricingSource(),
  *   sink: drizzleUsageSink(db, llmCallsTable),
  * })
  *
- * const result = await client.generate({
- *   model: 'gemini-2.5-pro',
- *   messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hello!' }] }],
- * })
+ * const result = await client.generate(
+ *   { model: 'gemini-2.5-pro', messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hello!' }] }] },
+ *   { auth: { apiKey: process.env['GEMINI_API_KEY']! } },
+ * )
  * ```
  */
+/**
+ * Validates per-call auth material and returns the concrete {@link AuthMaterial}
+ * that is threaded through {@link AdapterCtx} for the rest of the call.
+ *
+ * This is the **canonical auth-resolution point** — auth is resolved once per
+ * logical call, before the middleware chain runs, and the concrete result is
+ * forwarded unchanged through every retry attempt via `AdapterCtx`.
+ *
+ * **Future: refreshable credentials** (short-lived OAuth/STS tokens).
+ * When that need arises, widen the `opts.auth` type on {@link GenerateOptions}
+ * and {@link RunStructuredOptions} to
+ * `AuthMaterial | ((ctx: RefreshCtx) => Promise<AuthMaterial>)`,
+ * resolve the resolver HERE (once per logical call, not per attempt), and
+ * continue threading the concrete `AuthMaterial` through `AdapterCtx` unchanged.
+ *
+ * Open policy questions to settle at that time:
+ * - Resolve once per logical call vs. once per retry attempt (current proposal:
+ *   once per call — simpler, keeps retry semantics predictable).
+ * - How to handle a mid-attempt credential expiry (current: not in scope; the
+ *   resolver is called at call start, not between retries).
+ * - Resolver failures: classify as `invalid_auth` (non-retryable) and skip
+ *   the adapter entirely, or allow retry? (Current proposal: `invalid_auth`,
+ *   non-retryable — same as a missing key.)
+ *
+ * Throws `LlmError('invalid_auth')` when auth is missing or contains an
+ * empty/non-string apiKey.
+ */
+function requireAuth(auth: AuthMaterial | undefined): AuthMaterial {
+  if (auth === undefined || typeof auth.apiKey !== 'string' || auth.apiKey.trim() === '') {
+    throw new LlmError('Missing or invalid auth; pass { auth: { apiKey } } per call', {
+      kind: 'invalid_auth',
+      retryable: false,
+    })
+  }
+  return auth
+}
+
 export function createClient(config: ClientConfig): Client {
-  const { adapters, auth, pricing } = config
+  const { adapters, pricing } = config
   const sink = config.sink
   const clock: Clock = config.clock ?? DEFAULT_CLOCK
   const ids: IdGenerator = config.ids ?? DEFAULT_IDS
@@ -767,6 +821,7 @@ export function createClient(config: ClientConfig): Client {
     resolvedConfig: ResolvedConfig,
     callSiteId: string | undefined,
     callerSignal: AbortSignal | undefined,
+    callAuth: AuthMaterial,
   ): Promise<LlmResult<StandardSchemaV1.InferOutput<S>>> {
     // ── (a) Call-level prologue ────────────────────────────────────────────
     // ONE callId per logical call.  ONE onStart.  ONE log-start entry.
@@ -875,9 +930,6 @@ export function createClient(config: ClientConfig): Client {
         const adapter = routeFn(req.model, adapters)
         provider = adapter.id
 
-        // Step 6: Auth
-        const authMaterial = await auth.credentials(provider)
-
         // ── Per-attempt cancellation setup ──────────────────────────────────
         // adapter.run() is raced against two independent rejection promises:
         //
@@ -908,7 +960,7 @@ export function createClient(config: ClientConfig): Client {
           : req
 
         const adapterCtx: AdapterCtx = {
-          auth: authMaterial,
+          auth: callAuth,
           logger: ctx.logger,
           ...(combinedSignal !== undefined ? { signal: combinedSignal } : {}),
         }
@@ -1120,8 +1172,9 @@ export function createClient(config: ClientConfig): Client {
   return {
     async generate<S extends StandardSchemaV1>(
       request: LlmRequest<S>,
-      opts?: GenerateOptions,
+      opts: GenerateOptions,
     ): Promise<LlmResult<StandardSchemaV1.InferOutput<S>>> {
+      const callAuth = requireAuth(opts.auth)
       // Config resolution: libDefaults → request.config
       const merged = deepMergeConfig(libDefaults, request.config)
       const serviceTier = merged.serviceTier ?? 'flex'
@@ -1129,16 +1182,31 @@ export function createClient(config: ClientConfig): Client {
         ...merged,
         serviceTier,
       }
-      return runPipeline<S>(request, resolvedConfig, undefined, opts?.signal)
+      return runPipeline<S>(request, resolvedConfig, undefined, opts.signal, callAuth)
     },
 
     async runStructured<S extends StandardSchemaV1>(
       callSite: CallSite<S>,
-      vars?: Record<string, string>,
+      varsOrOpts: Record<string, string> | RunStructuredOptions,
       opts?: RunStructuredOptions,
     ): Promise<LlmResult<StandardSchemaV1.InferOutput<S>>> {
+      // Detect overload: (callSite, opts) vs (callSite, vars, opts)
+      let vars: Record<string, string>
+      let resolvedOpts: RunStructuredOptions
+      if (opts !== undefined) {
+        // Three-arg form: (callSite, vars, opts)
+        vars = varsOrOpts as Record<string, string>
+        resolvedOpts = opts
+      } else {
+        // Two-arg form: (callSite, opts)
+        vars = {}
+        resolvedOpts = varsOrOpts as RunStructuredOptions
+      }
+
+      const callAuth = requireAuth(resolvedOpts.auth)
+
       // Config resolution: libDefaults → callSite.config → opts.config
-      const merged = deepMergeConfig(libDefaults, callSite.config, opts?.config)
+      const merged = deepMergeConfig(libDefaults, callSite.config, resolvedOpts.config)
       const serviceTier = merged.serviceTier ?? 'flex'
       const resolvedConfig: ResolvedConfig = {
         ...merged,
@@ -1146,14 +1214,13 @@ export function createClient(config: ClientConfig): Client {
       }
 
       // Render templates (non-recursive interpolation; missing vars → placeholder).
-      const resolvedVars: Record<string, string> = vars ?? {}
       const userText =
         callSite.userTemplate !== undefined
-          ? interpolate(callSite.userTemplate, resolvedVars)
+          ? interpolate(callSite.userTemplate, vars)
           : ''
       const renderedSystem =
         callSite.system !== undefined
-          ? interpolate(callSite.system, resolvedVars)
+          ? interpolate(callSite.system, vars)
           : undefined
 
       // Build the rendered request (no config on the request — already merged).
@@ -1164,10 +1231,10 @@ export function createClient(config: ClientConfig): Client {
         ...(callSite.schema !== undefined
           ? { output: { schema: callSite.schema } }
           : {}),
-        ...(opts?.metadata !== undefined ? { metadata: opts.metadata } : {}),
+        ...(resolvedOpts.metadata !== undefined ? { metadata: resolvedOpts.metadata } : {}),
       }
 
-      return runPipeline<S>(request, resolvedConfig, callSite.id, opts?.signal)
+      return runPipeline<S>(request, resolvedConfig, callSite.id, resolvedOpts.signal, callAuth)
     },
   }
 }

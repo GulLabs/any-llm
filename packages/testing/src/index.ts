@@ -35,7 +35,7 @@ export type {
   FakeGeminiModels,
   FakeGeminiClient,
 } from './fake-gemini.js'
-export { FakeAdapter, fakeAuth } from './fake-adapter.js'
+export { FakeAdapter } from './fake-adapter.js'
 export type { FakeAdapterEntry } from './fake-adapter.js'
 export { SignalAwareFakeAdapter } from './signal-aware-fake-adapter.js'
 export type { SignalAwareFakeAdapterOptions } from './signal-aware-fake-adapter.js'

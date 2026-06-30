@@ -21,16 +21,15 @@ The four v1 goals in ~25 lines:
 
 ```ts
 import { z } from 'zod'
-import { createClient, geminiPricingSource, defineCallSite, envAuth } from '@gullabs/core'
+import { createClient, geminiPricingSource, defineCallSite } from '@gullabs/core'
 import { geminiAdapter } from '@gullabs/google'
 import { drizzleUsageSink, llmCalls } from '@gullabs/drizzle'
 
-// 1. Wire up the client
+// 1. Wire up the client — no auth here; the library never reads credentials
 const client = createClient({
-  adapters: [geminiAdapter()],          // Gemini Flex via @google/genai
-  auth: envAuth(),                      // reads GEMINI_API_KEY from process.env
-  pricing: geminiPricingSource(),       // built-in Gemini pricing snapshot
-  sink: drizzleUsageSink(db, llmCalls), // write every call record to your DB
+  adapters: [geminiAdapter()],
+  pricing: geminiPricingSource(),
+  sink: drizzleUsageSink(db, llmCalls),
 })
 
 // 2. Define a typed, reusable call site
@@ -43,15 +42,18 @@ const codeReview = defineCallSite({
   system: 'You are a senior code reviewer.',
   userTemplate: 'Review this diff:\n\n{{diff}}',
   config: {
-    reasoning: { includeThoughts: true, effort: 'medium' }, // capture thinking text
+    reasoning: { includeThoughts: true, effort: 'medium' },
     serviceTier: 'flex',
   },
 })
 
-// 3. Run it — typed result, usage, cost, and reasoning all in one shot
-const result = await client.runStructured(codeReview, { diff: myDiff })
+// 3. Your application owns the key — bring it from wherever makes sense
+const auth = { apiKey: process.env.MY_APP_GEMINI_KEY! }
 
-// 4. All four goals satisfied:
+// 4. Run it — pass auth on every call
+const result = await client.runStructured(codeReview, { auth, vars: { diff: myDiff } })
+
+// All four goals satisfied:
 console.log(result.output)          // { rating: 4, summary: '...' }  — Zod-validated
 console.log(result.usage)           // { inputTokens, outputTokens, cachedInputTokens, thinkingTokens }
 console.log(result.cost?.microUsd)  // integer micro-USD, frozen at call time
@@ -60,6 +62,32 @@ console.log(result.reasoningText)   // thought summary from the model
 ```
 
 See [`examples/basic.ts`](./examples/basic.ts) for a **fully runnable** version (no network required — uses test fakes). Run it with `pnpm example`.
+
+## Auth
+
+The library never reads credentials from the environment or any ambient source. There is no `envAuth()`,
+no `AuthProvider` port, and no client-level `auth` on `createClient`. The caller passes `auth` on
+every call:
+
+```ts
+client.generate(request, { auth: { apiKey } })
+client.runStructured(callSite, { auth: { apiKey }, vars: { ... } })
+```
+
+`auth` is required. `AuthMaterial` is `{ apiKey: string }`. Where the key comes from is entirely
+your concern — read it from an environment variable, a secret vault, a database, or per-user input:
+
+```ts
+// For an 18-call loop, build auth once and pass it each time:
+const auth = { apiKey: process.env.MY_APP_GEMINI_KEY! }
+for (const item of items) {
+  results.push(await client.runStructured(callSite, { auth, vars: { item } }))
+}
+```
+
+The key is redacted from any persisted records or logs.
+
+Vertex AI: see [Roadmap](./ROADMAP.md).
 
 ## Architecture
 
@@ -70,7 +98,7 @@ generate() / runStructured()
   → resolveConfig()               [libDefaults → callSite → opts; deep-merge]
   → validateModelConfig()         [Standard Schema pre-dispatch check; terminal on failure]
   → route(model, adapters)        → ProviderAdapter
-  → auth.credentials(provider)    → AuthMaterial
+  → opts.auth                     → AuthMaterial  [required per-call; never read from env]
   → rateLimiter.acquire("provider:model")    [pre-send pacing; propagates on reject]
   → adapter.run(resolved, ctx)    ← provider SDK (anti-corruption layer)
   → normalizeUsage()              [enforce GROSS token convention]
@@ -80,7 +108,7 @@ generate() / runStructured()
   → LlmResult
 ```
 
-The design is **Ports & Adapters (hexagonal)**: the core engine depends only on port interfaces (`ProviderAdapter`, `UsageSink`, `PricingSource`, `AuthProvider`, `RateLimiter`). All concrete implementations live in separate packages — the engine never imports a provider SDK. Side effects (`sink.record`, `pricing.price`, `telemetry`) are **fail-open**: a broken sink cannot fail an LLM call. The rate-limiter is the one deliberate exception — `acquire` rejection propagates so backpressure is actually enforced.
+The design is **Ports & Adapters (hexagonal)**: the core engine depends only on port interfaces (`ProviderAdapter`, `UsageSink`, `PricingSource`, `RateLimiter`). All concrete implementations live in separate packages — the engine never imports a provider SDK. Side effects (`sink.record`, `pricing.price`, `telemetry`) are **fail-open**: a broken sink cannot fail an LLM call. The rate-limiter is the one deliberate exception — `acquire` rejection propagates so backpressure is actually enforced.
 
 ## Packages
 
@@ -259,7 +287,6 @@ retry attempts and back-off sleep periods, when the retry middleware is installe
 ```ts
 const client = createClient({
   adapters: [geminiAdapter()],
-  auth: envAuth(),
   pricing: geminiPricingSource(),
   middleware: [retryMiddleware({ maxAttempts: 3 })],
 })
@@ -268,9 +295,9 @@ const result = await client.generate({
   model: 'gemini-2.5-flash',
   messages: [...],
   config: {
-    timeoutMs: 30_000, // 30 s total ceiling across all attempts + back-off
+    timeoutMs: 30_000,
   },
-})
+}, { auth: { apiKey: process.env.MY_APP_GEMINI_KEY! } })
 ```
 
 The retry middleware enforces this ceiling by:
@@ -289,7 +316,7 @@ These are **designed seams** — the ports exist, the machinery is not built yet
 - **Multiple providers** — only Gemini (`gemini-*`) is wired. The `ProviderAdapter` port and router are in place for others.
 - **Streaming** — `generate` / `runStructured` return a full response. A `stream()` seam is in the design but unimplemented.
 - **Tool use** — no function-calling machinery. The `Part` union's `kind` discriminant is reserved for future `tool-call` and `tool-result` variants.
-- **Other auth methods** — Vertex AI WIF path exists in `buildGoogleClient`; API-key path is the tested one.
+- **Vertex AI** — removed; depended on ambient ADC. See [Roadmap](./ROADMAP.md).
 
 ## Reference
 

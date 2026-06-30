@@ -47,7 +47,6 @@ export type {
   UsageSink,
   PricingSource,
   AuthMaterial,
-  AuthProvider,
   Clock,
   IdGenerator,
   Logger,
@@ -111,9 +110,6 @@ export { assertNever } from './assert.js'
 
 // Secret redaction (best-effort; for persisted/logged error text)
 export { redactSecrets } from './redact.js'
-
-// Auth helpers
-export { envAuth } from './auth.js'
 
 /** Library version — kept in sync with `package.json`. */
 export const VERSION = '0.0.0'

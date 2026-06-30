@@ -272,9 +272,9 @@ export interface GeminiClientLike {
  * Build a real @google/genai client from AuthMaterial.
  *
  * Returns a GeminiClientLike wrapper around the real GoogleGenAI client.
- * API key → Gemini Developer API; vertex → Vertex AI (Gemini Enterprise Agent Platform).
+ * Only API-key authentication is supported; Vertex AI is not.
  *
- * @param auth - API key or Vertex credentials.
+ * @param auth - API key credentials ({ apiKey }).
  */
 export async function buildGoogleClient(auth: AuthMaterial): Promise<GeminiClientLike> {
   // Import the real SDK — only called at runtime when no client is injected.
@@ -283,18 +283,7 @@ export async function buildGoogleClient(auth: AuthMaterial): Promise<GeminiClien
   // GenerateContentResponse.
   const { GoogleGenAI } = await import('@google/genai')
 
-  const options =
-    'apiKey' in auth
-      ? { apiKey: auth.apiKey }
-      : {
-          // Vertex auth is handled automatically by @google/genai when GOOGLE_CLOUD_PROJECT and credentials are set (requires SDK v1.52+)
-          // GoogleGenAIOptions uses vertexai:true + project + location for Vertex AI.
-          vertexai: true,
-          project: auth.vertex.project,
-          location: auth.vertex.location,
-        }
-
-  const ai = new GoogleGenAI(options)
+  const ai = new GoogleGenAI({ apiKey: auth.apiKey })
 
   return {
     models: {

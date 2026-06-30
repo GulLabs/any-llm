@@ -26,7 +26,6 @@ import {
   FakeClock,
   FakeIds,
   RecordingSink,
-  fakeAuth,
 } from '@gullabs/testing'
 
 // ---------------------------------------------------------------------------
@@ -34,7 +33,7 @@ import {
 // ---------------------------------------------------------------------------
 
 const PRICING = geminiPricingSource()
-const AUTH = fakeAuth({ apiKey: 'test-key' })
+const TEST_AUTH = { apiKey: 'test-key' }
 
 const GOOD_USAGE: Usage = {
   inputTokens: 100,
@@ -65,7 +64,6 @@ function makeClient(model: string) {
 
   const client = createClient({
     adapters: [adapter],
-    auth: AUTH,
     pricing: PRICING,
     sink,
     clock,
@@ -89,7 +87,7 @@ async function expectBadRequest(
   config: Parameters<typeof client.generate>[0]['config'],
 ): Promise<LlmError> {
   try {
-    await client.generate({ model, messages: MESSAGES, ...(config !== undefined ? { config } : {}) })
+    await client.generate({ model, messages: MESSAGES, ...(config !== undefined ? { config } : {}) }, { auth: TEST_AUTH })
     throw new Error('expected generate() to throw, but it resolved')
   } catch (e) {
     expect(e).toBeInstanceOf(LlmError)
@@ -266,7 +264,7 @@ describe('engine — config validation for 3.x (fixed sampling) models', () => {
       model: 'gemini-3.5-flash',
       messages: MESSAGES,
       config: { timeoutMs: 30_000 },
-    })
+    }, { auth: TEST_AUTH })
 
     expect(result).toBeDefined()
     expect(sink.records).toHaveLength(1)
@@ -289,7 +287,7 @@ describe('engine — 2.5 (tunable) models accept sampling params', () => {
         model,
         messages: MESSAGES,
         config: { temperature: 0.8, topP: 0.95, topK: 64 },
-      })
+      }, { auth: TEST_AUTH })
 
       expect(result).toBeDefined()
       expect(sink.records).toHaveLength(1)
@@ -322,7 +320,7 @@ describe('gemini-3-flash-preview — resolution and pricing', () => {
     const result = await client.generate({
       model: 'gemini-3-flash-preview',
       messages: MESSAGES,
-    })
+    }, { auth: TEST_AUTH })
 
     expect(result.cost).toBeDefined()
     expect(result.cost!.microUsd).not.toBeNull()
@@ -351,7 +349,7 @@ describe('engine — failed validation writes error record to sink', () => {
         model: 'gemini-3.5-flash',
         messages: MESSAGES,
         config: { temperature: 1.0 },
-      }),
+      }, { auth: TEST_AUTH }),
     ).rejects.toBeInstanceOf(LlmError)
 
     // Sink received exactly one error record
@@ -371,7 +369,7 @@ describe('engine — failed validation writes error record to sink', () => {
         model: 'gemini-3.5-flash',
         messages: MESSAGES,
         config: { temperature: 0.5 },
-      })
+      }, { auth: TEST_AUTH })
     } catch (e) {
       thrownErr = e as LlmError
     }

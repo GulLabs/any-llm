@@ -29,7 +29,7 @@ import type {
   RateLimiter,
   Release,
 } from './index.js'
-import { FakeAdapter, FakeClock, FakeIds, RecordingSink, fakeAuth } from '@gullabs/testing'
+import { FakeAdapter, FakeClock, FakeIds, RecordingSink } from '@gullabs/testing'
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -53,7 +53,7 @@ function makeSuccessResult(overrides?: Partial<AdapterResult>): AdapterResult {
 }
 
 const PRICING = geminiPricingSource()
-const AUTH = fakeAuth({ apiKey: 'test-key' })
+const TEST_AUTH = { apiKey: 'test-key' }
 
 // ---------------------------------------------------------------------------
 // (a) Multi-middleware ordering
@@ -104,7 +104,6 @@ describe('engine — middleware ordering (onion model)', () => {
 
     const client = createClient({
       adapters: [capturingAdapter],
-      auth: AUTH,
       pricing: PRICING,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -114,7 +113,7 @@ describe('engine — middleware ordering (onion model)', () => {
     await client.generate({
       model: 'gemini-2.5-flash',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    })
+    }, { auth: TEST_AUTH })
 
     // Outermost-first request, innermost-first response (onion model).
     expect(order).toEqual([
@@ -175,7 +174,6 @@ describe('engine — retry + rate-limiter integration', () => {
 
       const client = createClient({
         adapters: [adapter],
-        auth: AUTH,
         pricing: PRICING,
         clock: new FakeClock(),
         ids,
@@ -193,7 +191,7 @@ describe('engine — retry + rate-limiter integration', () => {
       const result = await client.generate({
         model: 'gemini-2.5-flash',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      })
+      }, { auth: TEST_AUTH })
 
       // Final result is a success.
       expect(result.text).toBe('ok')

@@ -15,7 +15,7 @@ import {
   geminiPricingSource,
 } from './index.js'
 import type { ModelDescriptor } from './index.js'
-import { FakeAdapter, FakeIds, FakeClock, fakeAuth } from '@gullabs/testing'
+import { FakeAdapter, FakeIds, FakeClock } from '@gullabs/testing'
 
 // ---------------------------------------------------------------------------
 // createModelRegistry
@@ -162,7 +162,6 @@ describe('geminiModelDescriptors — cache minTokens', () => {
 
 describe('createClient — duplicate adapter id', () => {
   const PRICING = geminiPricingSource()
-  const AUTH = fakeAuth({ apiKey: 'test-key' })
   const SUCCESS_RESULT = {
     text: 'ok',
     usage: { inputTokens: 1, outputTokens: 1, details: {}, raw: null },
@@ -177,7 +176,6 @@ describe('createClient — duplicate adapter id', () => {
     expect(() =>
       createClient({
         adapters: [a1, a2],
-        auth: AUTH,
         pricing: PRICING,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -190,7 +188,7 @@ describe('createClient — duplicate adapter id', () => {
     const a2 = new FakeAdapter('google', SUCCESS_RESULT)
 
     try {
-      createClient({ adapters: [a1, a2], auth: AUTH, pricing: PRICING })
+      createClient({ adapters: [a1, a2], pricing: PRICING })
       expect.fail('should have thrown')
     } catch (e) {
       expect(e).toBeInstanceOf(LlmError)
@@ -206,7 +204,6 @@ describe('createClient — duplicate adapter id', () => {
     expect(() =>
       createClient({
         adapters: [a1, a2],
-        auth: AUTH,
         pricing: PRICING,
         clock: new FakeClock(),
         ids: new FakeIds(),

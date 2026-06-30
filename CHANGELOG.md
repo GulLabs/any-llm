@@ -9,6 +9,25 @@ This project does not use semantic versioning yet — it will adopt semver on fi
 
 ## [Unreleased] / 0.2.0 — next
 
+### Breaking Changes
+
+**`@gullabs/core`**
+- `AuthProvider` port removed. There is no longer a pluggable credential resolver in the engine
+  pipeline. Client-level `auth` on `createClient` is gone.
+- `envAuth()` removed. The library no longer ships any helper that reads credentials from
+  `process.env` or any ambient source.
+- `auth` is now **required per call**. Pass `{ auth: { apiKey } }` to every `generate()` and
+  `runStructured()` call:
+  ```ts
+  client.generate(request, { auth: { apiKey } })
+  client.runStructured(callSite, { auth: { apiKey }, vars: { ... } })
+  ```
+- `AuthMaterial` narrowed to `{ apiKey: string }`. The `{ vertex: { ... } }` variant is removed.
+
+**`@gullabs/google`**
+- Vertex AI auth path removed from `buildGoogleClient`. Vertex AI is not supported in this
+  version. See [Roadmap](./ROADMAP.md) for the planned return with explicit, non-ADC credentials.
+
 ### Security
 
 **`@gullabs/core`**

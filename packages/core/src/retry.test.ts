@@ -16,7 +16,6 @@ import {
   FakeClock,
   FakeIds,
   RecordingSink,
-  fakeAuth,
 } from '@gullabs/testing'
 
 // ---------------------------------------------------------------------------
@@ -291,7 +290,7 @@ describe('retryMiddleware', () => {
 
 describe('engine + middleware — integration', () => {
   const PRICING = geminiPricingSource()
-  const AUTH = fakeAuth({ apiKey: 'test-key' })
+  const TEST_AUTH = { apiKey: 'test-key' }
 
   function makeSuccessResult() {
     return {
@@ -313,7 +312,6 @@ describe('engine + middleware — integration', () => {
 
     const client = createClient({
       adapters: [adapter],
-      auth: AUTH,
       pricing: PRICING,
       sink,
       clock,
@@ -324,7 +322,7 @@ describe('engine + middleware — integration', () => {
     const result = await client.generate({
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    })
+    }, { auth: TEST_AUTH })
 
     expect(result.text).toBe('Hello!')
     expect(sink.records).toHaveLength(1)
@@ -342,7 +340,6 @@ describe('engine + middleware — integration', () => {
     expect(() =>
       createClient({
         adapters: [new FakeAdapter('google', makeSuccessResult())],
-        auth: AUTH,
         pricing: PRICING,
         middleware: [mwA, mwB], // both have id='retry'
       }),
@@ -359,7 +356,6 @@ describe('engine + middleware — integration', () => {
 
     const client = createClient({
       adapters: [adapter],
-      auth: AUTH,
       pricing: PRICING,
       sink,
       clock: new FakeClock(),
@@ -375,7 +371,7 @@ describe('engine + middleware — integration', () => {
     await client.generate({
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    })
+    }, { auth: TEST_AUTH })
 
     // Two records: one error attempt, one ok attempt
     expect(sink.records).toHaveLength(2)
@@ -401,7 +397,6 @@ describe('engine + middleware — integration', () => {
 
     const client = createClient({
       adapters: [adapter],
-      auth: AUTH,
       pricing: PRICING,
       sink,
       clock: new FakeClock(),
@@ -418,7 +413,7 @@ describe('engine + middleware — integration', () => {
       client.generate({
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      }),
+      }, { auth: TEST_AUTH }),
     ).rejects.toMatchObject({ kind: 'rate_limited' })
 
     // 3 records (one per attempt), all with the same callId
@@ -446,7 +441,6 @@ describe('engine + middleware — integration', () => {
 
     const client = createClient({
       adapters: [adapter],
-      auth: AUTH,
       pricing: PRICING,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -462,7 +456,7 @@ describe('engine + middleware — integration', () => {
     await client.generate({
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    })
+    }, { auth: TEST_AUTH })
 
     expect(starts).toHaveLength(1)    // ONE onStart per logical call
     expect(successes).toHaveLength(1) // ONE onSuccess after chain settles
