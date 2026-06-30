@@ -13,5 +13,7 @@ export * from '@gullabs/google'
 export { z } from 'zod'
 export type { ZodType, ZodTypeAny } from 'zod'
 
-/** Library version — kept in sync with `package.json`. */
-export const ANY_LLM_VERSION = '0.1.0'
+import { version } from '../package.json'
+
+/** Library version, sourced from package.json at build time. */
+export const ANY_LLM_VERSION: string = version

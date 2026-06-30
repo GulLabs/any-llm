@@ -8,7 +8,14 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { createClient, geminiAdapter, geminiPricingSource, z } from './index.js'
+import { version as pkgVersion } from '../package.json'
+import {
+  ANY_LLM_VERSION,
+  createClient,
+  geminiAdapter,
+  geminiPricingSource,
+  z,
+} from './index.js'
 
 describe('@gullabs/any-llm package surface', () => {
   it('exports the core client factory', () => {
@@ -22,5 +29,9 @@ describe('@gullabs/any-llm package surface', () => {
 
   it('exports Zod for one-package structured-output setup', () => {
     expect(typeof z.object).toBe('function')
+  })
+
+  it('ANY_LLM_VERSION matches package.json version', () => {
+    expect(ANY_LLM_VERSION).toBe(pkgVersion)
   })
 })
