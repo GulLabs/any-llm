@@ -24,6 +24,7 @@
   "devDependencies": {
     "@changesets/cli": "^2.31.0",
     "@eslint/js": "^10.0.1",
+    "@gullabs/any-llm": "workspace:*",
     "@gullabs/core": "workspace:*",
     "@gullabs/google": "workspace:*",
     "@gullabs/testing": "workspace:*",

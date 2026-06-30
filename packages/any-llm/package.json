@@ -1,13 +1,13 @@
 {
-  "name": "@gullabs/google",
+  "name": "@gullabs/any-llm",
   "version": "0.1.0",
-  "description": "Gemini provider adapter for any-llm — Flex tier, thinking capture, structured output, error classification.",
+  "description": "Batteries-included any-llm client for Gemini: engine, adapter, Google SDK, and Zod in one install.",
   "type": "module",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/gullabs/any-llm.git",
-    "directory": "packages/google"
+    "directory": "packages/any-llm"
   },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -26,16 +26,10 @@
     "build": "tsup"
   },
   "dependencies": {
-    "@gullabs/core": "workspace:*"
-  },
-  "peerDependencies": {
-    "@google/genai": "^1 || ^2",
+    "@google/genai": "^1.45.0 || ^2",
+    "@gullabs/core": "workspace:*",
+    "@gullabs/google": "workspace:*",
     "zod": "^3.23.0 || ^4"
-  },
-  "devDependencies": {
-    "@google/genai": "^1.45.0",
-    "@gullabs/testing": "workspace:*",
-    "zod": "^3.23.0"
   },
   "engines": {
     "node": ">=20.9.0"
@@ -55,6 +49,6 @@
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/gullabs/any-llm/tree/main/packages/google#readme",
+  "homepage": "https://github.com/gullabs/any-llm/tree/main/packages/any-llm#readme",
   "bugs": "https://github.com/gullabs/any-llm/issues"
 }

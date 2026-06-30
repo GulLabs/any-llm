@@ -7,29 +7,30 @@ An in-process TypeScript library that standardises LLM calls with first-class ob
 ## Install
 
 ```bash
-pnpm add @gullabs/core @gullabs/google
+pnpm add @gullabs/any-llm
+```
+
+The default package includes the core engine, Gemini adapter, `@google/genai`, and `zod`.
+Use the modular packages only when you want explicit dependency control:
+
+```bash
+pnpm add @gullabs/core @gullabs/google @google/genai zod
 # optional companions:
 pnpm add @gullabs/drizzle    # Drizzle ORM sink for Postgres
 pnpm add @gullabs/testing    # test fakes (dev only)
 ```
-
-> Provider SDKs are peer-dependencies. For Gemini: `pnpm add @google/genai`
 
 ## Quickstart
 
 The four v1 goals in ~25 lines:
 
 ```ts
-import { z } from 'zod'
-import { createClient, geminiPricingSource, defineCallSite } from '@gullabs/core'
-import { geminiAdapter } from '@gullabs/google'
-import { drizzleUsageSink, llmCalls } from '@gullabs/drizzle'
+import { z, createClient, geminiPricingSource, defineCallSite, geminiAdapter } from '@gullabs/any-llm'
 
 // 1. Wire up the client — no auth here; the library never reads credentials
 const client = createClient({
   adapters: [geminiAdapter()],
   pricing: geminiPricingSource(),
-  sink: drizzleUsageSink(db, llmCalls),
 })
 
 // 2. Define a typed, reusable call site
@@ -61,8 +62,10 @@ console.log(result.output) // { rating: 4, summary: '...' }  — Zod-validated
 console.log(result.usage) // { inputTokens, outputTokens, cachedInputTokens, thinkingTokens }
 console.log(result.cost?.microUsd) // integer micro-USD, frozen at call time
 console.log(result.reasoningText) // thought summary from the model
-// The record has already been persisted to llm_calls via the Drizzle sink.
 ```
+
+To persist records to Postgres, install `@gullabs/drizzle` and pass
+`sink: drizzleUsageSink(db, llmCalls)` when creating the client.
 
 See [`examples/basic.ts`](./examples/basic.ts) for a **fully runnable** version (no network required — uses test fakes). Run it with `pnpm example`.
 
@@ -118,6 +121,7 @@ The design is **Ports & Adapters (hexagonal)**: the core engine depends only on 
 
 | Package                                  | Description                                                                                                                                                                                                                                |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`@gullabs/any-llm`](./packages/any-llm) | Default batteries-included package: re-exports core + Gemini adapter and installs `@google/genai` + `zod` for one-package setup.                                                                                                            |
 | [`@gullabs/core`](./packages/core)       | Types, ports, engine (`createClient`, `generate`, `runStructured`), cost computation, record builder. No provider dependencies.                                                                                                            |
 | [`@gullabs/google`](./packages/google)   | Gemini adapter over `@google/genai`. Maps Flex tier, thinking config, multimodal parts, structured output, and error classification. Optional `GoogleFileStore` and `GoogleCacheStore` helpers for Gemini Files API and Context Cache API. |
 | [`@gullabs/drizzle`](./packages/drizzle) | Reference Postgres schema (`llm_calls` table) and `drizzleUsageSink` — a `UsageSink` port implementation for Drizzle ORM.                                                                                                                  |

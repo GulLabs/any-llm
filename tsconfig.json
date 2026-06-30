@@ -5,6 +5,7 @@
     "baseUrl": ".",
     "paths": {
       "@gullabs/core": ["packages/core/src/index.ts"],
+      "@gullabs/any-llm": ["packages/any-llm/src/index.ts"],
       "@gullabs/google": ["packages/google/src/index.ts"],
       "@gullabs/drizzle": ["packages/drizzle/src/index.ts"],
       "@gullabs/testing": ["packages/testing/src/index.ts"]
