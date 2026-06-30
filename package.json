@@ -14,9 +14,13 @@
     "lint:fix": "eslint . --fix",
     "quality": "pnpm lint && pnpm typecheck && pnpm test && pnpm -r build",
     "clean": "pnpm -r exec rm -rf dist",
-    "example": "tsx examples/basic.ts"
+    "example": "tsx examples/basic.ts",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "pnpm -r build && changeset publish"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.31.0",
     "@eslint/js": "^10.0.1",
     "@gullabs/core": "workspace:*",
     "@gullabs/google": "workspace:*",

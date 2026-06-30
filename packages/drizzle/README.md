@@ -17,7 +17,7 @@ Reference Postgres schema and `UsageSink` implementation for any-llm using Drizz
 ```ts
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { llmCalls, drizzleUsageSink } from '@gullabs/drizzle'
-import { createClient, geminiPricingSource } from '@gullabs/core'
+import { createClient, geminiPricingSource, defineCallSite } from '@gullabs/core'
 import { geminiAdapter } from '@gullabs/google'
 import pg from 'pg'
 
@@ -25,9 +25,13 @@ const db = drizzle(new pg.Pool({ connectionString: process.env.DATABASE_URL }))
 
 const client = createClient({
   adapters: [geminiAdapter()],
-  auth: myAuth,
   pricing: geminiPricingSource(),
   sink: drizzleUsageSink(db, llmCalls),
+})
+
+// Auth is required per call — pass it at call time, never at client construction.
+const result = await client.runStructured(myCallSite, { text: 'hello' }, {
+  auth: { apiKey: process.env.GEMINI_API_KEY! },
 })
 ```
 

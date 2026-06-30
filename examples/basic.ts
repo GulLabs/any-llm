@@ -21,7 +21,6 @@ import {
   FakeClock,
   FakeIds,
   RecordingSink,
-  fakeAuth,
   fakeGeminiResponse,
   makeFakeGemini,
 } from '@gullabs/testing'
@@ -75,7 +74,6 @@ const ids = new FakeIds()
 
 const client = createClient({
   adapters: [geminiAdapter({ client: fakeClient })],
-  auth: fakeAuth({ apiKey: 'fake-api-key' }),
   pricing: geminiPricingSource(),
   sink,
   clock,
@@ -102,8 +100,8 @@ const codeReview = defineCallSite({
 // 5. Run it — no await at top level needed in modern Node (>= 20)
 // ---------------------------------------------------------------------------
 
-const result = await client.runStructured(codeReview, {
-  diff: '- let x = 1\n+ const x = 1',
+const result = await client.runStructured(codeReview, { diff: '- let x = 1\n+ const x = 1' }, {
+  auth: { apiKey: 'fake-api-key' },
 })
 
 console.log('\n========================================')
@@ -165,17 +163,12 @@ console.log('\n========================================\n')
 //
 // const realClient = createClient({
 //   adapters: [geminiAdapter()],          // uses real @google/genai SDK
-//   auth: {
-//     async credentials(_provider) {
-//       return { apiKey: process.env.GEMINI_API_KEY! }
-//     },
-//   },
 //   pricing: geminiPricingSource(),
 //   sink: drizzleUsageSink(db, llmCalls), // writes to your llm_calls table
 // })
 //
-// const realResult = await realClient.runStructured(codeReview, {
-//   diff: '- let x = 1\n+ const x = 1',
+// const realResult = await realClient.runStructured(codeReview, { diff: '- let x = 1\n+ const x = 1' }, {
+//   auth: { apiKey: process.env.GEMINI_API_KEY! }, // pass per-call — never read from env internally
 // })
 // console.log('Real output:', realResult.output)
 // console.log('Real cost (µUSD):', realResult.cost?.microUsd)
