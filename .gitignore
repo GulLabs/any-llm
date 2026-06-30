@@ -6,3 +6,6 @@ coverage/
 .turbo/
 *.tsbuildinfo
 .craftsman/
+.env.infra.local
+.env.local
+.env
