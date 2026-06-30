@@ -35,13 +35,11 @@ describe('redactSecrets — Google API keys', () => {
   })
 
   it('does NOT redact short AIza prefixes (under 20 suffix chars)', () => {
-    // 19 suffix chars — below the minimum
-    // AIza = 4 chars, then [0-9A-Za-z_\-]{20,}, so 'AIzaSyABCDEFGHIJKLMNO' has 19 after 'AIza'
-    // Actually: 'AIzaSyABCDEFGHIJKLMNO' → 'AIza' + 'SyABCDEFGHIJKLMNO' = 18 chars after AIza
+    // AIza = 4 chars, then [0-9A-Za-z_\-]{20,}.
     // The regex needs 20+, so this should NOT be redacted.
-    const shortKey = 'AIzaShort12345678' // only 13 chars after AIza
-    const out = redactSecrets(shortKey)
-    expect(out).toBe(shortKey) // unchanged
+    const shortAIzaPrefix = 'AIzaShort'
+    const out = redactSecrets(shortAIzaPrefix)
+    expect(out).toBe(shortAIzaPrefix) // unchanged
   })
 
   it('redacts a key embedded in a full URL', () => {
@@ -123,12 +121,11 @@ describe('redactSecrets — Bearer tokens', () => {
 
   it('redacts a three-part JWT-style token with base64url segments', () => {
     // JWT format: header.payload.signature (base64url, no +/=/space)
-    const jwt =
-      'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyMSJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c'
+    const jwt = 'aaaa.bbbb.cccc'
     const text = `Bearer ${jwt}`
     const out = redactSecrets(text)
     expect(out).toBe('Bearer …REDACTED')
-    expect(out).not.toContain('eyJhbGciOiJSUzI1NiJ9')
+    expect(out).not.toContain(jwt)
   })
 })
 

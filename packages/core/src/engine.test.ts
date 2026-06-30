@@ -296,7 +296,7 @@ describe('engine — double-count integration', () => {
       expect(rec.thinkingTokens).toBe(2_000)
       expect(rec.cachedInputTokens).toBe(100_000)
 
-      // FLEX service tier = 50% of standard (the discount Atif's usage relies on).
+      // FLEX service tier = 50% of standard.
       const flex = await client.generate(
         {
           model: 'gemini-2.5-pro',

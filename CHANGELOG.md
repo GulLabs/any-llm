@@ -194,4 +194,4 @@ Initial v1 implementation. Scope: four goals, no more — see `SPEC.md`.
 - `examples/basic.ts` — fully runnable network-free example (`pnpm example`)
 - Apache-2.0 license
 
-[Unreleased]: https://github.com/atifgul/any-llm/compare/HEAD...HEAD
+[Unreleased]: https://github.com/gullabs/any-llm/compare/HEAD...HEAD

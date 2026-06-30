@@ -43,10 +43,11 @@ feature branch  →  PR + changeset file merged to main
 
 ## Packages published
 
-All four packages are published to the `@gullabs` scope and already have `publishConfig.access = "public"`:
+All packages are published to the `@gullabs` scope and already have `publishConfig.access = "public"`:
 
 | Package            | npm                                            |
 | ------------------ | ---------------------------------------------- |
+| `@gullabs/any-llm` | https://www.npmjs.com/package/@gullabs/any-llm |
 | `@gullabs/core`    | https://www.npmjs.com/package/@gullabs/core    |
 | `@gullabs/google`  | https://www.npmjs.com/package/@gullabs/google  |
 | `@gullabs/drizzle` | https://www.npmjs.com/package/@gullabs/drizzle |

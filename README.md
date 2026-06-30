@@ -1,6 +1,6 @@
 # any-llm
 
-[![CI](https://github.com/GulLabs/any-llm/actions/workflows/ci.yml/badge.svg)](https://github.com/GulLabs/any-llm/actions/workflows/ci.yml)
+[![CI](https://github.com/gullabs/any-llm/actions/workflows/ci.yml/badge.svg)](https://github.com/gullabs/any-llm/actions/workflows/ci.yml)
 
 An in-process TypeScript library that standardises LLM calls with first-class observability. v1 delivers four things: **Gemini Flex** calls, **token usage capture** (input / output / cached / thinking), **thinking text capture** and per-call postmortems, and **micro-USD cost tracking** frozen into every persisted record. The design is a thin adapter over raw provider SDKs — no agent loop, no framework, no magic.
 

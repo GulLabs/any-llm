@@ -264,7 +264,7 @@ idempotent re-runs without hitting the provider. Absent in v1.
 
 ## Package Scope
 
-The `@gullabs` npm scope is used throughout. The GitHub org is `GulLabs`. Provider SDK packages
+The `@gullabs` npm scope is used throughout. The GitHub org is `gullabs`. Provider SDK packages
 (`@google/genai`, `@anthropic-ai/sdk`, `openai`) and `zod` are peer dependencies, not bundled
 dependencies, to avoid duplicate instances in the host's dependency tree.
 
