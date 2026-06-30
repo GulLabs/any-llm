@@ -34,9 +34,7 @@ import type { GeminiClientLike, GeminiResponseShape } from './client.js'
 // ---------------------------------------------------------------------------
 
 /** Minimal resolved request for unit tests. */
-function makeResolvedReq(
-  overrides: Partial<ResolvedRequest> = {},
-): ResolvedRequest {
+function makeResolvedReq(overrides: Partial<ResolvedRequest> = {}): ResolvedRequest {
   return {
     model: 'gemini-2.5-pro',
     messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hello' }] }],
@@ -50,6 +48,29 @@ const FAKE_CTX: AdapterCtx = {
   auth: { apiKey: 'test-key' },
   logger: { info() {}, warn() {}, error() {}, debug() {} },
 }
+
+// ---------------------------------------------------------------------------
+// 0. Observability — debug log
+// ---------------------------------------------------------------------------
+
+describe('observability', () => {
+  it('emits llm.adapter.dispatch debug log before SDK call', async () => {
+    const debugFn = vi.fn()
+    const ctx: AdapterCtx = {
+      auth: { apiKey: 'test-key' },
+      logger: { info() {}, warn() {}, error() {}, debug: debugFn },
+    }
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'hi' }))
+    const adapter = geminiAdapter({ client })
+    await adapter.run(makeResolvedReq(), ctx)
+
+    expect(debugFn).toHaveBeenCalledOnce()
+    const [obj, msg] = debugFn.mock.calls[0]!
+    expect(msg).toBe('llm.adapter.dispatch')
+    expect(obj).toMatchObject({ model: 'gemini-2.5-pro' })
+    expect(Array.isArray(obj.configKeys)).toBe(true)
+  })
+})
 
 // ---------------------------------------------------------------------------
 // 1. Usage mapping — the #1 correctness rule
@@ -123,9 +144,7 @@ describe('usage mapping', () => {
   })
 
   it('handles missing usageMetadata gracefully (all zeroes)', async () => {
-    const client = makeFakeGemini(
-      fakeGeminiResponse({ text: 'ok' }),
-    )
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
 
     const adapter = geminiAdapter({ client })
     const result = await adapter.run(makeResolvedReq(), FAKE_CTX)
@@ -192,8 +211,13 @@ describe('reasoning mapping', () => {
       makeResolvedReq({
         model: 'gemini-2.5-pro',
         modelDescriptor: {
-          id: 'gemini-2.5-pro', provider: 'google',
-          capabilities: { reasoning: true, structuredOutput: true, reasoningApi: 'budget' },
+          id: 'gemini-2.5-pro',
+          provider: 'google',
+          capabilities: {
+            reasoning: true,
+            structuredOutput: true,
+            reasoningApi: 'budget',
+          },
         },
         config: {
           serviceTier: 'flex',
@@ -217,8 +241,13 @@ describe('reasoning mapping', () => {
       makeResolvedReq({
         model: 'gemini-2.5-flash',
         modelDescriptor: {
-          id: 'gemini-2.5-flash', provider: 'google',
-          capabilities: { reasoning: true, structuredOutput: true, reasoningApi: 'budget' },
+          id: 'gemini-2.5-flash',
+          provider: 'google',
+          capabilities: {
+            reasoning: true,
+            structuredOutput: true,
+            reasoningApi: 'budget',
+          },
         },
         config: {
           serviceTier: 'flex',
@@ -242,8 +271,13 @@ describe('reasoning mapping', () => {
       makeResolvedReq({
         model: 'gemini-2.5-pro',
         modelDescriptor: {
-          id: 'gemini-2.5-pro', provider: 'google',
-          capabilities: { reasoning: true, structuredOutput: true, reasoningApi: 'budget' },
+          id: 'gemini-2.5-pro',
+          provider: 'google',
+          capabilities: {
+            reasoning: true,
+            structuredOutput: true,
+            reasoningApi: 'budget',
+          },
         },
         config: { serviceTier: 'flex', reasoning: { effort: 'none' } },
       }),
@@ -264,7 +298,8 @@ describe('reasoning mapping', () => {
       makeResolvedReq({
         model: 'gemini-3.0-pro',
         modelDescriptor: {
-          id: 'gemini-3.0-pro', provider: 'google',
+          id: 'gemini-3.0-pro',
+          provider: 'google',
           capabilities: { reasoning: true, reasoningApi: 'level' },
         },
         config: {
@@ -289,7 +324,8 @@ describe('reasoning mapping', () => {
       makeResolvedReq({
         model: 'gemini-3.5-pro',
         modelDescriptor: {
-          id: 'gemini-3.5-pro', provider: 'google',
+          id: 'gemini-3.5-pro',
+          provider: 'google',
           capabilities: { reasoning: true, reasoningApi: 'level' },
         },
         config: { serviceTier: 'flex', reasoning: { effort: 'low' } },
@@ -311,7 +347,8 @@ describe('reasoning mapping', () => {
       makeResolvedReq({
         model: 'gemini-3.0-ultra',
         modelDescriptor: {
-          id: 'gemini-3.0-ultra', provider: 'google',
+          id: 'gemini-3.0-ultra',
+          provider: 'google',
           capabilities: { reasoning: true, reasoningApi: 'level' },
         },
         config: { serviceTier: 'flex', reasoning: { budgetTokens: 1000 } },
@@ -339,8 +376,13 @@ describe('reasoning mapping', () => {
       makeResolvedReq({
         model: 'gemini-2.5-pro',
         modelDescriptor: {
-          id: 'gemini-2.5-pro', provider: 'google',
-          capabilities: { reasoning: true, structuredOutput: true, reasoningApi: 'budget' },
+          id: 'gemini-2.5-pro',
+          provider: 'google',
+          capabilities: {
+            reasoning: true,
+            structuredOutput: true,
+            reasoningApi: 'budget',
+          },
         },
         config: { serviceTier: 'flex', reasoning: { includeThoughts: true } },
       }),
@@ -352,15 +394,22 @@ describe('reasoning mapping', () => {
   })
 
   it('sets includeThoughts in thinkingConfig when reasoning.includeThoughts is true', async () => {
-    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok', thoughtText: 'thinking' }))
+    const client = makeFakeGemini(
+      fakeGeminiResponse({ text: 'ok', thoughtText: 'thinking' }),
+    )
     const adapter = geminiAdapter({ client })
 
     await adapter.run(
       makeResolvedReq({
         model: 'gemini-2.5-pro',
         modelDescriptor: {
-          id: 'gemini-2.5-pro', provider: 'google',
-          capabilities: { reasoning: true, structuredOutput: true, reasoningApi: 'budget' },
+          id: 'gemini-2.5-pro',
+          provider: 'google',
+          capabilities: {
+            reasoning: true,
+            structuredOutput: true,
+            reasoningApi: 'budget',
+          },
         },
         config: { serviceTier: 'flex', reasoning: { includeThoughts: true } },
       }),
@@ -403,10 +452,7 @@ describe('structured output', () => {
     )
     const adapter = geminiAdapter({ client })
 
-    await adapter.run(
-      makeResolvedReq({ outputSchema: schema }),
-      FAKE_CTX,
-    )
+    await adapter.run(makeResolvedReq({ outputSchema: schema }), FAKE_CTX)
 
     const call = client.calls[0] as { config?: { responseMimeType?: string } }
     expect(call?.config?.responseMimeType).toBe('application/json')
@@ -419,13 +465,12 @@ describe('structured output', () => {
     )
     const adapter = geminiAdapter({ client })
 
-    await adapter.run(
-      makeResolvedReq({ outputSchema: schema }),
-      FAKE_CTX,
-    )
+    await adapter.run(makeResolvedReq({ outputSchema: schema }), FAKE_CTX)
 
     const call = client.calls[0] as {
-      config?: { responseSchema?: { type?: string; properties?: Record<string, { type?: string }> } }
+      config?: {
+        responseSchema?: { type?: string; properties?: Record<string, { type?: string }> }
+      }
     }
     expect(call?.config?.responseSchema?.type).toBe('object')
     expect(call?.config?.responseSchema?.properties?.['name']?.type).toBe('string')
@@ -439,25 +484,17 @@ describe('structured output', () => {
     )
     const adapter = geminiAdapter({ client })
 
-    const result = await adapter.run(
-      makeResolvedReq({ outputSchema: schema }),
-      FAKE_CTX,
-    )
+    const result = await adapter.run(makeResolvedReq({ outputSchema: schema }), FAKE_CTX)
 
     expect(result.rawStructured).toEqual({ name: 'Bob' })
   })
 
   it('leaves rawStructured undefined on JSON parse failure', async () => {
     const schema = z.object({ name: z.string() })
-    const client = makeFakeGemini(
-      fakeGeminiResponse({ structuredJson: 'not-json' }),
-    )
+    const client = makeFakeGemini(fakeGeminiResponse({ structuredJson: 'not-json' }))
     const adapter = geminiAdapter({ client })
 
-    const result = await adapter.run(
-      makeResolvedReq({ outputSchema: schema }),
-      FAKE_CTX,
-    )
+    const result = await adapter.run(makeResolvedReq({ outputSchema: schema }), FAKE_CTX)
 
     expect(result.rawStructured).toBeUndefined()
   })
@@ -465,15 +502,10 @@ describe('structured output', () => {
   it('emits unsupported-setting warning when schema cannot be converted', async () => {
     // ZodFunction is not supported by zodToGeminiSchema
     const schema = z.function()
-    const client = makeFakeGemini(
-      fakeGeminiResponse({ text: '{}' }),
-    )
+    const client = makeFakeGemini(fakeGeminiResponse({ text: '{}' }))
     const adapter = geminiAdapter({ client })
 
-    const result = await adapter.run(
-      makeResolvedReq({ outputSchema: schema }),
-      FAKE_CTX,
-    )
+    const result = await adapter.run(makeResolvedReq({ outputSchema: schema }), FAKE_CTX)
 
     expect(result.warnings).toContainEqual(
       expect.objectContaining({ type: 'unsupported-setting', setting: 'output.schema' }),
@@ -707,7 +739,9 @@ describe('error classification', () => {
 
   it('passes through provider tag on all errors', async () => {
     for (const status of [429, 401, 500]) {
-      const client = makeFakeGemini(() => { throw { status } })
+      const client = makeFakeGemini(() => {
+        throw { status }
+      })
       const adapter = geminiAdapter({ client })
       const err = await adapter.run(makeResolvedReq(), FAKE_CTX).catch((e: unknown) => e)
       expect((err as LlmError).provider).toBe('google')
@@ -718,7 +752,9 @@ describe('error classification', () => {
     // Simulate buildGoogleClient throwing (e.g. bad credentials, missing SDK)
     // by injecting a _clientFactory that throws a raw Error.
     const adapter = geminiAdapter({
-      _clientFactory: () => { throw new Error('auth init failed') },
+      _clientFactory: () => {
+        throw new Error('auth init failed')
+      },
     })
     const err = await adapter.run(makeResolvedReq(), FAKE_CTX).catch((e: unknown) => e)
     // Must be a typed LlmError, not a raw Error.
@@ -888,7 +924,10 @@ describe('AbortSignal passthrough', () => {
     const adapter = geminiAdapter({ client })
 
     await adapter.run(
-      makeResolvedReq({ signal: controller.signal, config: { serviceTier: 'flex', timeoutMs: 60_000 } }),
+      makeResolvedReq({
+        signal: controller.signal,
+        config: { serviceTier: 'flex', timeoutMs: 60_000 },
+      }),
       { ...FAKE_CTX, signal: controller.signal },
     )
 
@@ -935,20 +974,23 @@ describe('full-stack integration', () => {
     // Advance clock so latency > 0
     clock.advance(150)
 
-    const result = await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [
-        {
-          role: 'user',
-          parts: [{ kind: 'text', text: 'What is the capital of France?' }],
+    const result = await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [
+          {
+            role: 'user',
+            parts: [{ kind: 'text', text: 'What is the capital of France?' }],
+          },
+        ],
+        output: { schema },
+        config: {
+          serviceTier: 'flex',
+          reasoning: { includeThoughts: true, budgetTokens: 4096 },
         },
-      ],
-      output: { schema },
-      config: {
-        serviceTier: 'flex',
-        reasoning: { includeThoughts: true, budgetTokens: 4096 },
       },
-    }, { auth: { apiKey: 'test-integration-key' } })
+      { auth: { apiKey: 'test-integration-key' } },
+    )
 
     // Validate the result
     expect(result.output).toEqual({ answer: 'Paris', confidence: 0.99 })
@@ -1003,10 +1045,13 @@ describe('full-stack integration', () => {
     })
 
     await expect(
-      client.generate({
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Bad prompt' }] }],
-      }, { auth: { apiKey: 'test-key' } }),
+      client.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Bad prompt' }] }],
+        },
+        { auth: { apiKey: 'test-key' } },
+      ),
     ).rejects.toMatchObject({ kind: 'content_filter' })
 
     // Error record should still be persisted (fail-closed call, fail-open sink)
@@ -1024,7 +1069,9 @@ describe('Standard Schema — non-Zod vendor (e.g. valibot)', () => {
    * A hand-rolled Standard Schema v1 object with vendor 'valibot'.
    * Validates that the value has a `name` property of type string.
    */
-  function makeCustomSchema<T extends { name: string }>(): import('@gullabs/core').StandardSchemaV1<T, T> {
+  function makeCustomSchema<
+    T extends { name: string },
+  >(): import('@gullabs/core').StandardSchemaV1<T, T> {
     return {
       '~standard': {
         version: 1 as const,
@@ -1052,10 +1099,7 @@ describe('Standard Schema — non-Zod vendor (e.g. valibot)', () => {
     )
 
     const adapter = geminiAdapter({ client })
-    const result = await adapter.run(
-      makeResolvedReq({ outputSchema: schema }),
-      FAKE_CTX,
-    )
+    const result = await adapter.run(makeResolvedReq({ outputSchema: schema }), FAKE_CTX)
 
     // The adapter should warn that native schema enforcement was skipped.
     const schemaWarning = result.warnings.find(
@@ -1080,11 +1124,14 @@ describe('Standard Schema — non-Zod vendor (e.g. valibot)', () => {
       pricing: geminiPricingSource(),
     })
 
-    const result = await llmClient.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Name?' }] }],
-      output: { schema },
-    }, { auth: { apiKey: 'test-key' } })
+    const result = await llmClient.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Name?' }] }],
+        output: { schema },
+      },
+      { auth: { apiKey: 'test-key' } },
+    )
 
     // Engine validated and returned the typed output.
     expect(result.output).toEqual({ name: 'Bob' })
@@ -1108,20 +1155,26 @@ describe('Standard Schema — non-Zod vendor (e.g. valibot)', () => {
     })
 
     await expect(
-      llmClient.generate({
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Name?' }] }],
-        output: { schema },
-      }, { auth: { apiKey: 'test-key' } }),
+      llmClient.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Name?' }] }],
+          output: { schema },
+        },
+        { auth: { apiKey: 'test-key' } },
+      ),
     ).rejects.toThrow(LlmError)
 
     // Verify the error kind
     try {
-      await llmClient.generate({
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Name?' }] }],
-        output: { schema },
-      }, { auth: { apiKey: 'test-key' } })
+      await llmClient.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Name?' }] }],
+          output: { schema },
+        },
+        { auth: { apiKey: 'test-key' } },
+      )
     } catch (err) {
       expect(err).toBeInstanceOf(LlmError)
       expect((err as LlmError).kind).toBe('parse_error')
@@ -1135,11 +1188,8 @@ describe('Standard Schema — non-Zod vendor (e.g. valibot)', () => {
 
 describe('multimodal part mapping', () => {
   /** Extract the contents array from a captured fake-client call. */
-  function getContents(
-    call: unknown,
-  ): Array<{ role: string; parts: unknown[] }> {
-    return (call as { contents: Array<{ role: string; parts: unknown[] }> })
-      .contents
+  function getContents(call: unknown): Array<{ role: string; parts: unknown[] }> {
+    return (call as { contents: Array<{ role: string; parts: unknown[] }> }).contents
   }
 
   it('maps a text part to { text }', async () => {
@@ -1166,9 +1216,7 @@ describe('multimodal part mapping', () => {
         messages: [
           {
             role: 'user',
-            parts: [
-              { kind: 'inline-media', mimeType: 'image/png', data: 'base64abc' },
-            ],
+            parts: [{ kind: 'inline-media', mimeType: 'image/png', data: 'base64abc' }],
           },
         ],
       }),
@@ -1176,9 +1224,7 @@ describe('multimodal part mapping', () => {
     )
 
     const parts = getContents(client.calls[0])[0]!.parts
-    expect(parts).toEqual([
-      { inlineData: { mimeType: 'image/png', data: 'base64abc' } },
-    ])
+    expect(parts).toEqual([{ inlineData: { mimeType: 'image/png', data: 'base64abc' } }])
   })
 
   it('maps a file-uri part to { fileData: { mimeType, fileUri } }', async () => {
@@ -1279,7 +1325,9 @@ describe('multimodal part mapping', () => {
 
       const parts = getContents(client.calls[0])[0]!.parts
       expect(parts[0]).toMatchObject({ mediaResolution: { level: expected } })
-      expect(result.warnings.filter((w) => w.type === 'unsupported-setting')).toHaveLength(0)
+      expect(
+        result.warnings.filter((w) => w.type === 'unsupported-setting'),
+      ).toHaveLength(0)
     },
   )
 
@@ -1314,7 +1362,9 @@ describe('multimodal part mapping', () => {
 
       const parts = getContents(client.calls[0])[0]!.parts
       expect(parts[0]).toMatchObject({ mediaResolution: { level: expected } })
-      expect(result.warnings.filter((w) => w.type === 'unsupported-setting')).toHaveLength(0)
+      expect(
+        result.warnings.filter((w) => w.type === 'unsupported-setting'),
+      ).toHaveLength(0)
     },
   )
 
@@ -1327,9 +1377,7 @@ describe('multimodal part mapping', () => {
         messages: [
           {
             role: 'user',
-            parts: [
-              { kind: 'inline-media', mimeType: 'image/png', data: 'abc' },
-            ],
+            parts: [{ kind: 'inline-media', mimeType: 'image/png', data: 'abc' }],
           },
         ],
       }),
@@ -1350,9 +1398,7 @@ describe('multimodal part mapping', () => {
         messages: [
           {
             role: 'user',
-            parts: [
-              { kind: 'file-uri', uri: 'gs://b/f', mimeType: 'image/jpeg' },
-            ],
+            parts: [{ kind: 'file-uri', uri: 'gs://b/f', mimeType: 'image/jpeg' }],
           },
         ],
       }),
@@ -1360,9 +1406,7 @@ describe('multimodal part mapping', () => {
     )
 
     const parts = getContents(client.calls[0])[0]!.parts
-    expect(parts).toEqual([
-      { fileData: { mimeType: 'image/jpeg', fileUri: 'gs://b/f' } },
-    ])
+    expect(parts).toEqual([{ fileData: { mimeType: 'image/jpeg', fileUri: 'gs://b/f' } }])
     expect(parts[0]).not.toHaveProperty('mediaResolution')
   })
 })
@@ -1390,10 +1434,7 @@ describe('transport timeout (httpOptions.timeout)', () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
 
-    await adapter.run(
-      makeResolvedReq({ config: { serviceTier: 'flex' } }),
-      FAKE_CTX,
-    )
+    await adapter.run(makeResolvedReq({ config: { serviceTier: 'flex' } }), FAKE_CTX)
 
     const call = client.calls[0] as { config?: { httpOptions?: { timeout?: number } } }
     expect(call?.config?.httpOptions?.timeout).toBe(1_500_000)
@@ -1403,10 +1444,7 @@ describe('transport timeout (httpOptions.timeout)', () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
 
-    await adapter.run(
-      makeResolvedReq({ config: { serviceTier: 'standard' } }),
-      FAKE_CTX,
-    )
+    await adapter.run(makeResolvedReq({ config: { serviceTier: 'standard' } }), FAKE_CTX)
 
     const call = client.calls[0] as { config?: { httpOptions?: { timeout?: number } } }
     expect(call?.config?.httpOptions).toBeUndefined()
@@ -1516,14 +1554,17 @@ describe('grounding — conflict guard', () => {
     })
 
     await expect(
-      llmClient.generate({
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
-        output: { schema },
-        config: {
-          providerOptions: { google: { tools: [{ googleSearch: {} }] } },
+      llmClient.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
+          output: { schema },
+          config: {
+            providerOptions: { google: { tools: [{ googleSearch: {} }] } },
+          },
         },
-      }, { auth: { apiKey: 'test-key' } }),
+        { auth: { apiKey: 'test-key' } },
+      ),
     ).rejects.toMatchObject({ kind: 'bad_request' })
 
     expect(sink.records).toHaveLength(1)
@@ -1626,17 +1667,24 @@ describe('grounding — providerMetadata merge', () => {
       sink,
     })
 
-    const result = await llmClient.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Capital of France?' }] }],
-      config: { providerOptions: { google: { tools: [{ googleSearch: {} }] } } },
-    }, { auth: { apiKey: 'test-key' } })
+    const result = await llmClient.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [
+          { role: 'user', parts: [{ kind: 'text', text: 'Capital of France?' }] },
+        ],
+        config: { providerOptions: { google: { tools: [{ googleSearch: {} }] } } },
+      },
+      { auth: { apiKey: 'test-key' } },
+    )
 
     const resultMeta = result.providerMetadata as Record<string, unknown> | undefined
     expect(resultMeta?.['groundingMetadata']).toEqual(fakeGrounding)
 
     expect(sink.records).toHaveLength(1)
-    const recordMeta = sink.last()?.providerMetadata as Record<string, unknown> | undefined
+    const recordMeta = sink.last()?.providerMetadata as
+      | Record<string, unknown>
+      | undefined
     expect(recordMeta?.['groundingMetadata']).toEqual(fakeGrounding)
   })
 })
@@ -1698,9 +1746,7 @@ describe('fixed-sampling invariant re-assertion after providerOptions merge', ()
 
     // A warning must be surfaced
     expect(result.warnings.length).toBeGreaterThanOrEqual(1)
-    const samplingWarning = result.warnings.find(
-      (w) => w.type === 'unsupported-setting',
-    )
+    const samplingWarning = result.warnings.find((w) => w.type === 'unsupported-setting')
     expect(samplingWarning).toBeDefined()
     expect((samplingWarning as { setting?: string }).setting).toContain('temperature')
   })
@@ -1828,7 +1874,10 @@ describe('FIX A-2: client-side flex AbortSignal ceiling', () => {
           // Hang — we'll abort via the caller signal.
           return new Promise<GeminiResponseShape>((_resolve, reject) => {
             const sig = params.config?.abortSignal
-            if (sig?.aborted === true) { reject(sig.reason); return }
+            if (sig?.aborted === true) {
+              reject(sig.reason)
+              return
+            }
             sig?.addEventListener('abort', () => reject(sig.reason), { once: true })
           })
         },

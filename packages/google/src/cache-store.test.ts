@@ -20,7 +20,9 @@ const fakeAuth = { apiKey: 'test-key' }
 /** Baseline "now" — arbitrary fixed epoch. */
 const BASE_NOW = 1_700_000_000_000
 
-function makeClient(overrides: Partial<GeminiCachesClientLike> = {}): GeminiCachesClientLike {
+function makeClient(
+  overrides: Partial<GeminiCachesClientLike> = {},
+): GeminiCachesClientLike {
   return {
     create: vi.fn().mockResolvedValue({
       name: 'cachedContents/abc123',
@@ -63,7 +65,9 @@ describe('GoogleCacheStore', () => {
   it('create falls back to local clock expiry when server omits expireTime', async () => {
     const ttlSeconds = 1800
     const client = makeClient({
-      create: vi.fn().mockResolvedValue({ name: 'cachedContents/xyz', model: 'gemini-2.0-flash' }),
+      create: vi
+        .fn()
+        .mockResolvedValue({ name: 'cachedContents/xyz', model: 'gemini-2.0-flash' }),
     })
     const store = new GoogleCacheStore({ auth: fakeAuth, client, now: () => BASE_NOW })
 
@@ -198,7 +202,11 @@ describe('GoogleCacheStore', () => {
     // expiresAt = BASE_NOW + 3600*1000; if now = BASE_NOW + 3600*1000 - 100*1000, diff = 100s < 300s
     const nearExpiryNow = BASE_NOW + ttlSeconds * 1000 - 100 * 1000
 
-    const store = new GoogleCacheStore({ auth: fakeAuth, client, now: () => nearExpiryNow })
+    const store = new GoogleCacheStore({
+      auth: fakeAuth,
+      client,
+      now: () => nearExpiryNow,
+    })
 
     const handle: GoogleCacheHandle = {
       cacheName: 'cachedContents/abc123',
@@ -237,7 +245,11 @@ describe('GoogleCacheStore', () => {
     })
     const nearExpiryNow = BASE_NOW + 3600 * 1000 - 100 * 1000
 
-    const store = new GoogleCacheStore({ auth: fakeAuth, client, now: () => nearExpiryNow })
+    const store = new GoogleCacheStore({
+      auth: fakeAuth,
+      client,
+      now: () => nearExpiryNow,
+    })
 
     const handle: GoogleCacheHandle = {
       cacheName: 'cachedContents/abc123',
@@ -264,7 +276,12 @@ describe('GoogleCacheStore', () => {
       }),
     })
 
-    const store = new GoogleCacheStore({ auth: fakeAuth, client, coalesce: false, now: () => BASE_NOW })
+    const store = new GoogleCacheStore({
+      auth: fakeAuth,
+      client,
+      coalesce: false,
+      now: () => BASE_NOW,
+    })
     const factory = vi.fn().mockResolvedValue({ ttlSeconds: 3600 })
     const key = { model: 'gemini-2.0-flash', stableKey: 'no-coalesce-key' }
 
@@ -296,7 +313,12 @@ describe('GoogleCacheStore', () => {
       }),
     })
 
-    const store = new GoogleCacheStore({ auth: fakeAuth, client, coalesce: true, now: () => BASE_NOW })
+    const store = new GoogleCacheStore({
+      auth: fakeAuth,
+      client,
+      coalesce: true,
+      now: () => BASE_NOW,
+    })
     const factory = vi.fn().mockResolvedValue({ ttlSeconds: 3600 })
     const key = { model: 'gemini-2.0-flash', stableKey: 'retry-key' }
 
@@ -364,7 +386,12 @@ describe('GoogleCacheStore', () => {
     })
     const onDeleteError = vi.fn()
 
-    const store = new GoogleCacheStore({ auth: fakeAuth, client, onDeleteError, now: () => BASE_NOW })
+    const store = new GoogleCacheStore({
+      auth: fakeAuth,
+      client,
+      onDeleteError,
+      now: () => BASE_NOW,
+    })
     const key = { model: 'gemini-2.0-flash', stableKey: 'evict-key' }
     const factory = vi.fn().mockResolvedValue({ ttlSeconds: 3600 })
 
@@ -421,7 +448,12 @@ describe('GoogleCacheStore', () => {
     })
     const onDeleteError = vi.fn()
 
-    const store = new GoogleCacheStore({ auth: fakeAuth, client, onDeleteError, now: () => BASE_NOW })
+    const store = new GoogleCacheStore({
+      auth: fakeAuth,
+      client,
+      onDeleteError,
+      now: () => BASE_NOW,
+    })
 
     const handle: GoogleCacheHandle = {
       cacheName: 'cachedContents/abc123',
@@ -432,5 +464,51 @@ describe('GoogleCacheStore', () => {
     // Should not throw
     await expect(store.delete(handle)).resolves.toBeUndefined()
     expect(onDeleteError).toHaveBeenCalledWith('cachedContents/abc123', deleteError)
+  })
+
+  // delete error routing
+  describe('delete error routing', () => {
+    it('routes delete failure to logger.error when logger is provided', async () => {
+      const errorFn = vi.fn()
+      const logger = { info() {}, warn() {}, debug() {}, error: errorFn }
+      const client = makeClient({
+        delete: vi.fn().mockRejectedValue(new Error('network down')),
+      })
+      const store = new GoogleCacheStore({
+        auth: fakeAuth,
+        client,
+        logger,
+        now: () => BASE_NOW,
+      })
+      const handle: GoogleCacheHandle = {
+        cacheName: 'cachedContents/abc123',
+        model: 'gemini-2.0-flash',
+        expiresAt: new Date(BASE_NOW + 3600 * 1000),
+      }
+      await store.delete(handle)
+
+      expect(errorFn).toHaveBeenCalledOnce()
+      const [obj, msg] = errorFn.mock.calls[0]!
+      expect(msg).toBe('gemini.cache.delete.failed')
+      expect(obj).toMatchObject({ name: 'cachedContents/abc123' })
+      expect(typeof obj.error).toBe('string')
+    })
+
+    it('falls back to console.error when no logger provided', async () => {
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const client = makeClient({
+        delete: vi.fn().mockRejectedValue(new Error('network down')),
+      })
+      const store = new GoogleCacheStore({ auth: fakeAuth, client, now: () => BASE_NOW })
+      const handle: GoogleCacheHandle = {
+        cacheName: 'cachedContents/abc123',
+        model: 'gemini-2.0-flash',
+        expiresAt: new Date(BASE_NOW + 3600 * 1000),
+      }
+      await store.delete(handle)
+
+      expect(consoleSpy).toHaveBeenCalled()
+      consoleSpy.mockRestore()
+    })
   })
 })

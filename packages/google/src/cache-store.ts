@@ -10,7 +10,7 @@
  * @module
  */
 
-import type { AuthMaterial } from '@gullabs/core'
+import type { AuthMaterial, Logger } from '@gullabs/core'
 import { LlmError, classifyError, redactSecrets } from '@gullabs/core'
 
 // ---------------------------------------------------------------------------
@@ -80,6 +80,8 @@ export interface GoogleCacheStoreOptions {
   expirySkewSeconds?: number
   /** Called on delete failures instead of rethrowing. */
   onDeleteError?: (cacheName: string, err: unknown) => void
+  /** Optional structured logger. When provided, routes delete failures to logger.error. */
+  logger?: Logger
   /** Injectable clock for deterministic tests.  Default: `Date.now`. */
   now?: () => number
 }
@@ -157,6 +159,7 @@ export class GoogleCacheStore {
   private readonly coalesce: boolean
   private readonly skewMs: number
   private readonly onDeleteError: (cacheName: string, err: unknown) => void
+  private readonly logger: Logger | undefined
   private readonly now: () => number
 
   /** Memoised client promise — built at most once per store instance. */
@@ -173,13 +176,21 @@ export class GoogleCacheStore {
     this.clientOverride = opts.client
     this.coalesce = opts.coalesce ?? false
     this.skewMs = (opts.expirySkewSeconds ?? DEFAULT_SKEW_SECONDS) * 1000
+    this.logger = opts.logger
     this.onDeleteError =
       opts.onDeleteError ??
       ((cacheName, err) => {
-        console.error(
-          `[GoogleCacheStore] delete failed for "${cacheName}":`,
-          redactSecrets(classifyError(err).message),
-        )
+        if (this.logger !== undefined) {
+          this.logger.error(
+            { name: cacheName, error: redactSecrets(classifyError(err).message) },
+            'gemini.cache.delete.failed',
+          )
+        } else {
+          console.error(
+            `[GoogleCacheStore] delete failed for "${cacheName}":`,
+            redactSecrets(classifyError(err).message),
+          )
+        }
       })
     this.now = opts.now ?? (() => Date.now())
   }
@@ -220,7 +231,8 @@ export class GoogleCacheStore {
     } = { ttl: `${input.ttlSeconds}s` }
 
     if (input.contents !== undefined) config.contents = input.contents
-    if (input.systemInstruction !== undefined) config.systemInstruction = input.systemInstruction
+    if (input.systemInstruction !== undefined)
+      config.systemInstruction = input.systemInstruction
     if (input.displayName !== undefined) config.displayName = input.displayName
 
     let resp: { name?: string; model?: string; expireTime?: string }
@@ -288,7 +300,9 @@ export class GoogleCacheStore {
       const handle = await this.create({
         model: key.model,
         ttlSeconds: factoryResult.ttlSeconds,
-        ...(factoryResult.contents !== undefined ? { contents: factoryResult.contents } : {}),
+        ...(factoryResult.contents !== undefined
+          ? { contents: factoryResult.contents }
+          : {}),
         ...(factoryResult.systemInstruction !== undefined
           ? { systemInstruction: factoryResult.systemInstruction }
           : {}),

@@ -19,7 +19,9 @@ import type { GeminiFilesClientLike, GoogleFileHandle } from './file-store.js'
 const fakeAuth = { apiKey: 'test-key' }
 const fastSleep = (): Promise<void> => Promise.resolve()
 
-function makeClient(overrides: Partial<GeminiFilesClientLike> = {}): GeminiFilesClientLike {
+function makeClient(
+  overrides: Partial<GeminiFilesClientLike> = {},
+): GeminiFilesClientLike {
   return {
     upload: vi.fn().mockResolvedValue({
       name: 'files/abc123',
@@ -67,9 +69,24 @@ describe('GoogleFileStore', () => {
   // 2. Polls through PROCESSING then ACTIVE
   it('polls through PROCESSING then resolves when ACTIVE', async () => {
     const getResponses = [
-      { state: 'PROCESSING', name: 'files/abc123', uri: 'https://example.com/files/abc123', mimeType: 'image/png' },
-      { state: 'PROCESSING', name: 'files/abc123', uri: 'https://example.com/files/abc123', mimeType: 'image/png' },
-      { state: 'ACTIVE', name: 'files/abc123', uri: 'https://example.com/files/abc123', mimeType: 'image/png' },
+      {
+        state: 'PROCESSING',
+        name: 'files/abc123',
+        uri: 'https://example.com/files/abc123',
+        mimeType: 'image/png',
+      },
+      {
+        state: 'PROCESSING',
+        name: 'files/abc123',
+        uri: 'https://example.com/files/abc123',
+        mimeType: 'image/png',
+      },
+      {
+        state: 'ACTIVE',
+        name: 'files/abc123',
+        uri: 'https://example.com/files/abc123',
+        mimeType: 'image/png',
+      },
     ]
     let getCallIdx = 0
 
@@ -106,7 +123,9 @@ describe('GoogleFileStore', () => {
       kind: 'bad_request',
       retryable: false,
     })
-    await expect(store.upload(new Uint8Array([1]), 'image/png')).rejects.toBeInstanceOf(LlmError)
+    await expect(store.upload(new Uint8Array([1]), 'image/png')).rejects.toBeInstanceOf(
+      LlmError,
+    )
   })
 
   it('throws LlmError bad_request when FAILED during polling', async () => {
@@ -204,8 +223,17 @@ describe('GoogleFileStore', () => {
     })
     const onDeleteError = vi.fn()
 
-    const store = new GoogleFileStore({ auth: fakeAuth, client, sleep: fastSleep, onDeleteError })
-    const handle: GoogleFileHandle = { name: 'files/abc123', uri: 'u', mimeType: 'image/png' }
+    const store = new GoogleFileStore({
+      auth: fakeAuth,
+      client,
+      sleep: fastSleep,
+      onDeleteError,
+    })
+    const handle: GoogleFileHandle = {
+      name: 'files/abc123',
+      uri: 'u',
+      mimeType: 'image/png',
+    }
 
     // Should not throw
     await expect(store.delete(handle)).resolves.toBeUndefined()
@@ -287,7 +315,9 @@ describe('GoogleFileStore', () => {
 
   // NEW: default onDeleteError logs sanitized message, NOT raw error
   it('default onDeleteError logs a sanitized message without the raw error object', async () => {
-    const rawErr = Object.assign(new Error('secret-api-key-in-message'), { secretField: 'supersecret' })
+    const rawErr = Object.assign(new Error('secret-api-key-in-message'), {
+      secretField: 'supersecret',
+    })
     const client = makeClient({
       delete: vi.fn().mockRejectedValue(rawErr),
     })
@@ -296,7 +326,11 @@ describe('GoogleFileStore', () => {
     try {
       // No onDeleteError override → uses default sanitized handler
       const store = new GoogleFileStore({ auth: fakeAuth, client, sleep: fastSleep })
-      const handle: GoogleFileHandle = { name: 'files/abc123', uri: 'u', mimeType: 'image/png' }
+      const handle: GoogleFileHandle = {
+        name: 'files/abc123',
+        uri: 'u',
+        mimeType: 'image/png',
+      }
       await store.delete(handle)
 
       expect(consoleSpy).toHaveBeenCalledOnce()
@@ -393,7 +427,12 @@ describe('GoogleFileStore', () => {
       delete: vi.fn().mockRejectedValue(deleteError),
     })
 
-    const store = new GoogleFileStore({ auth: fakeAuth, client, sleep: fastSleep, onDeleteError })
+    const store = new GoogleFileStore({
+      auth: fakeAuth,
+      client,
+      sleep: fastSleep,
+      onDeleteError,
+    })
     const handles: GoogleFileHandle[] = [
       { name: 'files/a', uri: 'ua', mimeType: 'image/png' },
       { name: 'files/b', uri: 'ub', mimeType: 'image/png' },
@@ -405,5 +444,51 @@ describe('GoogleFileStore', () => {
     expect(onDeleteError).toHaveBeenCalledWith('files/a', deleteError)
     expect(onDeleteError).toHaveBeenCalledWith('files/b', deleteError)
     expect(onDeleteError).toHaveBeenCalledWith('files/c', deleteError)
+  })
+
+  // delete error routing
+  describe('delete error routing', () => {
+    it('routes delete failure to logger.error when logger is provided', async () => {
+      const errorFn = vi.fn()
+      const logger = { info() {}, warn() {}, debug() {}, error: errorFn }
+      const client = makeClient({
+        delete: vi.fn().mockRejectedValue(new Error('network down')),
+      })
+      const store = new GoogleFileStore({
+        auth: fakeAuth,
+        client,
+        sleep: fastSleep,
+        logger,
+      })
+      const handle: GoogleFileHandle = {
+        name: 'files/abc123',
+        uri: 'https://example.com/files/abc123',
+        mimeType: 'image/png',
+      }
+      await store.delete(handle)
+
+      expect(errorFn).toHaveBeenCalledOnce()
+      const [obj, msg] = errorFn.mock.calls[0]!
+      expect(msg).toBe('gemini.file.delete.failed')
+      expect(obj).toMatchObject({ name: 'files/abc123' })
+      expect(typeof obj.error).toBe('string')
+    })
+
+    it('falls back to console.error when no logger provided', async () => {
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const client = makeClient({
+        delete: vi.fn().mockRejectedValue(new Error('network down')),
+      })
+      const store = new GoogleFileStore({ auth: fakeAuth, client, sleep: fastSleep })
+      const handle: GoogleFileHandle = {
+        name: 'files/abc123',
+        uri: 'https://example.com/files/abc123',
+        mimeType: 'image/png',
+      }
+      await store.delete(handle)
+
+      expect(consoleSpy).toHaveBeenCalled()
+      consoleSpy.mockRestore()
+    })
   })
 })

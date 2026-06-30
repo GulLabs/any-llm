@@ -21,7 +21,11 @@ import type {
   Part,
 } from '@gullabs/core'
 import type { ZodTypeAny } from 'zod'
-import { buildGoogleClient, FLEX_DEFAULT_TIMEOUT_MS, TRANSPORT_TIMEOUT_BUFFER_MS } from './client.js'
+import {
+  buildGoogleClient,
+  FLEX_DEFAULT_TIMEOUT_MS,
+  TRANSPORT_TIMEOUT_BUFFER_MS,
+} from './client.js'
 import type {
   GeminiClientLike,
   GeminiGenerateConfig,
@@ -127,9 +131,7 @@ function mapUsage(meta: GeminiUsageMetadataShape | undefined): Usage {
 
   // Raw: the full usageMetadata object verbatim (as JsonValue).
   const raw: JsonValue =
-    meta !== undefined
-      ? (meta as unknown as { [k: string]: JsonValue })
-      : null
+    meta !== undefined ? (meta as unknown as { [k: string]: JsonValue }) : null
 
   const usage: Usage = {
     inputTokens,
@@ -284,8 +286,8 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
             reasoning.budgetTokens !== undefined
               ? reasoning.budgetTokens
               : reasoning.effort !== undefined
-                ? (EFFORT_BUDGET[reasoning.effort] ?? 0)
-                : undefined
+              ? EFFORT_BUDGET[reasoning.effort] ?? 0
+              : undefined
 
           config.thinkingConfig = {
             ...(budget !== undefined ? { thinkingBudget: budget } : {}),
@@ -386,7 +388,11 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       // 5. providerOptions.google → spread verbatim (last, caller wins)
       // ------------------------------------------------------------------
       const googleOpts = genConfig.providerOptions?.['google']
-      if (googleOpts !== undefined && typeof googleOpts === 'object' && googleOpts !== null) {
+      if (
+        googleOpts !== undefined &&
+        typeof googleOpts === 'object' &&
+        googleOpts !== null
+      ) {
         Object.assign(config, googleOpts)
       }
 
@@ -417,7 +423,9 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
             type: 'unsupported-setting',
             setting: droppedSampling.join(', '),
             details:
-              `Sampling parameter(s) [${droppedSampling.join(', ')}] from providerOptions.google were stripped: ` +
+              `Sampling parameter(s) [${droppedSampling.join(
+                ', ',
+              )}] from providerOptions.google were stripped: ` +
               `this model has fixed sampling (Gemini 3.x) and the API rejects these fields.`,
           })
         }
@@ -520,8 +528,8 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
         genConfig.timeoutMs !== undefined
           ? genConfig.timeoutMs + TRANSPORT_TIMEOUT_BUFFER_MS
           : genConfig.serviceTier === 'flex'
-            ? FLEX_DEFAULT_TIMEOUT_MS
-            : undefined
+          ? FLEX_DEFAULT_TIMEOUT_MS
+          : undefined
 
       // Merge: our computed timeout is the base; caller wins on top.
       const mergedHttpOptions: Record<string, unknown> = {
@@ -552,6 +560,10 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
         const buildClient = opts?._clientFactory ?? buildGoogleClient
         const client: GeminiClientLike =
           opts?.client !== undefined ? opts.client : await buildClient(ctx.auth)
+        ctx.logger.debug(
+          { model, configKeys: Object.keys(config) },
+          'llm.adapter.dispatch',
+        )
         response = await client.models.generateContent(params)
       } catch (rawErr) {
         // Classify SDK errors → LlmError
@@ -585,14 +597,11 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
 
       if (hasBlockReason || !hasCandidates) {
         const reason = response.promptFeedback?.blockReason ?? 'NO_CANDIDATES'
-        throw new LlmError(
-          `Gemini response blocked: ${reason}`,
-          {
-            kind: 'content_filter',
-            retryable: false,
-            provider: 'google',
-          },
-        )
+        throw new LlmError(`Gemini response blocked: ${reason}`, {
+          kind: 'content_filter',
+          retryable: false,
+          provider: 'google',
+        })
       }
 
       // ------------------------------------------------------------------
@@ -631,8 +640,7 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       }
 
       const text = textParts.join('')
-      const reasoningText =
-        thoughtParts.length > 0 ? thoughtParts.join('') : undefined
+      const reasoningText = thoughtParts.length > 0 ? thoughtParts.join('') : undefined
 
       // Parse structured output (JSON text → rawStructured).
       let rawStructured: unknown
@@ -661,9 +669,7 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
         ...(response.modelVersion !== undefined
           ? { modelVersion: response.modelVersion }
           : {}),
-        ...(response.responseId !== undefined
-          ? { responseId: response.responseId }
-          : {}),
+        ...(response.responseId !== undefined ? { responseId: response.responseId } : {}),
         // Build providerMetadata — merge promptFeedback + groundingMetadata when present.
         ...((): { providerMetadata: JsonValue } | Record<string, never> => {
           const pf = response.promptFeedback

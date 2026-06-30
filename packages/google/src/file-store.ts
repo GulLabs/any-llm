@@ -7,7 +7,7 @@
  * @module
  */
 
-import type { AuthMaterial } from '@gullabs/core'
+import type { AuthMaterial, Logger } from '@gullabs/core'
 import { LlmError, classifyError, redactSecrets } from '@gullabs/core'
 
 // ---------------------------------------------------------------------------
@@ -56,6 +56,8 @@ export interface GoogleFileStoreOptions {
   client?: GeminiFilesClientLike
   /** Called on delete failures instead of rethrowing. Default: console.error. */
   onDeleteError?: (name: string, err: unknown) => void
+  /** Optional structured logger. When provided, routes delete failures to logger.error. */
+  logger?: Logger
   poll?: {
     /** Delay between state polls. Default: 3000 ms. */
     intervalMs?: number
@@ -170,6 +172,7 @@ export class GoogleFileStore {
   private readonly auth: AuthMaterial
   private readonly clientOverride: GeminiFilesClientLike | undefined
   private readonly onDeleteError: (name: string, err: unknown) => void
+  private readonly logger: Logger | undefined
   private readonly intervalMs: number
   private readonly timeoutMs: number
   private readonly sleep: (ms: number) => Promise<void>
@@ -180,13 +183,21 @@ export class GoogleFileStore {
   constructor(opts: GoogleFileStoreOptions) {
     this.auth = opts.auth
     this.clientOverride = opts.client
+    this.logger = opts.logger
     this.onDeleteError =
       opts.onDeleteError ??
       ((name, err) => {
-        console.error(
-          `[GoogleFileStore] delete failed for "${name}":`,
-          redactSecrets(classifyError(err).message),
-        )
+        if (this.logger !== undefined) {
+          this.logger.error(
+            { name, error: redactSecrets(classifyError(err).message) },
+            'gemini.file.delete.failed',
+          )
+        } else {
+          console.error(
+            `[GoogleFileStore] delete failed for "${name}":`,
+            redactSecrets(classifyError(err).message),
+          )
+        }
       })
     this.intervalMs = opts.poll?.intervalMs ?? DEFAULT_INTERVAL_MS
     this.timeoutMs = opts.poll?.timeoutMs ?? DEFAULT_TIMEOUT_MS
