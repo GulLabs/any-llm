@@ -6,13 +6,13 @@ Gemini provider adapter for any-llm. A thin mapping layer over `@google/genai` t
 
 ## Key exports
 
-| Export | What it is |
-|---|---|
-| `geminiAdapter(opts?)` | Creates the `ProviderAdapter` for Gemini |
-| `GeminiAdapterOptions` | `{ client?: GeminiClientLike }` — inject a pre-built or fake client |
-| `GeminiClientLike` | Structural interface the adapter depends on (satisfied by real SDK and fakes) |
-| `buildGoogleClient(auth)` | Builds the real `@google/genai` client from `AuthMaterial` |
-| `zodToGeminiSchema(schema)` | Converts a Zod schema to a Gemini `responseSchema` object |
+| Export                      | What it is                                                                    |
+| --------------------------- | ----------------------------------------------------------------------------- |
+| `geminiAdapter(opts?)`      | Creates the `ProviderAdapter` for Gemini                                      |
+| `GeminiAdapterOptions`      | `{ client?: GeminiClientLike }` — inject a pre-built or fake client           |
+| `GeminiClientLike`          | Structural interface the adapter depends on (satisfied by real SDK and fakes) |
+| `buildGoogleClient(auth)`   | Builds the real `@google/genai` client from `AuthMaterial`                    |
+| `zodToGeminiSchema(schema)` | Converts a Zod schema to a Gemini `responseSchema` object                     |
 
 ## Quick example
 

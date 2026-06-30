@@ -123,7 +123,8 @@ describe('redactSecrets — Bearer tokens', () => {
 
   it('redacts a three-part JWT-style token with base64url segments', () => {
     // JWT format: header.payload.signature (base64url, no +/=/space)
-    const jwt = 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyMSJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c'
+    const jwt =
+      'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyMSJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c'
     const text = `Bearer ${jwt}`
     const out = redactSecrets(text)
     expect(out).toBe('Bearer …REDACTED')
@@ -137,14 +138,16 @@ describe('redactSecrets — Bearer tokens', () => {
 
 describe('redactSecrets — sensitive query params', () => {
   it('redacts X-Goog-Signature value', () => {
-    const url = 'https://storage.googleapis.com/bucket/file.pdf?X-Goog-Signature=abc123XYZ'
+    const url =
+      'https://storage.googleapis.com/bucket/file.pdf?X-Goog-Signature=abc123XYZ'
     const out = redactSecrets(url)
     expect(out).toContain('X-Goog-Signature=REDACTED')
     expect(out).not.toContain('abc123XYZ')
   })
 
   it('redacts X-Goog-Credential value', () => {
-    const url = 'https://storage.googleapis.com/obj?X-Goog-Credential=serviceaccount%40project.iam.gserviceaccount.com'
+    const url =
+      'https://storage.googleapis.com/obj?X-Goog-Credential=serviceaccount%40project.iam.gserviceaccount.com'
     const out = redactSecrets(url)
     expect(out).toContain('X-Goog-Credential=REDACTED')
   })
@@ -179,7 +182,8 @@ describe('redactSecrets — sensitive query params', () => {
   })
 
   it('redacts signature= param', () => {
-    const text = 'https://files.example.com/download?signature=HMAC-SHA256-VALUE&expires=9999'
+    const text =
+      'https://files.example.com/download?signature=HMAC-SHA256-VALUE&expires=9999'
     const out = redactSecrets(text)
     expect(out).toContain('signature=REDACTED')
     expect(out).not.toContain('HMAC-SHA256-VALUE')
@@ -233,7 +237,11 @@ describe('redactSecrets — benign text', () => {
   })
 
   it('does not alter JSON that has no secrets', () => {
-    const json = JSON.stringify({ status: 400, message: 'Bad request', code: 'INVALID_ARGUMENT' })
+    const json = JSON.stringify({
+      status: 400,
+      message: 'Bad request',
+      code: 'INVALID_ARGUMENT',
+    })
     expect(redactSecrets(json)).toBe(json)
   })
 

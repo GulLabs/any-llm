@@ -64,9 +64,7 @@ const PRICING = geminiPricingSource()
 const TEST_AUTH = { apiKey: 'test-key' }
 
 function makeClient(
-  overrides?: Parameters<typeof createClient>[0] extends infer C
-    ? Partial<C>
-    : never,
+  overrides?: Parameters<typeof createClient>[0] extends infer C ? Partial<C> : never,
 ) {
   const clock = new FakeClock(1_000)
   const ids = new FakeIds()
@@ -94,10 +92,13 @@ describe('engine — success path', () => {
     const { client, sink, clock } = makeClient()
     clock.set(1_000)
 
-    const result = await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    }, { auth: TEST_AUTH })
+    const result = await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
 
     // Result fields
     expect(result.text).toBe('Hello, world!')
@@ -131,10 +132,13 @@ describe('engine — success path', () => {
   it('cost on result === cost on record (single source of truth)', async () => {
     const { client, sink } = makeClient()
 
-    const result = await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    }, { auth: TEST_AUTH })
+    const result = await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
 
     const rec = sink.last()!
     expect(result.cost!.microUsd).toBe(rec.costMicroUsd)
@@ -145,16 +149,24 @@ describe('engine — success path', () => {
     const starts: object[] = []
     const successes: object[] = []
     const telemetry: Telemetry = {
-      onStart: (e) => { starts.push(e); return 'span' },
-      onSuccess: (e, span) => { successes.push({ ...e, span }) },
+      onStart: (e) => {
+        starts.push(e)
+        return 'span'
+      },
+      onSuccess: (e, span) => {
+        successes.push({ ...e, span })
+      },
     }
 
     const { client } = makeClient({ telemetry })
 
-    await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    }, { auth: TEST_AUTH })
+    await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
 
     expect(starts).toHaveLength(1)
     expect(successes).toHaveLength(1)
@@ -165,10 +177,13 @@ describe('engine — success path', () => {
   it('passes finishReason and responseId through to result and record', async () => {
     const { client, sink } = makeClient()
 
-    const result = await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    }, { auth: TEST_AUTH })
+    const result = await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
 
     expect(result.finishReason).toBe('stop')
     expect(result.responseId).toBe('resp-abc123')
@@ -179,11 +194,14 @@ describe('engine — success path', () => {
   it('forwards metadata from request to record', async () => {
     const { client, sink } = makeClient()
 
-    await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      metadata: { tenantId: 'acme', runId: 'run-1' },
-    }, { auth: TEST_AUTH })
+    await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+        metadata: { tenantId: 'acme', runId: 'run-1' },
+      },
+      { auth: TEST_AUTH },
+    )
 
     const rec = sink.last()!
     expect(rec.metadata).toEqual({ tenantId: 'acme', runId: 'run-1' })
@@ -192,10 +210,13 @@ describe('engine — success path', () => {
   it('serviceTier defaults to flex in record', async () => {
     const { client, sink } = makeClient()
 
-    await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    }, { auth: TEST_AUTH })
+    await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
 
     expect(sink.last()!.serviceTier).toBe('flex')
   })
@@ -223,26 +244,26 @@ describe('engine — double-count integration', () => {
         raw: null,
       }
 
-      const adapter = new FakeAdapter(
-        'google',
-        makeSuccessResult({ usage: tieredUsage }),
-      )
+      const adapter = new FakeAdapter('google', makeSuccessResult({ usage: tieredUsage }))
       const sink = new RecordingSink()
 
       const client = createClient({
         adapters: [adapter],
-  
+
         pricing: PRICING,
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
       })
 
-      const result = await client.generate({
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Test' }] }],
-        config: { serviceTier: 'standard' },
-      }, { auth: TEST_AUTH })
+      const result = await client.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Test' }] }],
+          config: { serviceTier: 'standard' },
+        },
+        { auth: TEST_AUTH },
+      )
 
       // GROSS invariants preserved
       expect(result.usage.inputTokens).toBe(250_000)
@@ -276,13 +297,20 @@ describe('engine — double-count integration', () => {
       expect(rec.cachedInputTokens).toBe(100_000)
 
       // FLEX service tier = 50% of standard (the discount Atif's usage relies on).
-      const flex = await client.generate({
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Test' }] }],
-        config: { serviceTier: 'flex' },
-      }, { auth: TEST_AUTH })
+      const flex = await client.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Test' }] }],
+          config: { serviceTier: 'flex' },
+        },
+        { auth: TEST_AUTH },
+      )
       expect(flex.cost!.microUsd).toBe(237_500) // exactly half of 475_000
-      expect(flex.cost!.details).toEqual({ input: 187_500, cached: 12_500, output: 37_500 })
+      expect(flex.cost!.details).toEqual({
+        input: 187_500,
+        cached: 12_500,
+        output: 37_500,
+      })
     },
   )
 })
@@ -296,7 +324,11 @@ describe('engine — failure path', () => {
     const adapter = new FakeAdapter('google', { status: 429 })
     const sink = new RecordingSink()
     const errors: object[] = []
-    const telemetry: Telemetry = { onError: (e) => { errors.push(e) } }
+    const telemetry: Telemetry = {
+      onError: (e) => {
+        errors.push(e)
+      },
+    }
 
     const client = createClient({
       adapters: [adapter],
@@ -309,17 +341,23 @@ describe('engine — failure path', () => {
     })
 
     await expect(
-      client.generate({
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      }, { auth: TEST_AUTH }),
+      client.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+        },
+        { auth: TEST_AUTH },
+      ),
     ).rejects.toThrow(LlmError)
 
     await expect(
-      client.generate({
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      }, { auth: TEST_AUTH }),
+      client.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+        },
+        { auth: TEST_AUTH },
+      ),
     ).rejects.toMatchObject({ kind: 'rate_limited', retryable: true })
 
     // Record was written with error kind
@@ -347,10 +385,13 @@ describe('engine — failure path', () => {
     })
 
     await expect(
-      client.generate({
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      }, { auth: TEST_AUTH }),
+      client.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+        },
+        { auth: TEST_AUTH },
+      ),
     ).rejects.toMatchObject({ kind: 'invalid_auth' })
 
     const rec = sink.last()!
@@ -373,7 +414,11 @@ describe('engine — parse_error', () => {
     )
     const sink = new RecordingSink()
     const errors: object[] = []
-    const telemetry: Telemetry = { onError: (e) => { errors.push(e) } }
+    const telemetry: Telemetry = {
+      onError: (e) => {
+        errors.push(e)
+      },
+    }
 
     const client = createClient({
       adapters: [adapter],
@@ -386,11 +431,14 @@ describe('engine — parse_error', () => {
     })
 
     await expect(
-      client.generate({
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-        output: { schema },
-      }, { auth: TEST_AUTH }),
+      client.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+          output: { schema },
+        },
+        { auth: TEST_AUTH },
+      ),
     ).rejects.toMatchObject({ kind: 'parse_error', retryable: false })
 
     const rec = sink.last()!
@@ -416,11 +464,14 @@ describe('engine — parse_error', () => {
       ids: new FakeIds(),
     })
 
-    const result = await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      output: { schema },
-    }, { auth: TEST_AUTH })
+    const result = await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+        output: { schema },
+      },
+      { auth: TEST_AUTH },
+    )
 
     expect(result.output).toEqual({ answer: 42 })
     expect(sink.last()!.status).toBe('ok')
@@ -445,10 +496,13 @@ describe('engine — fail-open sink', () => {
     })
 
     // Should NOT throw despite the sink failing
-    const result = await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    }, { auth: TEST_AUTH })
+    const result = await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
 
     expect(result.text).toBe('Hello, world!')
     // No records were stored (sink threw before storing)
@@ -470,10 +524,13 @@ describe('engine — fail-open sink', () => {
 
     // The engine must rethrow the LlmError even when the sink also fails.
     await expect(
-      client.generate({
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      }, { auth: TEST_AUTH }),
+      client.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+        },
+        { auth: TEST_AUTH },
+      ),
     ).rejects.toMatchObject({ kind: 'server' })
   })
 })
@@ -497,11 +554,14 @@ describe('engine — timeout', () => {
     })
 
     await expect(
-      client.generate({
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-        config: { timeoutMs: 1 },
-      }, { auth: TEST_AUTH }),
+      client.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+          config: { timeoutMs: 1 },
+        },
+        { auth: TEST_AUTH },
+      ),
     ).rejects.toMatchObject({ kind: 'timeout', retryable: true })
 
     const rec = sink.last()!
@@ -538,11 +598,14 @@ describe('engine — config resolution', () => {
     })
 
     // Per-request config overrides defaults
-    await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      config: { temperature: 0.9 },
-    }, { auth: TEST_AUTH })
+    await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+        config: { temperature: 0.9 },
+      },
+      { auth: TEST_AUTH },
+    )
 
     expect(calls[0]?.temperature).toBe(0.9)
   })
@@ -558,10 +621,13 @@ describe('engine — config resolution', () => {
       ids: new FakeIds(),
     })
 
-    await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    }, { auth: TEST_AUTH })
+    await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
 
     expect(sink.last()!.serviceTier).toBe('flex')
   })
@@ -578,11 +644,14 @@ describe('engine — config resolution', () => {
       defaults: { serviceTier: 'flex' },
     })
 
-    await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      config: { serviceTier: 'standard' },
-    }, { auth: TEST_AUTH })
+    await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+        config: { serviceTier: 'standard' },
+      },
+      { auth: TEST_AUTH },
+    )
 
     expect(sink.last()!.serviceTier).toBe('standard')
   })
@@ -602,7 +671,8 @@ describe('engine — config resolution', () => {
 
     // The message delivered to the adapter should contain the literal string
     const req = adapter.calls[0]!
-    const text = (req.messages[0]?.parts[0] as { kind: string; text: string } | undefined)?.text
+    const text = (req.messages[0]?.parts[0] as { kind: string; text: string } | undefined)
+      ?.text
     expect(text).toBe('Value: {{secret}}')
   })
 
@@ -624,11 +694,14 @@ describe('engine — config resolution', () => {
       defaults: { reasoning: { effort: 'low', includeThoughts: false } },
     })
 
-    await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      config: { reasoning: { includeThoughts: true } },
-    }, { auth: TEST_AUTH })
+    await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+        config: { reasoning: { includeThoughts: true } },
+      },
+      { auth: TEST_AUTH },
+    )
 
     const resolved = calls[0]?.config.reasoning
     // per-call includeThoughts=true wins; effort='low' is inherited from defaults
@@ -653,10 +726,13 @@ describe('engine — routing', () => {
     })
 
     // 'gemini-2.5-pro' with an 'anthropic' adapter — still works (single adapter)
-    await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    }, { auth: TEST_AUTH })
+    await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
 
     expect(adapter.calls).toHaveLength(1)
   })
@@ -674,18 +750,24 @@ describe('engine — routing', () => {
     })
 
     // gemini-* → google
-    await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    }, { auth: TEST_AUTH })
+    await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
     expect(google.calls).toHaveLength(1)
 
     // unknown model → bad_request
     await expect(
-      client.generate({
-        model: 'unknown-model-xyz',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      }, { auth: TEST_AUTH }),
+      client.generate(
+        {
+          model: 'unknown-model-xyz',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+        },
+        { auth: TEST_AUTH },
+      ),
     ).rejects.toMatchObject({ kind: 'bad_request' })
   })
 
@@ -702,10 +784,13 @@ describe('engine — routing', () => {
       route: (_model, adapters) => adapters[1]!, // always pick second
     })
 
-    await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    }, { auth: TEST_AUTH })
+    await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
 
     expect(a.calls).toHaveLength(0)
     expect(b.calls).toHaveLength(1)
@@ -720,10 +805,18 @@ describe('engine — logger', () => {
   it('emits llm.call.start, llm.call.success on success', async () => {
     const events: string[] = []
     const logger: Logger = {
-      info: (_o, m) => { events.push(m) },
-      warn: (_o, m) => { events.push(m) },
-      error: (_o, m) => { events.push(m) },
-      debug: (_o, m) => { events.push(m) },
+      info: (_o, m) => {
+        events.push(m)
+      },
+      warn: (_o, m) => {
+        events.push(m)
+      },
+      error: (_o, m) => {
+        events.push(m)
+      },
+      debug: (_o, m) => {
+        events.push(m)
+      },
     }
 
     const client = createClient({
@@ -735,10 +828,13 @@ describe('engine — logger', () => {
       ids: new FakeIds(),
     })
 
-    await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    }, { auth: TEST_AUTH })
+    await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
 
     expect(events).toContain('llm.call.start')
     expect(events).toContain('llm.call.success')
@@ -748,10 +844,18 @@ describe('engine — logger', () => {
   it('emits llm.call.start, llm.call.error on failure', async () => {
     const events: string[] = []
     const logger: Logger = {
-      info: (_o, m) => { events.push(m) },
-      warn: (_o, m) => { events.push(m) },
-      error: (_o, m) => { events.push(m) },
-      debug: (_o, m) => { events.push(m) },
+      info: (_o, m) => {
+        events.push(m)
+      },
+      warn: (_o, m) => {
+        events.push(m)
+      },
+      error: (_o, m) => {
+        events.push(m)
+      },
+      debug: (_o, m) => {
+        events.push(m)
+      },
     }
 
     const client = createClient({
@@ -764,10 +868,13 @@ describe('engine — logger', () => {
     })
 
     await expect(
-      client.generate({
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      }, { auth: TEST_AUTH }),
+      client.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+        },
+        { auth: TEST_AUTH },
+      ),
     ).rejects.toThrow()
 
     expect(events).toContain('llm.call.start')
@@ -797,10 +904,13 @@ describe('engine — reasoning text', () => {
       ids: new FakeIds(),
     })
 
-    const result = await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    }, { auth: TEST_AUTH })
+    const result = await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
 
     expect(result.reasoningText).toBe('I thought about it...')
     expect(sink.last()!.reasoningText).toBe('I thought about it...')
@@ -812,54 +922,49 @@ describe('engine — reasoning text', () => {
 // ---------------------------------------------------------------------------
 
 describe('engine — caller abort (Finding 1)', () => {
-  it(
-    'callerSignal.abort() mid-flight => LlmError aborted, record status aborted, adapter observed',
-    async () => {
-      const adapter = new SignalAwareFakeAdapter(
-        'google',
-        makeSuccessResult(),
-        { delayMs: 300 },
-      )
-      const sink = new RecordingSink()
+  it('callerSignal.abort() mid-flight => LlmError aborted, record status aborted, adapter observed', async () => {
+    const adapter = new SignalAwareFakeAdapter('google', makeSuccessResult(), {
+      delayMs: 300,
+    })
+    const sink = new RecordingSink()
 
-      const client = createClient({
-        adapters: [adapter],
-  
-        pricing: PRICING,
-        sink,
-        clock: new FakeClock(),
-        ids: new FakeIds(),
-      })
+    const client = createClient({
+      adapters: [adapter],
 
-      const ctrl = new AbortController()
-      // Abort after 20ms — well before the adapter's 300ms delay.
-      setTimeout(() => ctrl.abort(), 20)
+      pricing: PRICING,
+      sink,
+      clock: new FakeClock(),
+      ids: new FakeIds(),
+    })
 
-      await expect(
-        client.generate({
+    const ctrl = new AbortController()
+    // Abort after 20ms — well before the adapter's 300ms delay.
+    setTimeout(() => ctrl.abort(), 20)
+
+    await expect(
+      client.generate(
+        {
           model: 'gemini-2.5-pro',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-        }, { auth: TEST_AUTH, signal: ctrl.signal }),
-      ).rejects.toMatchObject({ kind: 'aborted', retryable: false })
+        },
+        { auth: TEST_AUTH, signal: ctrl.signal },
+      ),
+    ).rejects.toMatchObject({ kind: 'aborted', retryable: false })
 
-      // Record must reflect the abort.
-      const rec = sink.last()
-      expect(rec).toBeDefined()
-      expect(rec!.status).toBe('aborted')
-      expect(rec!.errorKind).toBe('aborted')
+    // Record must reflect the abort.
+    const rec = sink.last()
+    expect(rec).toBeDefined()
+    expect(rec!.status).toBe('aborted')
+    expect(rec!.errorKind).toBe('aborted')
 
-      // Adapter observed the abort signal.
-      expect(adapter.abortObserved).toBe(true)
-    },
-    2_000,
-  )
+    // Adapter observed the abort signal.
+    expect(adapter.abortObserved).toBe(true)
+  }, 2_000)
 
   it('already-aborted signal => LlmError aborted synchronously', async () => {
-    const adapter = new SignalAwareFakeAdapter(
-      'google',
-      makeSuccessResult(),
-      { delayMs: 300 },
-    )
+    const adapter = new SignalAwareFakeAdapter('google', makeSuccessResult(), {
+      delayMs: 300,
+    })
     const sink = new RecordingSink()
 
     const client = createClient({
@@ -875,10 +980,13 @@ describe('engine — caller abort (Finding 1)', () => {
     ctrl.abort() // abort BEFORE the call
 
     await expect(
-      client.generate({
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      }, { auth: TEST_AUTH, signal: ctrl.signal }),
+      client.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+        },
+        { auth: TEST_AUTH, signal: ctrl.signal },
+      ),
     ).rejects.toMatchObject({ kind: 'aborted' })
 
     const rec = sink.last()
@@ -892,42 +1000,40 @@ describe('engine — caller abort (Finding 1)', () => {
 // ---------------------------------------------------------------------------
 
 describe('engine — timeout determinism (Finding 2)', () => {
-  it(
-    'timeout + synchronously-aborting adapter => classified timeout (not aborted)',
-    async () => {
-      // This adapter rejects with AbortError synchronously when the signal fires.
-      // Without the "reject-first" fix, this would race and could produce 'aborted'.
-      const adapter = new SignalAwareFakeAdapter(
-        'google',
-        makeSuccessResult(),
-        { delayMs: 5_000, abortsSynchronouslyOnSignal: true },
-      )
-      const sink = new RecordingSink()
+  it('timeout + synchronously-aborting adapter => classified timeout (not aborted)', async () => {
+    // This adapter rejects with AbortError synchronously when the signal fires.
+    // Without the "reject-first" fix, this would race and could produce 'aborted'.
+    const adapter = new SignalAwareFakeAdapter('google', makeSuccessResult(), {
+      delayMs: 5_000,
+      abortsSynchronouslyOnSignal: true,
+    })
+    const sink = new RecordingSink()
 
-      const client = createClient({
-        adapters: [adapter],
-  
-        pricing: PRICING,
-        sink,
-        clock: new FakeClock(),
-        ids: new FakeIds(),
-      })
+    const client = createClient({
+      adapters: [adapter],
 
-      await expect(
-        client.generate({
+      pricing: PRICING,
+      sink,
+      clock: new FakeClock(),
+      ids: new FakeIds(),
+    })
+
+    await expect(
+      client.generate(
+        {
           model: 'gemini-2.5-pro',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
           config: { timeoutMs: 10 },
-        }, { auth: TEST_AUTH }),
-      ).rejects.toMatchObject({ kind: 'timeout', retryable: true })
+        },
+        { auth: TEST_AUTH },
+      ),
+    ).rejects.toMatchObject({ kind: 'timeout', retryable: true })
 
-      const rec = sink.last()
-      expect(rec).toBeDefined()
-      expect(rec!.status).toBe('timeout')
-      expect(rec!.errorKind).toBe('timeout')
-    },
-    2_000,
-  )
+    const rec = sink.last()
+    expect(rec).toBeDefined()
+    expect(rec!.status).toBe('timeout')
+    expect(rec!.errorKind).toBe('timeout')
+  }, 2_000)
 
   it('timeout with non-cooperative adapter => timeout', async () => {
     // FakeAdapter ignores ctx.signal — should still time out.
@@ -944,11 +1050,14 @@ describe('engine — timeout determinism (Finding 2)', () => {
     })
 
     await expect(
-      client.generate({
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-        config: { timeoutMs: 10 },
-      }, { auth: TEST_AUTH }),
+      client.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+          config: { timeoutMs: 10 },
+        },
+        { auth: TEST_AUTH },
+      ),
     ).rejects.toMatchObject({ kind: 'timeout', retryable: true })
 
     const rec = sink.last()
@@ -962,32 +1071,31 @@ describe('engine — timeout determinism (Finding 2)', () => {
 // ---------------------------------------------------------------------------
 
 describe('engine — providerOptions deep-merge (Finding 3)', () => {
-  it(
-    'sibling keys survive per-call override; array values are replaced wholesale',
-    async () => {
-      const capturedConfigs: Array<Parameters<typeof capturingAdapter.run>[0]> = []
-      const capturingAdapter = new FakeAdapter('google', makeSuccessResult())
-      const origRun = capturingAdapter.run.bind(capturingAdapter)
-      vi.spyOn(capturingAdapter, 'run').mockImplementation(async (req, ctx) => {
-        capturedConfigs.push(req)
-        return origRun(req, ctx)
-      })
+  it('sibling keys survive per-call override; array values are replaced wholesale', async () => {
+    const capturedConfigs: Array<Parameters<typeof capturingAdapter.run>[0]> = []
+    const capturingAdapter = new FakeAdapter('google', makeSuccessResult())
+    const origRun = capturingAdapter.run.bind(capturingAdapter)
+    vi.spyOn(capturingAdapter, 'run').mockImplementation(async (req, ctx) => {
+      capturedConfigs.push(req)
+      return origRun(req, ctx)
+    })
 
-      const client = createClient({
-        adapters: [capturingAdapter],
-  
-        pricing: PRICING,
-        clock: new FakeClock(),
-        ids: new FakeIds(),
-        defaults: {
-          providerOptions: {
-            google: { a: { x: 1, y: 2 }, keep: true },
-          },
+    const client = createClient({
+      adapters: [capturingAdapter],
+
+      pricing: PRICING,
+      clock: new FakeClock(),
+      ids: new FakeIds(),
+      defaults: {
+        providerOptions: {
+          google: { a: { x: 1, y: 2 }, keep: true },
         },
-      })
+      },
+    })
 
-      // Per-call override touches google.a.x only.
-      await client.generate({
+    // Per-call override touches google.a.x only.
+    await client.generate(
+      {
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         config: {
@@ -995,26 +1103,27 @@ describe('engine — providerOptions deep-merge (Finding 3)', () => {
             google: { a: { x: 99 }, arr: [10, 20] },
           },
         },
-      }, { auth: TEST_AUTH })
+      },
+      { auth: TEST_AUTH },
+    )
 
-      const merged = capturedConfigs[0]?.config.providerOptions
-      expect(merged).toBeDefined()
+    const merged = capturedConfigs[0]?.config.providerOptions
+    expect(merged).toBeDefined()
 
-      // x is overridden.
-      const google = merged!['google'] as Record<string, unknown>
-      const aBlock = google['a'] as Record<string, unknown>
-      expect(aBlock['x']).toBe(99)
+    // x is overridden.
+    const google = merged!['google'] as Record<string, unknown>
+    const aBlock = google['a'] as Record<string, unknown>
+    expect(aBlock['x']).toBe(99)
 
-      // y (sibling of x) survives the per-call override.
-      expect(aBlock['y']).toBe(2)
+    // y (sibling of x) survives the per-call override.
+    expect(aBlock['y']).toBe(2)
 
-      // keep (sibling of a) survives.
-      expect(google['keep']).toBe(true)
+    // keep (sibling of a) survives.
+    expect(google['keep']).toBe(true)
 
-      // arr is a new key from the per-call override.
-      expect(google['arr']).toEqual([10, 20])
-    },
-  )
+    // arr is a new key from the per-call override.
+    expect(google['arr']).toEqual([10, 20])
+  })
 
   it('array value in providerOptions is replaced wholesale (not merged)', async () => {
     const capturedConfigs: Array<Parameters<typeof capturingAdapter.run>[0]> = []
@@ -1036,15 +1145,21 @@ describe('engine — providerOptions deep-merge (Finding 3)', () => {
       },
     })
 
-    await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      config: {
-        providerOptions: { google: { tags: ['x'] } },
+    await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+        config: {
+          providerOptions: { google: { tags: ['x'] } },
+        },
       },
-    }, { auth: TEST_AUTH })
+      { auth: TEST_AUTH },
+    )
 
-    const google = capturedConfigs[0]?.config.providerOptions?.['google'] as Record<string, unknown>
+    const google = capturedConfigs[0]?.config.providerOptions?.['google'] as Record<
+      string,
+      unknown
+    >
     // Array is last-write-wins, not merged.
     expect(google['tags']).toEqual(['x'])
   })
@@ -1077,10 +1192,13 @@ describe('engine — pricingFamily routing', () => {
       modelRegistry: customRegistry,
     })
 
-    await client.generate({
-      model: 'my-custom-model',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    }, { auth: TEST_AUTH })
+    await client.generate(
+      {
+        model: 'my-custom-model',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
 
     const rec = sink.records[0]!
     // The record's model is the actual model string, not the pricingFamily.
@@ -1129,11 +1247,14 @@ describe('engine — Standard Schema validation (non-Zod)', () => {
       ],
     })
 
-    const result = await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Score?' }] }],
-      output: { schema },
-    }, { auth: TEST_AUTH })
+    const result = await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Score?' }] }],
+        output: { schema },
+      },
+      { auth: TEST_AUTH },
+    )
 
     expect(result.output).toEqual({ score: 42 })
   })
@@ -1142,24 +1263,33 @@ describe('engine — Standard Schema validation (non-Zod)', () => {
     const schema = makeScoreSchema()
     const { client } = makeClient({
       adapters: [
-        new FakeAdapter('google', makeSuccessResult({ rawStructured: { wrong: 'data' } })),
+        new FakeAdapter(
+          'google',
+          makeSuccessResult({ rawStructured: { wrong: 'data' } }),
+        ),
       ],
     })
 
     await expect(
-      client.generate({
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Score?' }] }],
-        output: { schema },
-      }, { auth: TEST_AUTH }),
+      client.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Score?' }] }],
+          output: { schema },
+        },
+        { auth: TEST_AUTH },
+      ),
     ).rejects.toThrow(LlmError)
 
     try {
-      await client.generate({
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Score?' }] }],
-        output: { schema },
-      }, { auth: TEST_AUTH })
+      await client.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Score?' }] }],
+          output: { schema },
+        },
+        { auth: TEST_AUTH },
+      )
     } catch (err) {
       expect(err).toBeInstanceOf(LlmError)
       expect((err as LlmError).kind).toBe('parse_error')
@@ -1191,11 +1321,14 @@ describe('engine — Standard Schema validation (non-Zod)', () => {
       ],
     })
 
-    const result = await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'ok?' }] }],
-      output: { schema: asyncSchema },
-    }, { auth: TEST_AUTH })
+    const result = await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'ok?' }] }],
+        output: { schema: asyncSchema },
+      },
+      { auth: TEST_AUTH },
+    )
 
     expect(result.output).toEqual({ ok: true })
   })
@@ -1208,10 +1341,13 @@ describe('engine — Standard Schema validation (non-Zod)', () => {
 describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
   it('result.callId and result.attemptId match the persisted record', async () => {
     const { client, sink } = makeClient()
-    const result = await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    }, { auth: TEST_AUTH })
+    const result = await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
     const rec = sink.last()!
     expect(result.callId).toBe(rec.callId)
     expect(result.attemptId).toBe(rec.attemptId)
@@ -1244,10 +1380,13 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
       middleware: [retryMiddleware({ maxAttempts: 2, baseDelayMs: 0 })],
     })
 
-    const result = await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    }, { auth: TEST_AUTH })
+    const result = await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
 
     // Two records written: one for the failed attempt, one for the success
     expect(sink.records).toHaveLength(2)
@@ -1280,10 +1419,13 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
 
     let caughtErr: LlmError | undefined
     try {
-      await client.generate({
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      }, { auth: TEST_AUTH })
+      await client.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+        },
+        { auth: TEST_AUTH },
+      )
     } catch (e) {
       caughtErr = e as LlmError
     }
@@ -1299,17 +1441,24 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
     const startEvents: CallStartEvent[] = []
     const successEvents: CallSuccessEvent[] = []
     const telemetry: Telemetry = {
-      onStart: (e) => { startEvents.push(e) },
-      onSuccess: (e) => { successEvents.push(e) },
+      onStart: (e) => {
+        startEvents.push(e)
+      },
+      onSuccess: (e) => {
+        successEvents.push(e)
+      },
     }
 
     const { client } = makeClient({ telemetry })
 
-    await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      metadata: { tenantId: 'acme', traceId: 'trace-99' },
-    }, { auth: TEST_AUTH })
+    await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+        metadata: { tenantId: 'acme', traceId: 'trace-99' },
+      },
+      { auth: TEST_AUTH },
+    )
 
     expect(startEvents).toHaveLength(1)
     expect(startEvents[0]!.callId).toBeTypeOf('string')
@@ -1349,9 +1498,10 @@ describe('engine — fail-closed auth guard', () => {
 
   it('generate() with { auth: { apiKey: "" } } throws LlmError invalid_auth', async () => {
     const { client } = makeClient()
-    await expect(
-      client.generate(req, { auth: { apiKey: '' } }),
-    ).rejects.toMatchObject({ kind: 'invalid_auth', retryable: false })
+    await expect(client.generate(req, { auth: { apiKey: '' } })).rejects.toMatchObject({
+      kind: 'invalid_auth',
+      retryable: false,
+    })
   })
 
   it('runStructured() with no opts arg (one arg form) throws LlmError invalid_auth', async () => {
@@ -1365,7 +1515,9 @@ describe('engine — fail-closed auth guard', () => {
 
   it('runStructured() with (callSite, vars) and no opts throws LlmError invalid_auth', async () => {
     const { client } = makeClient()
-    await expect((client.runStructured as any)(callSite, { x: 'y' })).rejects.toMatchObject({
+    await expect(
+      (client.runStructured as any)(callSite, { x: 'y' }),
+    ).rejects.toMatchObject({
       kind: 'invalid_auth',
       retryable: false,
     })

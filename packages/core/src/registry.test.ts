@@ -128,7 +128,11 @@ describe('geminiModelDescriptors', () => {
 
 describe('geminiModelDescriptors — cache minTokens', () => {
   it('2.5-series models have caching minTokens 2048', () => {
-    const twoPointFiveIds = ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+    const twoPointFiveIds = [
+      'gemini-2.5-pro',
+      'gemini-2.5-flash',
+      'gemini-2.5-flash-lite',
+    ]
     for (const id of twoPointFiveIds) {
       const desc = geminiModelDescriptors.find((d) => d.id === id)
       expect(desc?.capabilities?.caching?.minTokens, `${id} minTokens`).toBe(2048)

@@ -63,11 +63,16 @@ const SENSITIVE_PARAM_RE =
  * @returns A new string with secrets replaced by placeholder values.
  */
 export function redactSecrets(text: string): string {
-  return text
-    // 1. Google API keys first (they may appear inside URLs too, before param redaction)
-    .replace(GOOGLE_API_KEY_RE, 'AIza…REDACTED')
-    // 2. Bearer tokens in Authorization header values / error messages
-    .replace(BEARER_TOKEN_RE, 'Bearer …REDACTED')
-    // 3. Sensitive query-parameter values in URLs and inline key=value pairs
-    .replace(SENSITIVE_PARAM_RE, (_match, key: string, _value: string) => `${key}=REDACTED`)
+  return (
+    text
+      // 1. Google API keys first (they may appear inside URLs too, before param redaction)
+      .replace(GOOGLE_API_KEY_RE, 'AIza…REDACTED')
+      // 2. Bearer tokens in Authorization header values / error messages
+      .replace(BEARER_TOKEN_RE, 'Bearer …REDACTED')
+      // 3. Sensitive query-parameter values in URLs and inline key=value pairs
+      .replace(
+        SENSITIVE_PARAM_RE,
+        (_match, key: string, _value: string) => `${key}=REDACTED`,
+      )
+  )
 }

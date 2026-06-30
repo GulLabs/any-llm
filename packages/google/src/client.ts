@@ -290,9 +290,7 @@ export async function buildGoogleClient(auth: AuthMaterial): Promise<GeminiClien
       async generateContent(params: GeminiGenerateParams): Promise<GeminiResponseShape> {
         // Cast needed: our structural types are subsets of the real SDK types.
         const result = await (
-          ai.models.generateContent as (
-            params: unknown,
-          ) => Promise<GeminiResponseShape>
+          ai.models.generateContent as (params: unknown) => Promise<GeminiResponseShape>
         )(params)
         return result
       },

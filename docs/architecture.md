@@ -36,17 +36,17 @@ Concrete implementations live outside the engine, in separate packages or in hos
 
 ### Ports
 
-| Port | Who implements | Notes |
-|---|---|---|
-| `ProviderAdapter` | `@gullabs/google`, future provider packages | Translates `ResolvedRequest` ↔ raw SDK. Never validates, costs, or persists. |
-| `UsageSink` | Host app, `@gullabs/drizzle` | Receives completed `LlmCallRecord`. Called fail-open. |
-| `PricingSource` | `@gullabs/core` (built-in Gemini snapshot), or custom | Returns `Cost` for a model + usage. Called fail-open. |
-| `AuthProvider` | Host app | Returns `AuthMaterial` (`{ apiKey }` or Vertex WIF) per provider at call time. |
-| `RateLimiter` | Host app or companion package | Pre-send backpressure. `acquire` is fail-closed. Default is a no-op. |
-| `Telemetry` | Host app (Sentry / PostHog / OTel hook) | Optional; all callbacks are optional. Called fail-open. |
-| `Logger` | Host app | Structured logger (`info`, `warn`, `error`). Defaults to no-op. |
-| `Clock` | `@gullabs/testing` (`FakeClock`) or default | `Date.now()` abstraction for deterministic latency in tests. |
-| `IdGenerator` | `@gullabs/testing` (`FakeIds`) or default | `crypto.randomUUID()` abstraction for deterministic records in tests. |
+| Port              | Who implements                                        | Notes                                                                          |
+| ----------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `ProviderAdapter` | `@gullabs/google`, future provider packages           | Translates `ResolvedRequest` ↔ raw SDK. Never validates, costs, or persists.   |
+| `UsageSink`       | Host app, `@gullabs/drizzle`                          | Receives completed `LlmCallRecord`. Called fail-open.                          |
+| `PricingSource`   | `@gullabs/core` (built-in Gemini snapshot), or custom | Returns `Cost` for a model + usage. Called fail-open.                          |
+| `AuthProvider`    | Host app                                              | Returns `AuthMaterial` (`{ apiKey }` or Vertex WIF) per provider at call time. |
+| `RateLimiter`     | Host app or companion package                         | Pre-send backpressure. `acquire` is fail-closed. Default is a no-op.           |
+| `Telemetry`       | Host app (Sentry / PostHog / OTel hook)               | Optional; all callbacks are optional. Called fail-open.                        |
+| `Logger`          | Host app                                              | Structured logger (`info`, `warn`, `error`). Defaults to no-op.                |
+| `Clock`           | `@gullabs/testing` (`FakeClock`) or default           | `Date.now()` abstraction for deterministic latency in tests.                   |
+| `IdGenerator`     | `@gullabs/testing` (`FakeIds`) or default             | `crypto.randomUUID()` abstraction for deterministic records in tests.          |
 
 ### Component Diagram
 
@@ -196,21 +196,22 @@ narrow by `kind` or read `retryable` without parsing message strings.
 
 ### Error Kinds
 
-| `kind` | HTTP | `retryable` | Description |
-|---|---|---|---|
-| `invalid_auth` | 401, 403 | No | Wrong or missing credentials. |
-| `rate_limited` | 429 | Yes | Provider quota exceeded; `retryAfterMs` may be set. |
-| `server` | 5xx | Yes | Transient provider error. |
-| `timeout` | 408 | Yes | Request exceeded `timeoutMs` or network timeout. |
-| `aborted` | — | No | Caller cancelled via `AbortSignal`. Never retried. |
-| `bad_request` | 400, 422 | No | Malformed request; retrying without change will not help. |
-| `content_filter` | — | No | Provider refused output for safety reasons. |
-| `parse_error` | — | No | Zod validation failed on structured output; terminal. |
-| `unknown` | other | No | Uncategorised; inspect `cause` for details. |
+| `kind`           | HTTP     | `retryable` | Description                                               |
+| ---------------- | -------- | ----------- | --------------------------------------------------------- |
+| `invalid_auth`   | 401, 403 | No          | Wrong or missing credentials.                             |
+| `rate_limited`   | 429      | Yes         | Provider quota exceeded; `retryAfterMs` may be set.       |
+| `server`         | 5xx      | Yes         | Transient provider error.                                 |
+| `timeout`        | 408      | Yes         | Request exceeded `timeoutMs` or network timeout.          |
+| `aborted`        | —        | No          | Caller cancelled via `AbortSignal`. Never retried.        |
+| `bad_request`    | 400, 422 | No          | Malformed request; retrying without change will not help. |
+| `content_filter` | —        | No          | Provider refused output for safety reasons.               |
+| `parse_error`    | —        | No          | Zod validation failed on structured output; terminal.     |
+| `unknown`        | other    | No          | Uncategorised; inspect `cause` for details.               |
 
 ### Classification
 
 `classifyError(e: unknown): LlmError` is the single conversion point. Detection order:
+
 1. Already an `LlmError` — returned as-is.
 2. `Error.name === 'AbortError'` → `aborted`.
 3. `Error.name === 'TimeoutError'` or message matches `/timeout|timed? out/i` → `timeout`.
@@ -233,6 +234,7 @@ invocation generates a fresh `attemptId`, so retry attempts appear as separate r
 linked by `callId`.
 
 **Backoff.** Two modes:
+
 - `retryAfterMs` present on the error (from a 429): the sleep duration is
   `min(retryAfterMs, maxDelayMs)`.
 - No hint: exponential backoff with full jitter —
@@ -258,11 +260,11 @@ retry delay is not counted against the per-attempt timeout.
 
 `Message.parts` is an array of the `Part` discriminated union:
 
-| `kind` | Type | Notes |
-|---|---|---|
-| `'text'` | `TextPart` | Plain text string. |
+| `kind`           | Type              | Notes                                                                  |
+| ---------------- | ----------------- | ---------------------------------------------------------------------- |
+| `'text'`         | `TextPart`        | Plain text string.                                                     |
 | `'inline-media'` | `InlineMediaPart` | Base64-encoded bytes; `mimeType` required. No `data:…;base64,` prefix. |
-| `'file-uri'` | `FileUriPart` | Provider-hosted file reference; `uri` and `mimeType` required. |
+| `'file-uri'`     | `FileUriPart`     | Provider-hosted file reference; `uri` and `mimeType` required.         |
 
 All three parts accept an optional `mediaResolution?: 'low' | 'medium' | 'high'` hint for
 image/video detail level. The Gemini adapter maps this to `PartMediaResolutionLevel`
@@ -340,6 +342,7 @@ not survive restarts.
 ### `ModelDescriptor`
 
 Each descriptor carries:
+
 - `id` — the base model string (used as exact-match key and prefix).
 - `provider` — matches the `ProviderAdapter.id` used for routing.
 - `pricingFamily` — the key into the pricing table (e.g., `"gemini-2.5-pro"` for
@@ -353,6 +356,7 @@ Each descriptor carries:
 ### Resolution Order
 
 `ModelRegistry.resolve(model)`:
+
 1. Exact match on `descriptor.id` — O(1) hash lookup.
 2. Longest-prefix match — linear scan; first candidate with `model.startsWith(id)` and longest
    `id` wins.
@@ -377,7 +381,12 @@ to extend or replace it.
 Implement `ProviderAdapter` from `@gullabs/core`:
 
 ```ts
-import type { ProviderAdapter, ResolvedRequest, AdapterCtx, AdapterResult } from '@gullabs/core'
+import type {
+  ProviderAdapter,
+  ResolvedRequest,
+  AdapterCtx,
+  AdapterResult,
+} from '@gullabs/core'
 import { classifyError } from '@gullabs/core'
 
 const myAdapter: ProviderAdapter = {
@@ -465,7 +474,13 @@ on duplicates.
 Google Search grounding is requested via `providerOptions.google`:
 
 ```ts
-config: { providerOptions: { google: { tools: [{ googleSearch: {} }] } } }
+config: {
+  providerOptions: {
+    google: {
+      tools: [{ googleSearch: {} }]
+    }
+  }
+}
 ```
 
 The `providerOptions.google` object is merged into `GenerateContentConfig` last, after all
@@ -484,12 +499,12 @@ captured alongside it under `result.providerMetadata['promptFeedback']`. Both ar
 The `@google/genai` SDK defaults its HTTP transport timeout to ~60 seconds. The adapter sets
 `config.httpOptions.timeout` on every request:
 
-| Condition | Transport timeout set |
-|---|---|
-| `providerOptions.google.httpOptions` present | Caller value wins (spread over any computed value) |
-| `timeoutMs` is set | `timeoutMs + 5 000 ms` (`TRANSPORT_TIMEOUT_BUFFER_MS`) |
-| `serviceTier === 'flex'`, no `timeoutMs` | `FLEX_DEFAULT_TIMEOUT_MS` (900 000 ms) |
-| `serviceTier === 'standard'`, no `timeoutMs` | No forced timeout; SDK default applies |
+| Condition                                    | Transport timeout set                                  |
+| -------------------------------------------- | ------------------------------------------------------ |
+| `providerOptions.google.httpOptions` present | Caller value wins (spread over any computed value)     |
+| `timeoutMs` is set                           | `timeoutMs + 5 000 ms` (`TRANSPORT_TIMEOUT_BUFFER_MS`) |
+| `serviceTier === 'flex'`, no `timeoutMs`     | `FLEX_DEFAULT_TIMEOUT_MS` (900 000 ms)                 |
+| `serviceTier === 'standard'`, no `timeoutMs` | No forced timeout; SDK default applies                 |
 
 The 5 000 ms buffer ensures the engine's `AbortSignal` fires before the SDK transport timer so
 the error is classified as `LlmError('timeout')` rather than a raw SDK error.

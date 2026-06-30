@@ -43,7 +43,5 @@ export const llmCalls = pgTable(
     metadata: jsonb('metadata').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   },
-  (table) => [
-    uniqueIndex('llm_calls_attempt_id_idx').on(table.attemptId),
-  ],
+  (table) => [uniqueIndex('llm_calls_attempt_id_idx').on(table.attemptId)],
 )

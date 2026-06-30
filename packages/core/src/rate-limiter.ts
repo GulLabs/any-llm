@@ -44,9 +44,7 @@ export interface InMemoryRateLimiterOptions {
  *
  * @param opts - See {@link InMemoryRateLimiterOptions}.
  */
-export function inMemoryRateLimiter(
-  opts?: InMemoryRateLimiterOptions,
-): RateLimiter {
+export function inMemoryRateLimiter(opts?: InMemoryRateLimiterOptions): RateLimiter {
   const maxConcurrency = opts?.maxConcurrency ?? Infinity
 
   // Per-key state: current concurrency count + queue of pending resolvers.

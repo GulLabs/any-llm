@@ -12,6 +12,7 @@ This project does not use semantic versioning yet — it will adopt semver on fi
 ### Breaking Changes
 
 **`@gullabs/core`**
+
 - `AuthProvider` port removed. There is no longer a pluggable credential resolver in the engine
   pipeline. Client-level `auth` on `createClient` is gone.
 - `envAuth()` removed. The library no longer ships any helper that reads credentials from
@@ -25,12 +26,14 @@ This project does not use semantic versioning yet — it will adopt semver on fi
 - `AuthMaterial` narrowed to `{ apiKey: string }`. The `{ vertex: { ... } }` variant is removed.
 
 **`@gullabs/google`**
+
 - Vertex AI auth path removed from `buildGoogleClient`. Vertex AI is not supported in this
   version. See [Roadmap](./ROADMAP.md) for the planned return with explicit, non-ADC credentials.
 
 ### Security
 
 **`@gullabs/core`**
+
 - `redactSecrets(text)` — new exported utility that scrubs Google API keys (`AIza…` prefix),
   HTTP Bearer tokens, and common sensitive URL query-parameter values (`key=`, `api_key=`,
   `access_token=`, `token=`, `signature=`, `sig=`, `X-Goog-*`) from strings. Best-effort; not
@@ -42,9 +45,10 @@ This project does not use semantic versioning yet — it will adopt semver on fi
 ### Changed
 
 **`@gullabs/core`**
+
 - `retryMiddleware`: when `req.config.timeoutMs` is set it is now enforced as a **true
-  overall wall-clock ceiling** across all retry attempts and back-off sleep periods.  Previously
-  `timeoutMs` was a per-attempt budget only.  Specifically:
+  overall wall-clock ceiling** across all retry attempts and back-off sleep periods. Previously
+  `timeoutMs` was a per-attempt budget only. Specifically:
   - A new attempt is refused (throws `LlmError('timeout', retryable: false)`) when the remaining
     budget is ≤ 0 before the attempt would start.
   - The remaining budget is passed as the per-attempt `config.timeoutMs` so the engine's
@@ -59,12 +63,14 @@ This project does not use semantic versioning yet — it will adopt semver on fi
 ### Fixed
 
 **`@gullabs/core`**
+
 - `geminiModelDescriptors`: Gemini 3.x models (`gemini-3.5-flash`, `gemini-3.1-flash-lite`,
   `gemini-3.1-pro-preview`, `gemini-3-flash-preview`) had `caching.minTokens: 4096`. Corrected to
   `2048` — Google's explicit-cache minimum is 2048 tokens for ALL models; there is no documented
   4096 floor specific to 3.x.
 
 **`@gullabs/google`**
+
 - Flex-tier `AbortSignal` enforcement: the adapter now arms a client-side `AbortSignal` at the
   effective timeout to guard against `@google/genai` SDK bug #1277 where `httpOptions.timeout` may
   be a no-op for `generateContent`. Flex calls without an explicit `timeoutMs` use
@@ -81,6 +87,7 @@ This project does not use semantic versioning yet — it will adopt semver on fi
 ### Breaking
 
 **`@gullabs/core`**
+
 - `Message.parts` is now `Part[]` where `Part = TextPart | InlineMediaPart | FileUriPart`. Any
   code that typed `parts` as `TextPart[]` must be updated. Existing messages with only text parts
   are structurally compatible; the `kind: 'text'` field was already required by `TextPart`.
@@ -88,6 +95,7 @@ This project does not use semantic versioning yet — it will adopt semver on fi
 ### Added
 
 **`@gullabs/core`**
+
 - `InlineMediaPart` (`kind: 'inline-media'`) — inline base64 binary media with `mimeType` and
   optional `mediaResolution` hint (`'low' | 'medium' | 'high'`).
 - `FileUriPart` (`kind: 'file-uri'`) — provider-hosted file reference with `uri`, `mimeType`,
@@ -110,6 +118,7 @@ This project does not use semantic versioning yet — it will adopt semver on fi
   gemini-3-flash-preview.
 
 **`@gullabs/google`**
+
 - `GoogleFileStore` — `upload(source, mimeType, opts?)` uploads bytes (`Uint8Array` | `Blob`)
   and polls until `ACTIVE` (default interval 3 s, default timeout 120 s). `delete(handle)` and
   `deleteAll(handles)` are fail-open.
@@ -140,6 +149,7 @@ Initial v1 implementation. Scope: four goals, no more — see `SPEC.md`.
 ### Added
 
 **`@gullabs/core`**
+
 - `createClient` engine: 12-step pipeline (config resolution → adapter → normalize → validate → cost → record → result)
 - `defineCallSite` — typed, reusable prompt template with `{{var}}` interpolation (anti-injection: values are not re-scanned)
 - `geminiPricingSource` — `PricingSource` implementation backed by the built-in Gemini pricing snapshot (`gemini-2026-06-28`)
@@ -153,6 +163,7 @@ Initial v1 implementation. Scope: four goals, no more — see `SPEC.md`.
 - Full TypeScript types: `LlmRequest`, `LlmResult`, `Usage`, `Cost`, `LlmCallRecord`, `GenConfig`, `ReasoningIntent`, and more
 
 **`@gullabs/google`**
+
 - `geminiAdapter` — `ProviderAdapter` over `@google/genai` (API-key + Vertex auth via `buildGoogleClient`)
 - Gemini Flex service tier (`serviceTier: 'flex'` default)
 - Thinking capture: `thoughtsTokenCount` → `thinkingTokens` in usage; thought parts → `reasoningText`
@@ -161,10 +172,12 @@ Initial v1 implementation. Scope: four goals, no more — see `SPEC.md`.
 - Error classification: `401/403` → `invalid_auth`, `429` → `rate_limited` (+ `retryAfterMs`), `5xx` → `server`, safety → `content_filter`
 
 **`@gullabs/drizzle`**
+
 - `llmCalls` — reference Drizzle `pgTable` schema for `LlmCallRecord`; typed columns + `jsonb` forward-compat lanes
 - `drizzleUsageSink` — `UsageSink` implementation; idempotent on `attemptId` via `INSERT ... ON CONFLICT DO NOTHING`
 
 **`@gullabs/testing`**
+
 - `FakeClock` — deterministic `Clock` with `advance` / `set`
 - `FakeIds` — sequential `IdGenerator` (`call_1`, `attempt_1`, …)
 - `RecordingSink` — in-memory `UsageSink`; `failOnRecord` option for fail-open tests
@@ -174,6 +187,7 @@ Initial v1 implementation. Scope: four goals, no more — see `SPEC.md`.
 - `fakeAuth` — `AuthProvider` that resolves to a fixed `AuthMaterial`
 
 **Tooling & repo**
+
 - pnpm workspace monorepo; ESM + CJS + `.d.ts` output via `tsup`
 - Strict TypeScript: `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`
 - vitest test suite: cost math, error classification, config resolution, usage normalization, adapter contract tests, engine integration, surface-stress / fuzz tests

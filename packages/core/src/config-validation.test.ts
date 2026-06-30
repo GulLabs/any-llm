@@ -21,12 +21,7 @@ import {
   LlmError,
 } from './index.js'
 import type { AdapterResult, Usage } from './index.js'
-import {
-  FakeAdapter,
-  FakeClock,
-  FakeIds,
-  RecordingSink,
-} from '@gullabs/testing'
+import { FakeAdapter, FakeClock, FakeIds, RecordingSink } from '@gullabs/testing'
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -75,7 +70,9 @@ function makeClient(model: string) {
   return { client, sink, clock, ids }
 }
 
-const MESSAGES = [{ role: 'user' as const, parts: [{ kind: 'text' as const, text: 'hi' }] }]
+const MESSAGES = [
+  { role: 'user' as const, parts: [{ kind: 'text' as const, text: 'hi' }] },
+]
 
 // ---------------------------------------------------------------------------
 // Helper: run a generate call that is expected to throw an LlmError,
@@ -87,7 +84,10 @@ async function expectBadRequest(
   config: Parameters<typeof client.generate>[0]['config'],
 ): Promise<LlmError> {
   try {
-    await client.generate({ model, messages: MESSAGES, ...(config !== undefined ? { config } : {}) }, { auth: TEST_AUTH })
+    await client.generate(
+      { model, messages: MESSAGES, ...(config !== undefined ? { config } : {}) },
+      { auth: TEST_AUTH },
+    )
     throw new Error('expected generate() to throw, but it resolved')
   } catch (e) {
     expect(e).toBeInstanceOf(LlmError)
@@ -110,7 +110,10 @@ describe('geminiModelDescriptors — Batch 2b fields', () => {
   it('every descriptor has configJsonSchema (non-null JsonValue)', () => {
     for (const d of geminiModelDescriptors) {
       expect(d.configJsonSchema, `${d.id} should have configJsonSchema`).toBeDefined()
-      expect(d.configJsonSchema, `${d.id} configJsonSchema must not be null`).not.toBeNull()
+      expect(
+        d.configJsonSchema,
+        `${d.id} configJsonSchema must not be null`,
+      ).not.toBeNull()
     }
   })
 
@@ -260,11 +263,14 @@ describe('engine — config validation for 3.x (fixed sampling) models', () => {
 
     // timeoutMs is excluded from config projection — must not trigger validation failure.
     // The fake adapter returns in <1ms so a 30s timeout will not fire.
-    const result = await client.generate({
-      model: 'gemini-3.5-flash',
-      messages: MESSAGES,
-      config: { timeoutMs: 30_000 },
-    }, { auth: TEST_AUTH })
+    const result = await client.generate(
+      {
+        model: 'gemini-3.5-flash',
+        messages: MESSAGES,
+        config: { timeoutMs: 30_000 },
+      },
+      { auth: TEST_AUTH },
+    )
 
     expect(result).toBeDefined()
     expect(sink.records).toHaveLength(1)
@@ -283,11 +289,14 @@ describe('engine — 2.5 (tunable) models accept sampling params', () => {
     it(`${model} + temperature/topP/topK → resolves successfully`, async () => {
       const { client, sink } = makeClient(model)
 
-      const result = await client.generate({
-        model,
-        messages: MESSAGES,
-        config: { temperature: 0.8, topP: 0.95, topK: 64 },
-      }, { auth: TEST_AUTH })
+      const result = await client.generate(
+        {
+          model,
+          messages: MESSAGES,
+          config: { temperature: 0.8, topP: 0.95, topK: 64 },
+        },
+        { auth: TEST_AUTH },
+      )
 
       expect(result).toBeDefined()
       expect(sink.records).toHaveLength(1)
@@ -317,10 +326,13 @@ describe('gemini-3-flash-preview — resolution and pricing', () => {
   it('produces a non-null microUsd cost via the engine (flex tier)', async () => {
     const { client, sink } = makeClient('gemini-3-flash-preview')
 
-    const result = await client.generate({
-      model: 'gemini-3-flash-preview',
-      messages: MESSAGES,
-    }, { auth: TEST_AUTH })
+    const result = await client.generate(
+      {
+        model: 'gemini-3-flash-preview',
+        messages: MESSAGES,
+      },
+      { auth: TEST_AUTH },
+    )
 
     expect(result.cost).toBeDefined()
     expect(result.cost!.microUsd).not.toBeNull()
@@ -345,11 +357,14 @@ describe('engine — failed validation writes error record to sink', () => {
     const { client, sink } = makeClient('gemini-3.5-flash')
 
     await expect(
-      client.generate({
-        model: 'gemini-3.5-flash',
-        messages: MESSAGES,
-        config: { temperature: 1.0 },
-      }, { auth: TEST_AUTH }),
+      client.generate(
+        {
+          model: 'gemini-3.5-flash',
+          messages: MESSAGES,
+          config: { temperature: 1.0 },
+        },
+        { auth: TEST_AUTH },
+      ),
     ).rejects.toBeInstanceOf(LlmError)
 
     // Sink received exactly one error record
@@ -365,11 +380,14 @@ describe('engine — failed validation writes error record to sink', () => {
 
     let thrownErr: LlmError | undefined
     try {
-      await client.generate({
-        model: 'gemini-3.5-flash',
-        messages: MESSAGES,
-        config: { temperature: 0.5 },
-      }, { auth: TEST_AUTH })
+      await client.generate(
+        {
+          model: 'gemini-3.5-flash',
+          messages: MESSAGES,
+          config: { temperature: 0.5 },
+        },
+        { auth: TEST_AUTH },
+      )
     } catch (e) {
       thrownErr = e as LlmError
     }

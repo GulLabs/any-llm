@@ -28,7 +28,9 @@ describe('LlmResult<T> type shape', () => {
   it('output is T | undefined for a given T', () => {
     expectTypeOf<LlmResult<string>['output']>().toEqualTypeOf<string | undefined>()
     expectTypeOf<LlmResult<number>['output']>().toEqualTypeOf<number | undefined>()
-    expectTypeOf<LlmResult<{ id: number }>['output']>().toEqualTypeOf<{ id: number } | undefined>()
+    expectTypeOf<LlmResult<{ id: number }>['output']>().toEqualTypeOf<
+      { id: number } | undefined
+    >()
     expectTypeOf<LlmResult<boolean[]>['output']>().toEqualTypeOf<boolean[] | undefined>()
   })
 
@@ -37,7 +39,9 @@ describe('LlmResult<T> type shape', () => {
   })
 
   it('reasoningText is string | undefined', () => {
-    expectTypeOf<LlmResult<unknown>['reasoningText']>().toEqualTypeOf<string | undefined>()
+    expectTypeOf<LlmResult<unknown>['reasoningText']>().toEqualTypeOf<
+      string | undefined
+    >()
   })
 
   it('usage is Usage (required)', () => {
@@ -61,7 +65,9 @@ describe('LlmResult<T> type shape', () => {
   })
 
   it('finishReason is FinishReason | undefined', () => {
-    expectTypeOf<LlmResult<unknown>['finishReason']>().toEqualTypeOf<FinishReason | undefined>()
+    expectTypeOf<LlmResult<unknown>['finishReason']>().toEqualTypeOf<
+      FinishReason | undefined
+    >()
   })
 
   it('responseId is string | undefined', () => {
@@ -125,7 +131,11 @@ describe('Warning type shape', () => {
   it('is a discriminated union', () => {
     expectTypeOf<Warning>().toEqualTypeOf<
       | { type: 'unsupported-setting'; setting: string; details?: string }
-      | { type: 'reasoning-mapping'; quality: 'approximate' | 'unsupported'; details?: string }
+      | {
+          type: 'reasoning-mapping'
+          quality: 'approximate' | 'unsupported'
+          details?: string
+        }
       | { type: 'other'; message: string }
     >()
   })
@@ -133,7 +143,9 @@ describe('Warning type shape', () => {
 
 describe('FinishReason type shape', () => {
   it('is a union of known values', () => {
-    expectTypeOf<FinishReason>().toEqualTypeOf<'stop' | 'length' | 'content_filter' | 'other'>()
+    expectTypeOf<FinishReason>().toEqualTypeOf<
+      'stop' | 'length' | 'content_filter' | 'other'
+    >()
   })
 })
 
@@ -188,8 +200,12 @@ describe('part type guards', () => {
       expect(p.text).toBe('hello')
     }
     expect(isTextPart(p)).toBe(true)
-    expect(isTextPart({ kind: 'inline-media', mimeType: 'image/png', data: 'abc' })).toBe(false)
-    expect(isTextPart({ kind: 'file-uri', uri: 'gs://b/f', mimeType: 'image/jpeg' })).toBe(false)
+    expect(isTextPart({ kind: 'inline-media', mimeType: 'image/png', data: 'abc' })).toBe(
+      false,
+    )
+    expect(
+      isTextPart({ kind: 'file-uri', uri: 'gs://b/f', mimeType: 'image/jpeg' }),
+    ).toBe(false)
   })
 
   it('isInlineMediaPart narrows to InlineMediaPart', () => {
@@ -200,7 +216,9 @@ describe('part type guards', () => {
     }
     expect(isInlineMediaPart(p)).toBe(true)
     expect(isInlineMediaPart({ kind: 'text', text: 'hi' })).toBe(false)
-    expect(isInlineMediaPart({ kind: 'file-uri', uri: 'gs://b/f', mimeType: 'image/jpeg' })).toBe(false)
+    expect(
+      isInlineMediaPart({ kind: 'file-uri', uri: 'gs://b/f', mimeType: 'image/jpeg' }),
+    ).toBe(false)
   })
 
   it('isFileUriPart narrows to FileUriPart', () => {
@@ -211,7 +229,9 @@ describe('part type guards', () => {
     }
     expect(isFileUriPart(p)).toBe(true)
     expect(isFileUriPart({ kind: 'text', text: 'hi' })).toBe(false)
-    expect(isFileUriPart({ kind: 'inline-media', mimeType: 'image/png', data: 'abc' })).toBe(false)
+    expect(
+      isFileUriPart({ kind: 'inline-media', mimeType: 'image/png', data: 'abc' }),
+    ).toBe(false)
   })
 })
 
@@ -223,13 +243,17 @@ describe('ReasoningIntent type shape', () => {
   })
 
   it('includeThoughts is boolean | undefined', () => {
-    expectTypeOf<ReasoningIntent['includeThoughts']>().toEqualTypeOf<boolean | undefined>()
+    expectTypeOf<ReasoningIntent['includeThoughts']>().toEqualTypeOf<
+      boolean | undefined
+    >()
   })
 })
 
 describe('GenConfig type shape', () => {
   it('serviceTier is flex | standard | undefined', () => {
-    expectTypeOf<GenConfig['serviceTier']>().toEqualTypeOf<'flex' | 'standard' | undefined>()
+    expectTypeOf<GenConfig['serviceTier']>().toEqualTypeOf<
+      'flex' | 'standard' | undefined
+    >()
   })
 
   it('providerOptions is Record<string, JsonValue> | undefined', () => {

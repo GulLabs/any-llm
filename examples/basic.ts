@@ -11,11 +11,7 @@
  */
 
 import { z } from 'zod'
-import {
-  createClient,
-  geminiPricingSource,
-  defineCallSite,
-} from '@gullabs/core'
+import { createClient, geminiPricingSource, defineCallSite } from '@gullabs/core'
 import { geminiAdapter } from '@gullabs/google'
 import {
   FakeClock,
@@ -100,9 +96,13 @@ const codeReview = defineCallSite({
 // 5. Run it — no await at top level needed in modern Node (>= 20)
 // ---------------------------------------------------------------------------
 
-const result = await client.runStructured(codeReview, { diff: '- let x = 1\n+ const x = 1' }, {
-  auth: { apiKey: 'fake-api-key' },
-})
+const result = await client.runStructured(
+  codeReview,
+  { diff: '- let x = 1\n+ const x = 1' },
+  {
+    auth: { apiKey: 'fake-api-key' },
+  },
+)
 
 console.log('\n========================================')
 console.log('  any-llm  —  examples/basic.ts output')
@@ -113,17 +113,17 @@ console.log(result.output)
 
 console.log('\nToken usage (GROSS convention):')
 console.log({
-  inputTokens: result.usage.inputTokens,         // 512  (gross; includes cached)
-  outputTokens: result.usage.outputTokens,       // 176  (gross; candidates 48 + thoughts 128)
+  inputTokens: result.usage.inputTokens, // 512  (gross; includes cached)
+  outputTokens: result.usage.outputTokens, // 176  (gross; candidates 48 + thoughts 128)
   cachedInputTokens: result.usage.cachedInputTokens, // 64 (subset of input)
-  thinkingTokens: result.usage.thinkingTokens,   // 128 (subset of output; no extra cost lane)
+  thinkingTokens: result.usage.thinkingTokens, // 128 (subset of output; no extra cost lane)
 })
 
 console.log('\nCost (frozen micro-USD):')
 console.log({
-  microUsd: result.cost?.microUsd,               // integer µUSD
+  microUsd: result.cost?.microUsd, // integer µUSD
   pricingVersion: result.cost?.pricingVersion,
-  details: result.cost?.details,                 // { input, cached, output } — must sum to microUsd
+  details: result.cost?.details, // { input, cached, output } — must sum to microUsd
 })
 
 console.log('\nReasoning text (thought summary):')

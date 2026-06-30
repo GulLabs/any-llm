@@ -97,10 +97,13 @@ describe('engine — rateLimiter integration', () => {
       return originalAcquire(key, signal)
     }
 
-    await client.generate({
-      model: 'gemini-2.5-flash',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
-    }, { auth: TEST_AUTH })
+    await client.generate(
+      {
+        model: 'gemini-2.5-flash',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
 
     expect(acquireCalledBeforeAdapter).toBe(true)
     expect(spy.acquireCalls).toHaveLength(1)
@@ -111,10 +114,13 @@ describe('engine — rateLimiter integration', () => {
     const spy = makeSpyLimiter()
     const { client } = makeClientWithSpy(spy)
 
-    await client.generate({
-      model: 'gemini-2.5-flash',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
-    }, { auth: TEST_AUTH })
+    await client.generate(
+      {
+        model: 'gemini-2.5-flash',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
 
     expect(spy.releaseCalls).toBe(1)
   })
@@ -133,10 +139,13 @@ describe('engine — rateLimiter integration', () => {
     })
 
     await expect(
-      client.generate({
-        model: 'gemini-2.5-flash',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
-      }, { auth: TEST_AUTH }),
+      client.generate(
+        {
+          model: 'gemini-2.5-flash',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
+        },
+        { auth: TEST_AUTH },
+      ),
     ).rejects.toBeInstanceOf(LlmError)
 
     // Release must still have been called despite the adapter error.
@@ -162,10 +171,13 @@ describe('engine — rateLimiter integration', () => {
     })
 
     const err = await client
-      .generate({
-        model: 'gemini-2.5-flash',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
-      }, { auth: TEST_AUTH })
+      .generate(
+        {
+          model: 'gemini-2.5-flash',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
+        },
+        { auth: TEST_AUTH },
+      )
       .catch((e: unknown) => e)
 
     expect(err).toBeInstanceOf(LlmError)
@@ -184,12 +196,24 @@ describe('engine — rateLimiter integration', () => {
         return new Promise<Release>((_resolve, reject) => {
           if (signal === undefined) return
           if (signal.aborted) {
-            reject(signal.reason instanceof Error ? signal.reason : Object.assign(new Error('Aborted'), { name: 'AbortError' }))
+            reject(
+              signal.reason instanceof Error
+                ? signal.reason
+                : Object.assign(new Error('Aborted'), { name: 'AbortError' }),
+            )
             return
           }
-          signal.addEventListener('abort', () => {
-            reject(signal.reason instanceof Error ? signal.reason : Object.assign(new Error('Aborted'), { name: 'AbortError' }))
-          }, { once: true })
+          signal.addEventListener(
+            'abort',
+            () => {
+              reject(
+                signal.reason instanceof Error
+                  ? signal.reason
+                  : Object.assign(new Error('Aborted'), { name: 'AbortError' }),
+              )
+            },
+            { once: true },
+          )
         })
       },
     }
@@ -207,11 +231,14 @@ describe('engine — rateLimiter integration', () => {
     })
 
     const err = await client
-      .generate({
-        model: 'gemini-2.5-flash',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
-        config: { timeoutMs: 20 },
-      }, { auth: TEST_AUTH })
+      .generate(
+        {
+          model: 'gemini-2.5-flash',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
+          config: { timeoutMs: 20 },
+        },
+        { auth: TEST_AUTH },
+      )
       .catch((e: unknown) => e)
 
     expect(err).toBeInstanceOf(LlmError)
@@ -225,12 +252,24 @@ describe('engine — rateLimiter integration', () => {
         return new Promise<Release>((_resolve, reject) => {
           if (signal === undefined) return
           if (signal.aborted) {
-            reject(signal.reason instanceof Error ? signal.reason : Object.assign(new Error('Aborted'), { name: 'AbortError' }))
+            reject(
+              signal.reason instanceof Error
+                ? signal.reason
+                : Object.assign(new Error('Aborted'), { name: 'AbortError' }),
+            )
             return
           }
-          signal.addEventListener('abort', () => {
-            reject(signal.reason instanceof Error ? signal.reason : Object.assign(new Error('Aborted'), { name: 'AbortError' }))
-          }, { once: true })
+          signal.addEventListener(
+            'abort',
+            () => {
+              reject(
+                signal.reason instanceof Error
+                  ? signal.reason
+                  : Object.assign(new Error('Aborted'), { name: 'AbortError' }),
+              )
+            },
+            { once: true },
+          )
         })
       },
     }

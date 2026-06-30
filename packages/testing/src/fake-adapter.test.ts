@@ -71,7 +71,10 @@ describe('FakeAdapter', () => {
 
     // Before the fix, usage: null would have caused this to be returned as
     // a success result. After the fix it must be thrown.
-    await expect(adapter.run(STUB_REQ, STUB_CTX)).rejects.toEqual({ status: 429, usage: null })
+    await expect(adapter.run(STUB_REQ, STUB_CTX)).rejects.toEqual({
+      status: 429,
+      usage: null,
+    })
   })
 
   it('records calls', async () => {

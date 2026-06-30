@@ -6,10 +6,11 @@
 > the seams exist so future features drop in without a rewrite.
 
 ## v1 goals (the entire scope)
+
 1. Call **Gemini** with the **Flex** service tier.
 2. **Record token usage** (input / output / cached / **thinking**).
-3. Capture **thinking** — thinking *token usage* always; the provider-returned *thought-summary
-   text* when `reasoning.includeThoughts` is set — plus **postmortems** (per-call diagnostics on
+3. Capture **thinking** — thinking _token usage_ always; the provider-returned _thought-summary
+   text_ when `reasoning.includeThoughts` is set — plus **postmortems** (per-call diagnostics on
    success and failure).
 4. **Track cost** (public Gemini pricing → micro-USD, frozen per record).
 
@@ -17,6 +18,7 @@ Everything else from DESIGN.md is OUT of v1 (no other providers, no streaming, n
 multimodal, no middleware, no registry). Seams are present; machinery is not.
 
 ## Non-negotiable invariants
+
 - **Engine validates output; adapters never do.** Adapter returns `rawStructured: unknown`.
 - **GROSS token convention:** `cachedInputTokens` is a SUBSET of `inputTokens`;
   `thinkingTokens` is a SUBSET of `outputTokens`. Cost math must not double-count.
@@ -28,6 +30,7 @@ multimodal, no middleware, no registry). Seams are present; machinery is not.
 ---
 
 ## Packages (pnpm workspace monorepo — the seam for optional deps)
+
 ```
 packages/
   core/      @gullabs/core      # types, ports, engine, callsite, cost, errors, record  (no provider deps)
@@ -35,8 +38,10 @@ packages/
   drizzle/   @gullabs/drizzle   # reference llm_calls schema + drizzleUsageSink  (peerDep drizzle-orm)
   testing/   @gullabs/testing   # FakeClock, FakeIds, RecordingSink, fakeGemini, scenario fixtures
 ```
+
 Tooling: TypeScript (strict, `exactOptionalPropertyTypes`), **vitest**, **tsup** (ESM+CJS+d.ts),
 Node ≥20. Provider SDKs are **peerDependencies** (a host that only uses Gemini never pulls others).
+
 > Naming note (decide before publish): "any-llm" collides with mozilla-ai/any-llm on npm; the
 > `@gullabs/*` scope is a working placeholder. Not a blocker for local build.
 
@@ -45,19 +50,25 @@ Node ≥20. Provider SDKs are **peerDependencies** (a host that only uses Gemini
 ## Core types (`@gullabs/core`)
 
 ```ts
-export type JsonValue = null | boolean | number | string | JsonValue[] | { [k: string]: JsonValue }
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { [k: string]: JsonValue }
 
 // ---- request ----
 export interface LlmRequest<S extends ZodType = ZodType> {
-  model: string                      // routing key; v1 only resolves gemini-* (seam: provider map)
+  model: string // routing key; v1 only resolves gemini-* (seam: provider map)
   system?: string
-  messages: Message[]                // v1: text parts only (seam: image/file/audio parts later)
-  output?: { schema: S }             // structured output; Zod is the source of truth
+  messages: Message[] // v1: text parts only (seam: image/file/audio parts later)
+  output?: { schema: S } // structured output; Zod is the source of truth
   config?: GenConfig
-  metadata?: CallMetadata            // host anchors: tenantId, runId, callSiteId, traceId…
+  metadata?: CallMetadata // host anchors: tenantId, runId, callSiteId, traceId…
 }
 export type Message = { role: 'user' | 'assistant'; parts: TextPart[] }
-export type TextPart = { kind: 'text'; text: string }   // union kept open for future part kinds
+export type TextPart = { kind: 'text'; text: string } // union kept open for future part kinds
 
 // ---- config (typed common knobs + quarantined raw passthrough) ----
 export interface GenConfig {
@@ -66,65 +77,77 @@ export interface GenConfig {
   topK?: number
   maxOutputTokens?: number
   stopSequences?: string[]
-  reasoning?: ReasoningIntent        // best-effort intent; adapter maps + may warn (not a guarantee)
-  serviceTier?: 'flex' | 'standard'  // v1 default 'flex'
+  reasoning?: ReasoningIntent // best-effort intent; adapter maps + may warn (not a guarantee)
+  serviceTier?: 'flex' | 'standard' // v1 default 'flex'
   timeoutMs?: number
-  providerOptions?: Record<string, JsonValue>   // forwarded verbatim to the raw SDK; logged when used
+  providerOptions?: Record<string, JsonValue> // forwarded verbatim to the raw SDK; logged when used
 }
 export interface ReasoningIntent {
-  effort?: 'none' | 'low' | 'medium' | 'high'   // gemini-2.5 → thinkingBudget; gemini-3 → thinkingLevel
+  effort?: 'none' | 'low' | 'medium' | 'high' // gemini-2.5 → thinkingBudget; gemini-3 → thinkingLevel
   budgetTokens?: number
   includeThoughts?: boolean
 }
 
 // ---- result ----
 export interface LlmResult<T> {
-  output?: T                         // present iff request had output.schema and validation passed
+  output?: T // present iff request had output.schema and validation passed
   text?: string
-  reasoningText?: string             // provider thought-summary, present iff includeThoughts requested
+  reasoningText?: string // provider thought-summary, present iff includeThoughts requested
   usage: Usage
-  cost?: Cost                        // null model-unpriced; tokens still captured
+  cost?: Cost // null model-unpriced; tokens still captured
   model: string
   modelVersion?: string
   finishReason?: FinishReason
   responseId?: string
   latencyMs: number
-  warnings: Warning[]                // never silently drop a setting
-  providerMetadata?: JsonValue       // raw provider metadata (grounding/safety/etc.)
+  warnings: Warning[] // never silently drop a setting
+  providerMetadata?: JsonValue // raw provider metadata (grounding/safety/etc.)
 }
 export type FinishReason = 'stop' | 'length' | 'content_filter' | 'other'
 export type Warning =
   | { type: 'unsupported-setting'; setting: string; details?: string }
-  | { type: 'reasoning-mapping'; quality: 'approximate' | 'unsupported'; details?: string }
+  | {
+      type: 'reasoning-mapping'
+      quality: 'approximate' | 'unsupported'
+      details?: string
+    }
   | { type: 'other'; message: string }
 
 // ---- usage: typed core + open map + raw (forward-compat without migration) ----
 export interface Usage {
-  inputTokens: number                // GROSS (includes cached)
-  outputTokens: number               // GROSS (includes thinking)
-  cachedInputTokens?: number         // SUBSET of inputTokens
-  thinkingTokens?: number            // SUBSET of outputTokens
+  inputTokens: number // GROSS (includes cached)
+  outputTokens: number // GROSS (includes thinking)
+  cachedInputTokens?: number // SUBSET of inputTokens
+  thinkingTokens?: number // SUBSET of outputTokens
   totalTokens?: number
-  details: Record<string, number>    // open token-type map; new types land here, costable
-  raw: JsonValue                     // provider's entire usage object, verbatim
+  details: Record<string, number> // open token-type map; new types land here, costable
+  raw: JsonValue // provider's entire usage object, verbatim
 }
 
 // ---- cost: frozen, micro-USD, per-type breakdown ----
 export interface Cost {
   microUsd: number | null
   pricingVersion: string
-  confidence: 'exact' | 'estimated'  // 'estimated' if any priced field had to be inferred
-  details: { input: number; cached: number; output: number }  // microUsd; MUST sum to microUsd.
+  confidence: 'exact' | 'estimated' // 'estimated' if any priced field had to be inferred
+  details: { input: number; cached: number; output: number } // microUsd; MUST sum to microUsd.
   // NOTE: thinking tokens are inside outputTokens and billed at the output rate — NO separate
   // 'thinking' cost lane (that would break sum(details) === microUsd). thinkingTokens is usage-only.
 }
 ```
 
 ### Errors (`errors.ts`)
+
 ```ts
 export type LlmErrorKind =
-  | 'invalid_auth' | 'rate_limited' | 'server' | 'timeout' | 'aborted'
-  | 'bad_request' | 'content_filter' | 'parse_error' | 'unknown'
+  | 'invalid_auth'
+  | 'rate_limited'
+  | 'server'
+  | 'timeout'
+  | 'aborted'
+  | 'bad_request'
+  | 'content_filter'
+  | 'parse_error'
+  | 'unknown'
 export class LlmError extends Error {
   kind: LlmErrorKind
   retryable: boolean
@@ -139,25 +162,31 @@ export class LlmError extends Error {
 ---
 
 ## Ports (`@gullabs/core` — host/companion implements)
+
 ```ts
 export interface ProviderAdapter {
-  id: string                                       // 'google'
+  id: string // 'google'
   // returns RAW result; engine validates output, computes cost, persists. Adapter does none of that.
   run(req: ResolvedRequest, ctx: AdapterCtx): Promise<AdapterResult>
 }
-export interface ResolvedRequest {                 // engine-built: defaults merged, prompts rendered
+export interface ResolvedRequest {
+  // engine-built: defaults merged, prompts rendered
   model: string
   system?: string
   messages: Message[]
-  outputSchema?: ZodType                            // adapter uses it to set provider responseSchema only
-  config: Required<Pick<GenConfig,'serviceTier'>> & GenConfig
+  outputSchema?: ZodType // adapter uses it to set provider responseSchema only
+  config: Required<Pick<GenConfig, 'serviceTier'>> & GenConfig
   signal?: AbortSignal
 }
-export interface AdapterCtx { auth: AuthMaterial; signal?: AbortSignal; logger: Logger }
+export interface AdapterCtx {
+  auth: AuthMaterial
+  signal?: AbortSignal
+  logger: Logger
+}
 export interface AdapterResult {
-  rawStructured?: unknown                           // engine will Zod-validate this
+  rawStructured?: unknown // engine will Zod-validate this
   text?: string
-  reasoningText?: string                            // thought summary if includeThoughts requested
+  reasoningText?: string // thought summary if includeThoughts requested
   usage: Usage
   model: string
   modelVersion?: string
@@ -167,25 +196,46 @@ export interface AdapterResult {
   providerMetadata?: JsonValue
 }
 
-export interface UsageSink { record(r: LlmCallRecord): Promise<void> }  // host writes to its own DB
-export interface PricingSource { version: string; price(model: string, usage: Usage, tier?: string): Cost }
-export interface AuthProvider { credentials(provider: string): Promise<AuthMaterial> }
-export type AuthMaterial = { apiKey: string } | { vertex: { project: string; location: string } }
-export interface Clock { now(): number }
-export interface IdGenerator { callId(): string; attemptId(): string }
-export interface Logger { info(o: object, m: string): void; warn(o: object, m: string): void; error(o: object, m: string): void }
-export interface Telemetry {                        // optional; host wires Sentry/PostHog/OTel
+export interface UsageSink {
+  record(r: LlmCallRecord): Promise<void>
+} // host writes to its own DB
+export interface PricingSource {
+  version: string
+  price(model: string, usage: Usage, tier?: string): Cost
+}
+export interface AuthProvider {
+  credentials(provider: string): Promise<AuthMaterial>
+}
+export type AuthMaterial =
+  | { apiKey: string }
+  | { vertex: { project: string; location: string } }
+export interface Clock {
+  now(): number
+}
+export interface IdGenerator {
+  callId(): string
+  attemptId(): string
+}
+export interface Logger {
+  info(o: object, m: string): void
+  warn(o: object, m: string): void
+  error(o: object, m: string): void
+}
+export interface Telemetry {
+  // optional; host wires Sentry/PostHog/OTel
   onStart?(e: object): unknown
   onSuccess?(e: object, span?: unknown): void
   onError?(e: object, span?: unknown): void
 }
 ```
+
 Seams deferred (designed, NOT in v1): `RateLimiter`, `Redactor`, `BlobStore`, `ConfigSource`,
 `FileStore`, streaming `stream()`. They can be added without changing the above.
 
 ---
 
 ## Engine pipeline (`engine.ts`) — written once
+
 ```
 runStructured(callSite, vars?, opts?)  /  generate(request)
   1. resolve config   (lib defaults → call-site defaults → per-call opts; deep-merge; serviceTier='flex' default)
@@ -203,11 +253,13 @@ runStructured(callSite, vars?, opts?)  /  generate(request)
  13. return LlmResult
   (any throw → classify → telemetry.onError + log 'llm.call.error' + record status + rethrow LlmError)
 ```
+
 Canonical log events (identical across hosts): `llm.call.start` / `.success` / `.error`.
 
 ### Config resolution & call sites (`callsite.ts`)
+
 ```ts
-defineCallSite({ id, model, schema, system, userTemplate, config })   // model is a plain string (one-line swap)
+defineCallSite({ id, model, schema, system, userTemplate, config }) // model is a plain string (one-line swap)
 // resolution: libDefaults → callSite.config → opts.config  (deep-merge; per-call wins)
 // v1 keeps this runtime-validated (no compile-time ConfigFor<M> — that machinery was cut).
 ```
@@ -215,6 +267,7 @@ defineCallSite({ id, model, schema, system, userTemplate, config })   // model i
 ---
 
 ## Cost model (`cost.ts`) — Gemini, correct by construction
+
 ```
 billableInput  = inputTokens - (cachedInputTokens ?? 0)      // GROSS→net
 output+thinking = outputTokens                                // thinking already inside outputTokens
@@ -223,6 +276,7 @@ microUsd = round( billableInput   * inputRate(model, inputTokens)     // inputRa
                 + outputTokens     * outputRate(model) )
 details = { input, cached, output }   // thinking billed at output rate (folded into output)
 ```
+
 - Pricing table is a frozen snapshot with a `pricingVersion` string (e.g. `gemini-2026-06-27`).
 - Long-context tier: Gemini Pro charges a premium above 200k input tokens — `inputRate` selects by
   total `inputTokens`. (Flash-lite is flat; encode per-model.)
@@ -232,34 +286,47 @@ details = { input, cached, output }   // thinking billed at output rate (folded 
 ---
 
 ## Persisted record (`record.ts`) + reference schema (`@gullabs/drizzle`)
+
 ```ts
 export interface LlmCallRecord {
   recordSchemaVersion: 1
-  callId: string; attemptId: string
+  callId: string
+  attemptId: string
   callSiteId?: string
-  provider: string; model: string; modelVersion?: string; responseId?: string
+  provider: string
+  model: string
+  modelVersion?: string
+  responseId?: string
   serviceTier?: string
   // status aligns with LlmErrorKind so postmortems don't collapse distinct failures:
   status: 'ok' | 'parse_error' | 'api_error' | 'timeout' | 'aborted' | 'content_filter'
   finishReason?: FinishReason
   latencyMs: number
   // usage (typed hot fields)
-  inputTokens?: number; outputTokens?: number
-  cachedInputTokens?: number; thinkingTokens?: number; totalTokens?: number
+  inputTokens?: number
+  outputTokens?: number
+  cachedInputTokens?: number
+  thinkingTokens?: number
+  totalTokens?: number
   // cost (frozen)
-  costMicroUsd?: number | null; pricingVersion?: string
+  costMicroUsd?: number | null
+  pricingVersion?: string
   // forward-compat lanes (jsonb)
-  tokenDetails: JsonValue; rawUsage: JsonValue; providerMetadata?: JsonValue
+  tokenDetails: JsonValue
+  rawUsage: JsonValue
+  providerMetadata?: JsonValue
   warnings?: JsonValue
-  generationConfig: JsonValue          // what we actually sent (transport keys stripped)
+  generationConfig: JsonValue // what we actually sent (transport keys stripped)
   // thinking capture (goal 3): summary text when includeThoughts was requested
-  reasoningText?: string               // truncated to a cap; null when not requested/returned
+  reasoningText?: string // truncated to a cap; null when not requested/returned
   // postmortem
-  errorKind?: LlmErrorKind; errorMessage?: string   // truncated; diagnostics on failure
-  metadata: JsonValue                  // host anchors
-  createdAt: string                    // Clock-stamped
+  errorKind?: LlmErrorKind
+  errorMessage?: string // truncated; diagnostics on failure
+  metadata: JsonValue // host anchors
+  createdAt: string // Clock-stamped
 }
 ```
+
 `@gullabs/drizzle` ships the matching `pgTable('llm_calls', …)` (typed columns + jsonb lanes) and
 `drizzleUsageSink(db, table)`. Idempotency: insert `onConflictDoNothing` on `attemptId`.
 Core imports no ORM; a host with a different store implements `UsageSink` directly.
@@ -267,6 +334,7 @@ Core imports no ORM; a host with a different store implements `UsageSink` direct
 ---
 
 ## Gemini adapter (`@gullabs/google`)
+
 - `geminiAdapter(): ProviderAdapter` over `@google/genai` (peerDep), API-key + Vertex-WIF auth.
 - Maps: `serviceTier:'flex'` → Gemini Flex; `reasoning` → `thinkingConfig` (budget for 2.5, level for
   3.x) with a `reasoning-mapping` warning when lossy; `output.schema` → `responseSchema`
@@ -281,6 +349,7 @@ Core imports no ORM; a host with a different store implements `UsageSink` direct
 ---
 
 ## Testing strategy (`@gullabs/testing` + per-package suites) — NO real Gemini calls
+
 - **Fakes:** `FakeClock`, `FakeIds`, `RecordingSink` (captures records), `fakeGemini` (a stub
   `@google/genai` client returning scripted responses incl. usageMetadata with thoughtsTokenCount).
 - **Unit:** cost math (GROSS/net, >200k tier, cached discount, unknown-model→null); error
@@ -304,13 +373,15 @@ Core imports no ORM; a host with a different store implements `UsageSink` direct
 ---
 
 ## Build milestones (deliverables) — order validated by codex sign-off (testing pulled forward)
+
 M0 scaffold · **M1** core types+errors+record · **M2** testing fakes (FakeClock/Ids/RecordingSink/
 fakeGemini) · **M3** cost+pricing · **M4** engine+callsite · **M5** google adapter · **M6** drizzle
 sink + surface-stress/fuzz · **M7** docs+example. Each code milestone: code + tests +
 `/codex:adversarial-review` sign-off before the next.
 
 ### Codex sign-off (gpt-5.4, 2026-06-27) — addressed
-Blocking issues fixed in this spec: (1) thinking *capture* now explicit — usage always + thought
+
+Blocking issues fixed in this spec: (1) thinking _capture_ now explicit — usage always + thought
 text when `includeThoughts` (`reasoningText` on result/adapter/record); (2) `Cost.details` is
 `{input,cached,output}` and MUST sum to `microUsd` (thinking billed inside output, no separate lane);
 (3) record `status` aligned to failure modes (+`content_filter`,`aborted`); (4) `responseId` persisted.

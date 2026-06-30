@@ -144,9 +144,7 @@ describe('retryMiddleware — overall timeout (FIX 1)', () => {
 
     // Either 'timeout' (pre-attempt check) or 'rate_limited' (post-attempt check)
     // proves the budget is enforced; both are valid depending on exact timing.
-    await expect(
-      mw.intercept(makeReq(300), makeCtx(), handler),
-    ).rejects.toMatchObject({
+    await expect(mw.intercept(makeReq(300), makeCtx(), handler)).rejects.toMatchObject({
       kind: expect.stringMatching(/^(timeout|rate_limited)$/),
     })
 
@@ -295,9 +293,9 @@ describe('retryMiddleware — overall timeout (FIX 1)', () => {
     )
 
     // makeReq() with no timeoutMs arg → no config.timeoutMs
-    await expect(
-      mw.intercept(makeReq(), makeCtx(), handler),
-    ).rejects.toMatchObject({ kind: 'rate_limited' })
+    await expect(mw.intercept(makeReq(), makeCtx(), handler)).rejects.toMatchObject({
+      kind: 'rate_limited',
+    })
 
     expect(attemptCount).toBe(3) // exactly maxAttempts attempts
     expect(sleepCalls).toHaveLength(2) // 2 sleeps between 3 attempts
@@ -332,7 +330,10 @@ describe('retryMiddleware — overall timeout (FIX 1)', () => {
     }
 
     const reqWithNoTimeout = makeReq() // no timeoutMs
-    const mw = retryMiddleware({ maxAttempts: 1 }, { sleep: async () => {}, random: () => 0 })
+    const mw = retryMiddleware(
+      { maxAttempts: 1 },
+      { sleep: async () => {}, random: () => 0 },
+    )
 
     await mw.intercept(reqWithNoTimeout, makeCtx(), handler).catch(() => {})
     expect(receivedTimeoutMs).toBeUndefined()

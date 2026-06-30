@@ -9,18 +9,9 @@
 
 import { describe, it, expect } from 'vitest'
 import { z } from 'zod'
-import {
-  createClient,
-  defineCallSite,
-  geminiPricingSource,
-} from './index.js'
+import { createClient, defineCallSite, geminiPricingSource } from './index.js'
 import type { AdapterResult, Usage } from './index.js'
-import {
-  FakeAdapter,
-  FakeClock,
-  FakeIds,
-  RecordingSink,
-} from '@gullabs/testing'
+import { FakeAdapter, FakeClock, FakeIds, RecordingSink } from '@gullabs/testing'
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -237,10 +228,14 @@ describe('runStructured — config resolution', () => {
 
     const cs = defineCallSite({ id: 'meta', model: 'gemini-2.5-flash' })
 
-    await client.runStructured(cs, {}, {
-      auth: TEST_AUTH,
-      metadata: { tenantId: 'org-1', runId: 'run-42' },
-    })
+    await client.runStructured(
+      cs,
+      {},
+      {
+        auth: TEST_AUTH,
+        metadata: { tenantId: 'org-1', runId: 'run-42' },
+      },
+    )
 
     expect(sink.last()!.metadata).toEqual({ tenantId: 'org-1', runId: 'run-42' })
   })

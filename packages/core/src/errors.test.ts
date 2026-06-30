@@ -3,11 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import {
-  classifyHttpStatus,
-  classifyError,
-  LlmError,
-} from './errors.js'
+import { classifyHttpStatus, classifyError, LlmError } from './errors.js'
 import type { LlmErrorKind } from './errors.js'
 
 // ---------------------------------------------------------------------------
@@ -54,9 +50,10 @@ describe('classifyHttpStatus', () => {
   ]
 
   for (const row of table) {
-    const label = row.retryAfterMs !== undefined
-      ? `status=${row.status} retryAfterMs=${row.retryAfterMs}`
-      : `status=${row.status}`
+    const label =
+      row.retryAfterMs !== undefined
+        ? `status=${row.status} retryAfterMs=${row.retryAfterMs}`
+        : `status=${row.status}`
 
     it(label, () => {
       const result = classifyHttpStatus(row.status, row.retryAfterMs)
@@ -221,7 +218,7 @@ describe('classifyError', () => {
 
   it('extracts retryAfterMs from Headers.get() interface', () => {
     const headers = {
-      get: (key: string) => key === 'retry-after' ? '10' : null,
+      get: (key: string) => (key === 'retry-after' ? '10' : null),
     }
     const result = classifyError({ status: 429, headers })
     expect(result.kind).toBe('rate_limited')

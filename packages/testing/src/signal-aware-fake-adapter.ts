@@ -159,7 +159,9 @@ export class SignalAwareFakeAdapter implements ProviderAdapter {
                 reject(abortErr)
               })
             })
-            .catch(() => { /* settled flag prevents double-rejection */ })
+            .catch(() => {
+              /* settled flag prevents double-rejection */
+            })
         }
       }
 

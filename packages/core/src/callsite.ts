@@ -96,6 +96,8 @@ export interface CallSite<S extends StandardSchemaV1 = StandardSchemaV1> {
  * })
  * ```
  */
-export function defineCallSite<S extends StandardSchemaV1>(opts: CallSite<S>): CallSite<S> {
+export function defineCallSite<S extends StandardSchemaV1>(
+  opts: CallSite<S>,
+): CallSite<S> {
   return opts
 }

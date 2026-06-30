@@ -50,8 +50,14 @@ describe('inMemoryRateLimiter (core)', () => {
 
     let r3Resolved = false
     let r4Resolved = false
-    const p3 = limiter.acquire('key').then((r) => { r3Resolved = true; return r })
-    const p4 = limiter.acquire('key').then((r) => { r4Resolved = true; return r })
+    const p3 = limiter.acquire('key').then((r) => {
+      r3Resolved = true
+      return r
+    })
+    const p4 = limiter.acquire('key').then((r) => {
+      r4Resolved = true
+      return r
+    })
 
     await Promise.resolve()
     expect(r3Resolved).toBe(false)
@@ -89,9 +95,7 @@ describe('inMemoryRateLimiter (core)', () => {
     const controller = new AbortController()
     controller.abort(new Error('cancelled'))
 
-    await expect(
-      limiter.acquire('key', controller.signal),
-    ).rejects.toThrow()
+    await expect(limiter.acquire('key', controller.signal)).rejects.toThrow()
 
     release()
   })

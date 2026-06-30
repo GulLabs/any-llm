@@ -27,10 +27,7 @@ import type {
  * - Plain object (e.g. `{ status: 429 }`): thrown as-is; `classifyError`
  *   extracts the HTTP status for classification.
  */
-export type FakeAdapterEntry =
-  | AdapterResult
-  | Error
-  | Record<string, unknown>
+export type FakeAdapterEntry = AdapterResult | Error | Record<string, unknown>
 
 /**
  * Internal discriminated-union queue entry.
@@ -146,4 +143,3 @@ export class FakeAdapter implements ProviderAdapter {
     throw entry.error
   }
 }
-

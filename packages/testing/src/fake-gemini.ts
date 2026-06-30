@@ -141,7 +141,9 @@ export interface FakeGeminiResponseOpts {
  * })
  * ```
  */
-export function fakeGeminiResponse(opts: FakeGeminiResponseOpts = {}): GeminiResponseLike {
+export function fakeGeminiResponse(
+  opts: FakeGeminiResponseOpts = {},
+): GeminiResponseLike {
   // Build the parts array in thought → main order.
   const parts: GeminiPartLike[] = []
   if (opts.thoughtText !== undefined) {
@@ -156,7 +158,9 @@ export function fakeGeminiResponse(opts: FakeGeminiResponseOpts = {}): GeminiRes
   const candidate: GeminiCandidateLike = {
     content: { parts },
     ...(opts.finishReason !== undefined ? { finishReason: opts.finishReason } : {}),
-    ...(opts.groundingMetadata !== undefined ? { groundingMetadata: opts.groundingMetadata } : {}),
+    ...(opts.groundingMetadata !== undefined
+      ? { groundingMetadata: opts.groundingMetadata }
+      : {}),
   }
 
   // Build usage metadata — only include defined fields to satisfy
@@ -321,7 +325,9 @@ export function makeFakeGemini(script: GeminiScript): FakeGeminiClient {
       const response = script[callIndex]
       if (response === undefined) {
         throw new RangeError(
-          `makeFakeGemini: script exhausted after ${callIndex} call(s); no response for call ${callIndex + 1}`,
+          `makeFakeGemini: script exhausted after ${callIndex} call(s); no response for call ${
+            callIndex + 1
+          }`,
         )
       }
       callIndex += 1

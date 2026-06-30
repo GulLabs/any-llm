@@ -23,10 +23,18 @@
 export { geminiAdapter } from './adapter.js'
 export type { GeminiAdapterOptions } from './adapter.js'
 export type { GeminiClientLike } from './client.js'
-export { buildGoogleClient, FLEX_DEFAULT_TIMEOUT_MS, TRANSPORT_TIMEOUT_BUFFER_MS } from './client.js'
+export {
+  buildGoogleClient,
+  FLEX_DEFAULT_TIMEOUT_MS,
+  TRANSPORT_TIMEOUT_BUFFER_MS,
+} from './client.js'
 export { zodToGeminiSchema } from './schema.js'
 export type { GeminiSchema } from './schema.js'
-export type { GoogleFileHandle, GoogleFileStoreOptions, GeminiFilesClientLike } from './file-store.js'
+export type {
+  GoogleFileHandle,
+  GoogleFileStoreOptions,
+  GeminiFilesClientLike,
+} from './file-store.js'
 export { GoogleFileStore } from './file-store.js'
 export type {
   GoogleCacheHandle,

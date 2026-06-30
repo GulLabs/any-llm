@@ -16,11 +16,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import {
-  createClient,
-  geminiPricingSource,
-  LlmError,
-} from './index.js'
+import { createClient, geminiPricingSource, LlmError } from './index.js'
 import { retryMiddleware } from './retry.js'
 import type {
   Middleware,
@@ -48,7 +44,9 @@ const GOOD_USAGE: Usage = {
 const PRICING = geminiPricingSource()
 const TEST_AUTH = { apiKey: 'test-key' }
 const MODEL = 'gemini-2.5-flash'
-const MESSAGES = [{ role: 'user' as const, parts: [{ kind: 'text' as const, text: 'Hi' }] }]
+const MESSAGES = [
+  { role: 'user' as const, parts: [{ kind: 'text' as const, text: 'Hi' }] },
+]
 
 function makeSuccessResult(): AdapterResult {
   return { text: 'ok', usage: GOOD_USAGE, model: MODEL, warnings: [] }
@@ -65,8 +63,12 @@ describe('attemptId reconcile — middleware throws before next()', () => {
     const errorEvents: CallErrorEvent[] = []
 
     const telemetry: Telemetry = {
-      onStart(e) { startEvents.push(e) },
-      onError(e) { errorEvents.push(e) },
+      onStart(e) {
+        startEvents.push(e)
+      },
+      onError(e) {
+        errorEvents.push(e)
+      },
     }
 
     // Middleware that throws WITHOUT calling next().
@@ -82,7 +84,9 @@ describe('attemptId reconcile — middleware throws before next()', () => {
 
     const successAdapter: ProviderAdapter = {
       id: 'google',
-      async run(): Promise<AdapterResult> { return makeSuccessResult() },
+      async run(): Promise<AdapterResult> {
+        return makeSuccessResult()
+      },
     }
 
     const client = createClient({
@@ -136,12 +140,16 @@ describe('attemptId reconcile — normal success', () => {
     const sink = new RecordingSink()
     const successEvents: CallSuccessEvent[] = []
     const telemetry: Telemetry = {
-      onSuccess(e) { successEvents.push(e) },
+      onSuccess(e) {
+        successEvents.push(e)
+      },
     }
 
     const adapter: ProviderAdapter = {
       id: 'google',
-      async run(): Promise<AdapterResult> { return makeSuccessResult() },
+      async run(): Promise<AdapterResult> {
+        return makeSuccessResult()
+      },
     }
 
     const client = createClient({
@@ -153,7 +161,10 @@ describe('attemptId reconcile — normal success', () => {
       telemetry,
     })
 
-    const result = await client.generate({ model: MODEL, messages: MESSAGES }, { auth: TEST_AUTH })
+    const result = await client.generate(
+      { model: MODEL, messages: MESSAGES },
+      { auth: TEST_AUTH },
+    )
 
     // Exactly one record.
     expect(sink.records).toHaveLength(1)
@@ -199,7 +210,10 @@ describe('attemptId reconcile — retry-then-success', () => {
       middleware: [retryMiddleware({ maxAttempts: 3 }, { sleep: async () => {} })],
     })
 
-    const result = await client.generate({ model: MODEL, messages: MESSAGES }, { auth: TEST_AUTH })
+    const result = await client.generate(
+      { model: MODEL, messages: MESSAGES },
+      { auth: TEST_AUTH },
+    )
 
     // Two records: error attempt, then success attempt.
     expect(sink.records).toHaveLength(2)
@@ -227,7 +241,9 @@ describe('attemptId reconcile — retries exhausted', () => {
     const sink = new RecordingSink()
     const errorEvents: CallErrorEvent[] = []
     const telemetry: Telemetry = {
-      onError(e) { errorEvents.push(e) },
+      onError(e) {
+        errorEvents.push(e)
+      },
     }
 
     const adapter: ProviderAdapter = {

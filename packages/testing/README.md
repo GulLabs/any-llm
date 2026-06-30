@@ -4,16 +4,16 @@ Reusable test fakes for any-llm. Lets you drive the full engine pipeline — inc
 
 ## Key exports
 
-| Export | What it is |
-|---|---|
-| `FakeClock` | Deterministic `Clock` — `advance(ms)` / `set(ms)` for latency assertions |
-| `FakeIds` | Sequential `IdGenerator` — returns `call_1`, `attempt_1`, etc. |
-| `RecordingSink` | In-memory `UsageSink` — accumulates records; inspect via `sink.records` / `sink.last()` |
-| `makeFakeGemini(script)` | Creates a fake `@google/genai`-compatible client from a scripted response |
-| `fakeGeminiResponse(opts)` | Builds a `GeminiResponseLike` with usage metadata, thought parts, and JSON output |
-| `fakeGeminiBlocked(opts)` | Builds a safety-blocked `GeminiResponseLike` (no candidates, `promptFeedback.blockReason` set) |
-| `FakeAdapter` | Scriptable `ProviderAdapter` — use at the port level (bypasses Gemini SDK entirely) |
-| `SignalAwareFakeAdapter` | Like `FakeAdapter` but observes and honours `AbortSignal` from `AdapterCtx` |
+| Export                     | What it is                                                                                     |
+| -------------------------- | ---------------------------------------------------------------------------------------------- |
+| `FakeClock`                | Deterministic `Clock` — `advance(ms)` / `set(ms)` for latency assertions                       |
+| `FakeIds`                  | Sequential `IdGenerator` — returns `call_1`, `attempt_1`, etc.                                 |
+| `RecordingSink`            | In-memory `UsageSink` — accumulates records; inspect via `sink.records` / `sink.last()`        |
+| `makeFakeGemini(script)`   | Creates a fake `@google/genai`-compatible client from a scripted response                      |
+| `fakeGeminiResponse(opts)` | Builds a `GeminiResponseLike` with usage metadata, thought parts, and JSON output              |
+| `fakeGeminiBlocked(opts)`  | Builds a safety-blocked `GeminiResponseLike` (no candidates, `promptFeedback.blockReason` set) |
+| `FakeAdapter`              | Scriptable `ProviderAdapter` — use at the port level (bypasses Gemini SDK entirely)            |
+| `SignalAwareFakeAdapter`   | Like `FakeAdapter` but observes and honours `AbortSignal` from `AdapterCtx`                    |
 
 ## Quick example — end-to-end with fake Gemini client
 
@@ -22,8 +22,11 @@ import { z } from 'zod'
 import { createClient, geminiPricingSource, defineCallSite } from '@gullabs/core'
 import { geminiAdapter } from '@gullabs/google'
 import {
-  FakeClock, FakeIds, RecordingSink,
-  fakeGeminiResponse, makeFakeGemini,
+  FakeClock,
+  FakeIds,
+  RecordingSink,
+  fakeGeminiResponse,
+  makeFakeGemini,
 } from '@gullabs/testing'
 
 const fakeClient = makeFakeGemini(

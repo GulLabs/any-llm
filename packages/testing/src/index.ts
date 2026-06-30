@@ -18,11 +18,7 @@ export { FakeClock } from './clock.js'
 export { FakeIds } from './ids.js'
 export { RecordingSink } from './recording-sink.js'
 export type { RecordingSinkOptions } from './recording-sink.js'
-export {
-  fakeGeminiResponse,
-  fakeGeminiBlocked,
-  makeFakeGemini,
-} from './fake-gemini.js'
+export { fakeGeminiResponse, fakeGeminiBlocked, makeFakeGemini } from './fake-gemini.js'
 export type {
   GeminiPartLike,
   GeminiContentLike,

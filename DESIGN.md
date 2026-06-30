@@ -18,6 +18,7 @@ given its ports.
 
 **P2 — Typed core + raw passthrough + raw capture.**
 Every place where providers diverge has three lanes:
+
 - A **typed lane** for common, well-understood options and fields (first-class, validated).
 - A **raw passthrough lane** (`providerOptions`) that adapters forward verbatim to the raw SDK —
   so a brand-new request parameter works the day a provider ships it with no core change.
@@ -125,8 +126,9 @@ should check this field before deserializing records written by an older or newe
 Gemini 2.5 series models use `thinkingConfig.thinkingBudget` (a token budget integer). Gemini 3.x
 series models use `thinkingConfig.thinkingLevel` (an enum: `MINIMAL | LOW | MEDIUM | HIGH`). The
 adapter branches on `req.modelDescriptor?.capabilities?.reasoningApi`:
+
 - `'budget'` → map `effort` to the `EFFORT_BUDGET` table (`none: 0, low: 1024, medium: 8192,
-  high: 24576`); `budgetTokens` overrides `effort` directly.
+high: 24576`); `budgetTokens` overrides `effort` directly.
 - `'level'` → map `effort` to `MINIMAL / LOW / MEDIUM / HIGH`; `budgetTokens` is unsupported
   and emits a `reasoning-mapping` warning.
 - `undefined` → emit an `unsupported` reasoning-mapping warning; do not set `thinkingConfig`.
@@ -193,6 +195,7 @@ recursively so a per-call override can set a single sub-key without replacing th
 Arrays and scalar values within those objects use last-write-wins.
 
 Resolution order:
+
 - `generate`: `libDefaults → request.config`
 - `runStructured`: `libDefaults → callSite.config → opts.config`
 
@@ -267,9 +270,9 @@ dependencies, to avoid duplicate instances in the host's dependency tree.
 
 Packages:
 
-| Package | Role |
-|---|---|
-| `@gullabs/core` | Engine, types, ports, retry middleware, model registry, record builder, pricing. No provider SDK imports. |
-| `@gullabs/google` | Gemini adapter over `@google/genai`. |
-| `@gullabs/drizzle` | Reference Postgres schema (`llm_calls` table) and `drizzleUsageSink`. |
-| `@gullabs/testing` | `FakeClock`, `FakeIds`, `RecordingSink`, `makeFakeGemini`. No network in tests. |
+| Package            | Role                                                                                                      |
+| ------------------ | --------------------------------------------------------------------------------------------------------- |
+| `@gullabs/core`    | Engine, types, ports, retry middleware, model registry, record builder, pricing. No provider SDK imports. |
+| `@gullabs/google`  | Gemini adapter over `@google/genai`.                                                                      |
+| `@gullabs/drizzle` | Reference Postgres schema (`llm_calls` table) and `drizzleUsageSink`.                                     |
+| `@gullabs/testing` | `FakeClock`, `FakeIds`, `RecordingSink`, `makeFakeGemini`. No network in tests.                           |

@@ -18,17 +18,17 @@ describe('FakeIds', () => {
 
   it('call and attempt counters are independent', () => {
     const ids = new FakeIds()
-    ids.callId()            // call_1
-    ids.attemptId()         // attempt_1
-    ids.attemptId()         // attempt_2
+    ids.callId() // call_1
+    ids.attemptId() // attempt_1
+    ids.attemptId() // attempt_2
     expect(ids.callId()).toBe('call_2')
     expect(ids.attemptId()).toBe('attempt_3')
   })
 
   it('reset() restarts both sequences from 1', () => {
     const ids = new FakeIds()
-    ids.callId()    // call_1
-    ids.callId()    // call_2
+    ids.callId() // call_1
+    ids.callId() // call_2
     ids.attemptId() // attempt_1
     ids.reset()
     expect(ids.callId()).toBe('call_1')

@@ -75,7 +75,10 @@ describe('no-ambient-auth: no process.env in source files', () => {
       }
     }
 
-    expect(violations, `process.env found in core source files:\n${violations.join('\n')}`).toHaveLength(0)
+    expect(
+      violations,
+      `process.env found in core source files:\n${violations.join('\n')}`,
+    ).toHaveLength(0)
   })
 
   it('packages/google/src — no non-test source file reads process.env', () => {
@@ -93,7 +96,10 @@ describe('no-ambient-auth: no process.env in source files', () => {
       }
     }
 
-    expect(violations, `process.env found in google source files:\n${violations.join('\n')}`).toHaveLength(0)
+    expect(
+      violations,
+      `process.env found in google source files:\n${violations.join('\n')}`,
+    ).toHaveLength(0)
   })
 })
 
@@ -152,12 +158,19 @@ describe('no-ambient-auth: removed symbols absent from @gullabs/core public expo
       }
       // Also catch direct named-export forms: `export const envAuth = ...`
       // or `export function AuthProvider` etc.
-      if (new RegExp(`^export\\s+(?:const|let|var|function|class|type|interface)\\s+${name}\\b`, 'm').test(source)) {
+      if (
+        new RegExp(
+          `^export\\s+(?:const|let|var|function|class|type|interface)\\s+${name}\\b`,
+          'm',
+        ).test(source)
+      ) {
         violations.push(`direct export of ${name}`)
       }
       expect(
         violations,
-        `packages/core/src/index.ts must not export '${name}' in any form (value or type):\n${violations.join('\n')}`,
+        `packages/core/src/index.ts must not export '${name}' in any form (value or type):\n${violations.join(
+          '\n',
+        )}`,
       ).toHaveLength(0)
     }
   })

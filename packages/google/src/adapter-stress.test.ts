@@ -18,16 +18,8 @@
 
 import { describe, it, expect } from 'vitest'
 import { z } from 'zod'
-import {
-  LlmError,
-  createClient,
-  geminiPricingSource,
-} from '@gullabs/core'
-import type {
-  ResolvedRequest,
-  AdapterCtx,
-  FinishReason,
-} from '@gullabs/core'
+import { LlmError, createClient, geminiPricingSource } from '@gullabs/core'
+import type { ResolvedRequest, AdapterCtx, FinishReason } from '@gullabs/core'
 import {
   fakeGeminiResponse,
   fakeGeminiBlocked,
@@ -36,10 +28,7 @@ import {
   FakeIds,
   RecordingSink,
 } from '@gullabs/testing'
-import type {
-  GeminiResponseLike,
-  GeminiUsageMetadataLike,
-} from '@gullabs/testing'
+import type { GeminiResponseLike, GeminiUsageMetadataLike } from '@gullabs/testing'
 import { geminiAdapter } from './adapter.js'
 
 // ---------------------------------------------------------------------------
@@ -62,7 +51,9 @@ function mulberry32(seed: number): () => number {
 
 const PRICING = geminiPricingSource()
 const TEST_AUTH = { apiKey: 'test-key' }
-const MESSAGES = [{ role: 'user' as const, parts: [{ kind: 'text' as const, text: 'Hi' }] }]
+const MESSAGES = [
+  { role: 'user' as const, parts: [{ kind: 'text' as const, text: 'Hi' }] },
+]
 
 /** Minimal resolved request for direct adapter.run() tests. */
 function makeReq(overrides: Partial<ResolvedRequest> = {}): ResolvedRequest {
@@ -92,10 +83,12 @@ describe('adapter-stress: malformed usageMetadata — GROSS rule', () => {
       const promptTokenCount = Math.floor(rand() * 5_000) + 1
 
       const fakeClient = makeFakeGemini({
-        candidates: [{
-          content: { parts: [{ text: 'hello' }] },
-          finishReason: 'STOP',
-        }],
+        candidates: [
+          {
+            content: { parts: [{ text: 'hello' }] },
+            finishReason: 'STOP',
+          },
+        ],
         usageMetadata: { promptTokenCount },
       } satisfies GeminiResponseLike)
 
@@ -120,10 +113,12 @@ describe('adapter-stress: malformed usageMetadata — GROSS rule', () => {
       const thoughtsTokenCount = Math.floor(rand() * 3_000) + 1
 
       const fakeClient = makeFakeGemini({
-        candidates: [{
-          content: { parts: [{ text: 'hi', thought: false }] },
-          finishReason: 'STOP',
-        }],
+        candidates: [
+          {
+            content: { parts: [{ text: 'hi', thought: false }] },
+            finishReason: 'STOP',
+          },
+        ],
         usageMetadata: { thoughtsTokenCount },
       } satisfies GeminiResponseLike)
 
@@ -143,10 +138,12 @@ describe('adapter-stress: malformed usageMetadata — GROSS rule', () => {
   it('all usageMetadata fields missing → all token counts default to 0 (15 iterations)', async () => {
     for (let i = 0; i < 15; i++) {
       const fakeClient = makeFakeGemini({
-        candidates: [{
-          content: { parts: [{ text: 'hello' }] },
-          finishReason: 'STOP',
-        }],
+        candidates: [
+          {
+            content: { parts: [{ text: 'hello' }] },
+            finishReason: 'STOP',
+          },
+        ],
         // usageMetadata entirely absent
       } satisfies GeminiResponseLike)
 
@@ -168,9 +165,8 @@ describe('adapter-stress: malformed usageMetadata — GROSS rule', () => {
       const promptTokenCount = Math.floor(rand() * 10_000)
       const candidatesTokenCount = Math.floor(rand() * 5_000)
       const thoughtsTokenCount = rand() > 0.4 ? Math.floor(rand() * 3_000) : undefined
-      const cachedContentTokenCount = rand() > 0.5
-        ? Math.floor(rand() * Math.max(1, promptTokenCount))
-        : undefined
+      const cachedContentTokenCount =
+        rand() > 0.5 ? Math.floor(rand() * Math.max(1, promptTokenCount)) : undefined
 
       const usageMetadata: GeminiUsageMetadataLike = {
         ...(promptTokenCount !== undefined ? { promptTokenCount } : {}),
@@ -180,10 +176,12 @@ describe('adapter-stress: malformed usageMetadata — GROSS rule', () => {
       }
 
       const fakeClient = makeFakeGemini({
-        candidates: [{
-          content: { parts: [{ text: 'ok' }] },
-          finishReason: 'STOP',
-        }],
+        candidates: [
+          {
+            content: { parts: [{ text: 'ok' }] },
+            finishReason: 'STOP',
+          },
+        ],
         usageMetadata,
       } satisfies GeminiResponseLike)
 
@@ -218,12 +216,7 @@ describe('adapter-stress: malformed usageMetadata — GROSS rule', () => {
   })
 
   it('huge token count values — mapping never throws (30 iterations)', async () => {
-    const HUGE_VALS = [
-      Number.MAX_SAFE_INTEGER,
-      2 ** 32 - 1,
-      1_000_000_000,
-      999_999_999,
-    ]
+    const HUGE_VALS = [Number.MAX_SAFE_INTEGER, 2 ** 32 - 1, 1_000_000_000, 999_999_999]
     const rand = mulberry32(0x55667788)
 
     for (let i = 0; i < 30; i++) {
@@ -233,10 +226,12 @@ describe('adapter-stress: malformed usageMetadata — GROSS rule', () => {
       const promptTokenCount = pick()
 
       const fakeClient = makeFakeGemini({
-        candidates: [{
-          content: { parts: [{ text: 'big' }] },
-          finishReason: 'STOP',
-        }],
+        candidates: [
+          {
+            content: { parts: [{ text: 'big' }] },
+            finishReason: 'STOP',
+          },
+        ],
         usageMetadata: { promptTokenCount, candidatesTokenCount, thoughtsTokenCount },
       } satisfies GeminiResponseLike)
 
@@ -354,13 +349,20 @@ describe('adapter-stress: finishReason mapping', () => {
       const adapter = geminiAdapter({ client: fakeClient })
       const result = await adapter.run(makeReq(), FAKE_CTX)
 
-      expect(result.finishReason, `${rawReason} should map to ${expectedMapped}`).toBe(expectedMapped)
+      expect(result.finishReason, `${rawReason} should map to ${expectedMapped}`).toBe(
+        expectedMapped,
+      )
     }
   })
 
   it('unknown finishReason strings → mapped to other (20 iterations)', async () => {
     const rand = mulberry32(0xabcdef01)
-    const VALID_FINISH_REASONS: FinishReason[] = ['stop', 'length', 'content_filter', 'other']
+    const VALID_FINISH_REASONS: FinishReason[] = [
+      'stop',
+      'length',
+      'content_filter',
+      'other',
+    ]
 
     for (let i = 0; i < 20; i++) {
       const rawReason = UNKNOWN_REASONS[Math.floor(rand() * UNKNOWN_REASONS.length)]!
@@ -391,10 +393,12 @@ describe('adapter-stress: finishReason mapping', () => {
 
   it('undefined finishReason → finishReason absent on result', async () => {
     const fakeClient = makeFakeGemini({
-      candidates: [{
-        content: { parts: [{ text: 'ok' }] },
-        // finishReason absent
-      }],
+      candidates: [
+        {
+          content: { parts: [{ text: 'ok' }] },
+          // finishReason absent
+        },
+      ],
       usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
     } satisfies GeminiResponseLike)
 
@@ -417,15 +421,17 @@ describe('adapter-stress: thought-only parts', () => {
       const thoughtContent = `thought text ${i} ${'x'.repeat(Math.floor(rand() * 20))}`
 
       const fakeClient = makeFakeGemini({
-        candidates: [{
-          content: {
-            parts: [
-              { text: thoughtContent, thought: true },
-              // No non-thought parts
-            ],
+        candidates: [
+          {
+            content: {
+              parts: [
+                { text: thoughtContent, thought: true },
+                // No non-thought parts
+              ],
+            },
+            finishReason: 'STOP',
           },
-          finishReason: 'STOP',
-        }],
+        ],
         usageMetadata: {
           promptTokenCount: 10,
           candidatesTokenCount: 0,
@@ -437,7 +443,9 @@ describe('adapter-stress: thought-only parts', () => {
       const result = await adapter.run(makeReq(), FAKE_CTX)
 
       // reasoningText present (from thought part)
-      expect(result.reasoningText, `iter ${i}: reasoningText should be present`).toBe(thoughtContent)
+      expect(result.reasoningText, `iter ${i}: reasoningText should be present`).toBe(
+        thoughtContent,
+      )
       // text absent (no non-thought text parts)
       expect(result.text).toBeUndefined()
     }
@@ -473,10 +481,12 @@ describe('adapter-stress: empty parts', () => {
   it('empty parts array → no text, no reasoningText, no throw (10 iterations)', async () => {
     for (let i = 0; i < 10; i++) {
       const fakeClient = makeFakeGemini({
-        candidates: [{
-          content: { parts: [] },
-          finishReason: 'STOP',
-        }],
+        candidates: [
+          {
+            content: { parts: [] },
+            finishReason: 'STOP',
+          },
+        ],
         usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 0 },
       } satisfies GeminiResponseLike)
 
@@ -490,10 +500,12 @@ describe('adapter-stress: empty parts', () => {
 
   it('content.parts absent → no text, no throw', async () => {
     const fakeClient = makeFakeGemini({
-      candidates: [{
-        content: {}, // parts field absent
-        finishReason: 'STOP',
-      }],
+      candidates: [
+        {
+          content: {}, // parts field absent
+          finishReason: 'STOP',
+        },
+      ],
       usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 0 },
     } satisfies GeminiResponseLike)
 
@@ -506,10 +518,12 @@ describe('adapter-stress: empty parts', () => {
 
   it('content absent → no text, no throw', async () => {
     const fakeClient = makeFakeGemini({
-      candidates: [{
-        // content field absent
-        finishReason: 'STOP',
-      }],
+      candidates: [
+        {
+          // content field absent
+          finishReason: 'STOP',
+        },
+      ],
       usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 0 },
     } satisfies GeminiResponseLike)
 
@@ -522,15 +536,17 @@ describe('adapter-stress: empty parts', () => {
 
   it('part with text=undefined → skipped without throw', async () => {
     const fakeClient = makeFakeGemini({
-      candidates: [{
-        content: {
-          parts: [
-            {}, // text field absent
-            { text: 'visible' },
-          ],
+      candidates: [
+        {
+          content: {
+            parts: [
+              {}, // text field absent
+              { text: 'visible' },
+            ],
+          },
+          finishReason: 'STOP',
         },
-        finishReason: 'STOP',
-      }],
+      ],
       usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 5 },
     } satisfies GeminiResponseLike)
 
@@ -553,7 +569,7 @@ describe('adapter-stress: non-JSON text + structured output → parse_error', ()
     '{ "key": }',
     '<xml>nope</xml>',
     'true extra', // valid JSON prefix but trailing garbage
-    '',            // empty string → JSON.parse('') throws
+    '', // empty string → JSON.parse('') throws
   ]
 
   it('non-JSON text with schema → engine LlmError parse_error (via full pipeline)', async () => {
@@ -582,11 +598,14 @@ describe('adapter-stress: non-JSON text + structured output → parse_error', ()
       })
 
       await expect(
-        client.generate({
-          model: 'gemini-2.5-pro',
-          messages: MESSAGES,
-          output: { schema },
-        }, { auth: TEST_AUTH }),
+        client.generate(
+          {
+            model: 'gemini-2.5-pro',
+            messages: MESSAGES,
+            output: { schema },
+          },
+          { auth: TEST_AUTH },
+        ),
       ).rejects.toMatchObject({ kind: 'parse_error', retryable: false })
 
       const rec = sink.last()!
@@ -602,7 +621,11 @@ describe('adapter-stress: non-JSON text + structured output → parse_error', ()
 
   it('adapter leaves rawStructured undefined when JSON.parse fails', async () => {
     const fakeClient = makeFakeGemini(
-      fakeGeminiResponse({ text: 'not json', promptTokenCount: 5, candidatesTokenCount: 3 }),
+      fakeGeminiResponse({
+        text: 'not json',
+        promptTokenCount: 5,
+        candidatesTokenCount: 3,
+      }),
     )
 
     const adapter = geminiAdapter({ client: fakeClient })
@@ -637,14 +660,20 @@ describe('adapter-stress: non-JSON text + structured output → parse_error', ()
       const sink = new RecordingSink()
       const client = createClient({
         adapters: [geminiAdapter({ client: fakeClient })],
-        pricing: PRICING, sink,
-        clock: new FakeClock(), ids: new FakeIds(),
+        pricing: PRICING,
+        sink,
+        clock: new FakeClock(),
+        ids: new FakeIds(),
       })
 
-      const result = await client.generate({
-        model: 'gemini-2.5-pro', messages: MESSAGES,
-        output: { schema },
-      }, { auth: TEST_AUTH })
+      const result = await client.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: MESSAGES,
+          output: { schema },
+        },
+        { auth: TEST_AUTH },
+      )
 
       expect(result.output).toEqual({ answer })
       expect(sink.last()!.status).toBe('ok')
@@ -664,17 +693,41 @@ describe('adapter-stress: injected HTTP errors → correct classification', () =
   }
 
   const ERROR_CASES: ErrorMapping[] = [
-    { throwValue: { status: 401 }, expectedKind: 'invalid_auth', expectedRetryable: false },
-    { throwValue: { status: 403 }, expectedKind: 'invalid_auth', expectedRetryable: false },
+    {
+      throwValue: { status: 401 },
+      expectedKind: 'invalid_auth',
+      expectedRetryable: false,
+    },
+    {
+      throwValue: { status: 403 },
+      expectedKind: 'invalid_auth',
+      expectedRetryable: false,
+    },
     { throwValue: { status: 408 }, expectedKind: 'timeout', expectedRetryable: true },
-    { throwValue: { status: 429 }, expectedKind: 'rate_limited', expectedRetryable: true },
-    { throwValue: { status: 400 }, expectedKind: 'bad_request', expectedRetryable: false },
+    {
+      throwValue: { status: 429 },
+      expectedKind: 'rate_limited',
+      expectedRetryable: true,
+    },
+    {
+      throwValue: { status: 400 },
+      expectedKind: 'bad_request',
+      expectedRetryable: false,
+    },
     { throwValue: { status: 500 }, expectedKind: 'server', expectedRetryable: true },
     { throwValue: { status: 503 }, expectedKind: 'server', expectedRetryable: true },
     { throwValue: { status: 502 }, expectedKind: 'server', expectedRetryable: true },
     // Nested response.status format (some SDK versions use this)
-    { throwValue: { response: { status: 429 } }, expectedKind: 'rate_limited', expectedRetryable: true },
-    { throwValue: { response: { status: 401 } }, expectedKind: 'invalid_auth', expectedRetryable: false },
+    {
+      throwValue: { response: { status: 429 } },
+      expectedKind: 'rate_limited',
+      expectedRetryable: true,
+    },
+    {
+      throwValue: { response: { status: 401 } },
+      expectedKind: 'invalid_auth',
+      expectedRetryable: false,
+    },
     // LlmError passed through unchanged (already classified)
     {
       throwValue: new LlmError('already classified', { kind: 'server', retryable: true }),
@@ -682,7 +735,11 @@ describe('adapter-stress: injected HTTP errors → correct classification', () =
       expectedRetryable: true,
     },
     // Error instance without status → 'unknown'
-    { throwValue: new Error('plain error'), expectedKind: 'unknown', expectedRetryable: false },
+    {
+      throwValue: new Error('plain error'),
+      expectedKind: 'unknown',
+      expectedRetryable: false,
+    },
   ]
 
   it('each error type is classified to the expected LlmErrorKind', async () => {
@@ -697,7 +754,10 @@ describe('adapter-stress: injected HTTP errors → correct classification', () =
         (e: unknown) => e,
       )
 
-      expect(caught, `throwValue=${JSON.stringify(throwValue)}: must throw LlmError`).toBeInstanceOf(LlmError)
+      expect(
+        caught,
+        `throwValue=${JSON.stringify(throwValue)}: must throw LlmError`,
+      ).toBeInstanceOf(LlmError)
       const err = caught as LlmError
       expect(
         err.kind,
@@ -705,7 +765,9 @@ describe('adapter-stress: injected HTTP errors → correct classification', () =
       ).toBe(expectedKind)
       expect(
         err.retryable,
-        `throwValue=${JSON.stringify(throwValue)}: retryable must be ${String(expectedRetryable)}`,
+        `throwValue=${JSON.stringify(throwValue)}: retryable must be ${String(
+          expectedRetryable,
+        )}`,
       ).toBe(expectedRetryable)
       // Provider tag must be attached
       expect(err.provider).toBe('google')
@@ -715,7 +777,7 @@ describe('adapter-stress: injected HTTP errors → correct classification', () =
   it('429 with retryAfterMs → retryAfterMs forwarded (3 cases)', async () => {
     const RETRY_CASES = [
       { retryAfterMs: 5_000 },
-      { retryAfter: 10 },     // treated as seconds → 10_000 ms
+      { retryAfter: 10 }, // treated as seconds → 10_000 ms
     ]
 
     for (const extra of RETRY_CASES) {
@@ -724,7 +786,10 @@ describe('adapter-stress: injected HTTP errors → correct classification', () =
       })
 
       const adapter = geminiAdapter({ client: fakeClient })
-      const caught = await adapter.run(makeReq(), FAKE_CTX).then(() => null, (e: unknown) => e)
+      const caught = await adapter.run(makeReq(), FAKE_CTX).then(
+        () => null,
+        (e: unknown) => e,
+      )
 
       expect(caught).toBeInstanceOf(LlmError)
       const err = caught as LlmError
@@ -748,14 +813,22 @@ describe('adapter-stress: injected HTTP errors → correct classification', () =
       const sink = new RecordingSink()
       const client = createClient({
         adapters: [geminiAdapter({ client: fakeClient })],
-        pricing: PRICING, sink,
-        clock: new FakeClock(), ids: new FakeIds(),
+        pricing: PRICING,
+        sink,
+        clock: new FakeClock(),
+        ids: new FakeIds(),
       })
 
-      const caught = await client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES }, { auth: TEST_AUTH })
-        .then(() => null, (e: unknown) => e)
+      const caught = await client
+        .generate({ model: 'gemini-2.5-pro', messages: MESSAGES }, { auth: TEST_AUTH })
+        .then(
+          () => null,
+          (e: unknown) => e,
+        )
 
-      expect(caught, `iter ${i} (status ${status}): must be LlmError`).toBeInstanceOf(LlmError)
+      expect(caught, `iter ${i} (status ${status}): must be LlmError`).toBeInstanceOf(
+        LlmError,
+      )
       expect(sink.records).toHaveLength(1)
       expect(sink.last()!.errorKind).toBeDefined()
     }

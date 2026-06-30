@@ -152,7 +152,9 @@ export function createModelRegistry(descriptors: ModelDescriptor[]): ModelRegist
  *
  * Typed as {@link JsonValue} — no schema library required.
  */
-export function makeGeminiConfigSchema(opts: { sampling: 'tunable' | 'fixed' }): JsonValue {
+export function makeGeminiConfigSchema(opts: {
+  sampling: 'tunable' | 'fixed'
+}): JsonValue {
   const samplingProps: { [k: string]: JsonValue } =
     opts.sampling === 'tunable'
       ? {
@@ -383,4 +385,5 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
  * Pre-built registry for all known Gemini models.
  * Used by default in {@link createClient} when no `modelRegistry` is supplied.
  */
-export const defaultGeminiRegistry: ModelRegistry = createModelRegistry(geminiModelDescriptors)
+export const defaultGeminiRegistry: ModelRegistry =
+  createModelRegistry(geminiModelDescriptors)

@@ -17,31 +17,31 @@ Port interfaces you implement: `ProviderAdapter`, `UsageSink`, `PricingSource`, 
 ## Quick example
 
 ```ts
-import { createClient, geminiPricingSource, defineCallSite } from "@gullabs/core";
-import { z } from "zod";
+import { createClient, geminiPricingSource, defineCallSite } from '@gullabs/core'
+import { z } from 'zod'
 
 const client = createClient({
   adapters: [myAdapter],
   pricing: geminiPricingSource(),
   sink: mySink,
-});
+})
 
 const callSite = defineCallSite({
-  id: "summarise",
-  model: "gemini-2.5-flash",
+  id: 'summarise',
+  model: 'gemini-2.5-flash',
   schema: z.object({ summary: z.string() }),
-  userTemplate: "Summarise: {{text}}",
+  userTemplate: 'Summarise: {{text}}',
   config: { reasoning: { includeThoughts: true } },
-});
+})
 
 // Auth is required per call — never read from the environment.
 const result = await client.runStructured(
   callSite,
-  { text: "hello world" },
+  { text: 'hello world' },
   {
-    auth: { apiKey: "YOUR_KEY" },
-  }
-);
+    auth: { apiKey: 'YOUR_KEY' },
+  },
+)
 // result.output   — Zod-validated
 // result.usage    — { inputTokens, outputTokens, thinkingTokens, cachedInputTokens }
 // result.cost     — { microUsd, pricingVersion, details: { input, cached, output } }
@@ -56,13 +56,13 @@ Inject a pino-compatible structured logger via `ClientConfig.logger`. The `Logge
 object-first `(o, m)` signature:
 
 ```ts
-import pino from "pino";
+import pino from 'pino'
 
 const client = createClient({
   adapters: [myAdapter],
   pricing: geminiPricingSource(),
   logger: pino(),
-});
+})
 ```
 
 Four levels: `debug`, `info`, `warn`, `error`. Engine events:

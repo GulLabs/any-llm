@@ -11,12 +11,7 @@ import { computeBackoffMs, retryMiddleware } from './retry.js'
 import { createClient, geminiPricingSource } from './index.js'
 import type { Handler, EngineCtx, ResolvedRequest } from './ports.js'
 import type { LlmResult, Usage } from './types.js'
-import {
-  FakeAdapter,
-  FakeClock,
-  FakeIds,
-  RecordingSink,
-} from '@gullabs/testing'
+import { FakeAdapter, FakeClock, FakeIds, RecordingSink } from '@gullabs/testing'
 
 // ---------------------------------------------------------------------------
 // Shared test fixtures
@@ -95,9 +90,9 @@ describe('computeBackoffMs', () => {
     const d1 = computeBackoffMs(1, policy, undefined, () => 1)
     const d2 = computeBackoffMs(2, policy, undefined, () => 1)
     const d3 = computeBackoffMs(3, policy, undefined, () => 1)
-    expect(d1).toBe(500)          // 500 * 2^0 * 1
-    expect(d2).toBe(1_000)        // 500 * 2^1 * 1
-    expect(d3).toBe(2_000)        // 500 * 2^2 * 1
+    expect(d1).toBe(500) // 500 * 2^0 * 1
+    expect(d2).toBe(1_000) // 500 * 2^1 * 1
+    expect(d3).toBe(2_000) // 500 * 2^2 * 1
   })
 
   it('caps at maxDelayMs when exponential exceeds it', () => {
@@ -133,7 +128,12 @@ describe('computeBackoffMs', () => {
   })
 
   it('attempt=1 produces baseDelayMs as the ceiling (with rand=1)', () => {
-    const d = computeBackoffMs(1, { baseDelayMs: 200, maxDelayMs: 5_000 }, undefined, () => 1)
+    const d = computeBackoffMs(
+      1,
+      { baseDelayMs: 200, maxDelayMs: 5_000 },
+      undefined,
+      () => 1,
+    )
     expect(d).toBe(200)
   })
 })
@@ -167,8 +167,9 @@ describe('retryMiddleware', () => {
 
     const mw = retryMiddleware({ maxAttempts: 3 }, { sleep: NO_SLEEP, random: () => 0 })
 
-    await expect(mw.intercept(makeReq(), makeCtx(), handler))
-      .rejects.toMatchObject({ kind: 'rate_limited' })
+    await expect(mw.intercept(makeReq(), makeCtx(), handler)).rejects.toMatchObject({
+      kind: 'rate_limited',
+    })
 
     expect(calls).toBe(3) // maxAttempts=3 → 3 total calls
   })
@@ -182,8 +183,9 @@ describe('retryMiddleware', () => {
 
     const mw = retryMiddleware({ maxAttempts: 3 }, { sleep: NO_SLEEP, random: () => 1 })
 
-    await expect(mw.intercept(makeReq(), makeCtx(), handler))
-      .rejects.toMatchObject({ kind: 'bad_request' })
+    await expect(mw.intercept(makeReq(), makeCtx(), handler)).rejects.toMatchObject({
+      kind: 'bad_request',
+    })
 
     expect(calls).toBe(1) // no retry
   })
@@ -200,15 +202,18 @@ describe('retryMiddleware', () => {
       { sleep: NO_SLEEP, random: () => 1 },
     )
 
-    await expect(mw.intercept(makeReq(), makeCtx(), handler))
-      .rejects.toMatchObject({ kind: 'aborted' })
+    await expect(mw.intercept(makeReq(), makeCtx(), handler)).rejects.toMatchObject({
+      kind: 'aborted',
+    })
 
     expect(calls).toBe(1) // abort is always terminal
   })
 
   it('honors retryAfterMs in the back-off computation', async () => {
     const sleepCalls: number[] = []
-    const customSleep = async (ms: number): Promise<void> => { sleepCalls.push(ms) }
+    const customSleep = async (ms: number): Promise<void> => {
+      sleepCalls.push(ms)
+    }
 
     let calls = 0
     const handler: Handler = async () => {
@@ -217,7 +222,10 @@ describe('retryMiddleware', () => {
       return DUMMY_RESULT
     }
 
-    const mw = retryMiddleware({ maxAttempts: 2 }, { sleep: customSleep, random: () => 0.5 })
+    const mw = retryMiddleware(
+      { maxAttempts: 2 },
+      { sleep: customSleep, random: () => 0.5 },
+    )
     await mw.intercept(makeReq(), makeCtx(), handler)
 
     expect(sleepCalls).toHaveLength(1)
@@ -226,7 +234,9 @@ describe('retryMiddleware', () => {
 
   it('retryAfterMs is capped at maxDelayMs', async () => {
     const sleepCalls: number[] = []
-    const customSleep = async (ms: number): Promise<void> => { sleepCalls.push(ms) }
+    const customSleep = async (ms: number): Promise<void> => {
+      sleepCalls.push(ms)
+    }
 
     let calls = 0
     const handler: Handler = async () => {
@@ -320,10 +330,13 @@ describe('engine + middleware — integration', () => {
       // no middleware
     })
 
-    const result = await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    }, { auth: TEST_AUTH })
+    const result = await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
 
     expect(result.text).toBe('Hello!')
     expect(sink.records).toHaveLength(1)
@@ -349,8 +362,8 @@ describe('engine + middleware — integration', () => {
 
   it('retry middleware: N attempts → N records, same callId, distinct attemptIds', async () => {
     const adapter = new FakeAdapter('google', [
-      { status: 429 },       // attempt 1 → rate_limited
-      makeSuccessResult(),   // attempt 2 → ok
+      { status: 429 }, // attempt 1 → rate_limited
+      makeSuccessResult(), // attempt 2 → ok
     ])
     const sink = new RecordingSink()
     const ids = new FakeIds()
@@ -362,17 +375,17 @@ describe('engine + middleware — integration', () => {
       clock: new FakeClock(),
       ids,
       middleware: [
-        retryMiddleware(
-          { maxAttempts: 2 },
-          { sleep: NO_SLEEP, random: () => 0 },
-        ),
+        retryMiddleware({ maxAttempts: 2 }, { sleep: NO_SLEEP, random: () => 0 }),
       ],
     })
 
-    await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    }, { auth: TEST_AUTH })
+    await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
 
     // Two records: one error attempt, one ok attempt
     expect(sink.records).toHaveLength(2)
@@ -403,18 +416,18 @@ describe('engine + middleware — integration', () => {
       clock: new FakeClock(),
       ids,
       middleware: [
-        retryMiddleware(
-          { maxAttempts: 3 },
-          { sleep: NO_SLEEP, random: () => 0 },
-        ),
+        retryMiddleware({ maxAttempts: 3 }, { sleep: NO_SLEEP, random: () => 0 }),
       ],
     })
 
     await expect(
-      client.generate({
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      }, { auth: TEST_AUTH }),
+      client.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+        },
+        { auth: TEST_AUTH },
+      ),
     ).rejects.toMatchObject({ kind: 'rate_limited' })
 
     // 3 records (one per attempt), all with the same callId
@@ -446,20 +459,28 @@ describe('engine + middleware — integration', () => {
       clock: new FakeClock(),
       ids: new FakeIds(),
       telemetry: {
-        onStart: (e) => { starts.push(e); return 'span' },
-        onSuccess: (e, span) => { successes.push({ ...e, span }) },
+        onStart: (e) => {
+          starts.push(e)
+          return 'span'
+        },
+        onSuccess: (e, span) => {
+          successes.push({ ...e, span })
+        },
       },
       middleware: [
         retryMiddleware({ maxAttempts: 3 }, { sleep: NO_SLEEP, random: () => 0 }),
       ],
     })
 
-    await client.generate({
-      model: 'gemini-2.5-pro',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    }, { auth: TEST_AUTH })
+    await client.generate(
+      {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
 
-    expect(starts).toHaveLength(1)    // ONE onStart per logical call
+    expect(starts).toHaveLength(1) // ONE onStart per logical call
     expect(successes).toHaveLength(1) // ONE onSuccess after chain settles
     expect((successes[0]! as { span: unknown }).span).toBe('span')
   })

@@ -22,12 +22,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { z } from 'zod'
-import {
-  createClient,
-  geminiPricingSource,
-  LlmError,
-  computeCost,
-} from './index.js'
+import { createClient, geminiPricingSource, LlmError, computeCost } from './index.js'
 import type {
   AdapterResult,
   ProviderAdapter,
@@ -45,7 +40,7 @@ import {
   FakeClock,
   FakeIds,
   RecordingSink,
-  SignalAwareFakeAdapter
+  SignalAwareFakeAdapter,
 } from '@gullabs/testing'
 
 // ---------------------------------------------------------------------------
@@ -69,7 +64,9 @@ function mulberry32(seed: number): () => number {
 
 const PRICING = geminiPricingSource()
 const TEST_AUTH = { apiKey: 'test-key' }
-const MESSAGES = [{ role: 'user' as const, parts: [{ kind: 'text' as const, text: 'Hi' }] }]
+const MESSAGES = [
+  { role: 'user' as const, parts: [{ kind: 'text' as const, text: 'Hi' }] },
+]
 
 /** Build a minimal valid AdapterResult for happy-path use. */
 function makeOkResult(overrides?: Partial<AdapterResult>): AdapterResult {
@@ -100,9 +97,7 @@ class RawThrowAdapter implements ProviderAdapter {
 
   constructor(
     id: string,
-    action:
-      | { kind: 'ok'; result: AdapterResult }
-      | { kind: 'throw'; value: unknown },
+    action: { kind: 'ok'; result: AdapterResult } | { kind: 'throw'; value: unknown },
   ) {
     this.id = id
     this._action = action
@@ -124,11 +119,15 @@ describe('surface-stress: only LlmErrors escape + record always written', () => 
    * Matrix of adapter behaviors.
    * Each entry pairs a label with a factory for the RawThrowAdapter action.
    */
-  type BehaviorFactory = () => {
-    kind: 'ok'; result: AdapterResult
-  } | {
-    kind: 'throw'; value: unknown
-  }
+  type BehaviorFactory = () =>
+    | {
+        kind: 'ok'
+        result: AdapterResult
+      }
+    | {
+        kind: 'throw'
+        value: unknown
+      }
 
   const BEHAVIORS: Array<[string, BehaviorFactory]> = [
     ['ok-result', () => ({ kind: 'ok', result: makeOkResult() })],
@@ -143,18 +142,27 @@ describe('surface-stress: only LlmErrors escape + record always written', () => 
     ['throw-string', () => ({ kind: 'throw', value: 'raw string error' })],
     ['throw-null', () => ({ kind: 'throw', value: null })],
     ['throw-undefined', () => ({ kind: 'throw', value: undefined })],
-    ['throw-LlmError', () => ({
-      kind: 'throw' as const,
-      value: new LlmError('pre-classified', { kind: 'server', retryable: true }),
-    })],
-    ['throw-number', () => ({ kind: 'throw', value: 42 })],
-    ['throw-nested-status', () => ({ kind: 'throw', value: { response: { status: 429 } } })],
-    ['ok-with-warnings', () => ({
-      kind: 'ok' as const,
-      result: makeOkResult({
-        warnings: [{ type: 'other', message: 'test warning' }],
+    [
+      'throw-LlmError',
+      () => ({
+        kind: 'throw' as const,
+        value: new LlmError('pre-classified', { kind: 'server', retryable: true }),
       }),
-    })],
+    ],
+    ['throw-number', () => ({ kind: 'throw', value: 42 })],
+    [
+      'throw-nested-status',
+      () => ({ kind: 'throw', value: { response: { status: 429 } } }),
+    ],
+    [
+      'ok-with-warnings',
+      () => ({
+        kind: 'ok' as const,
+        result: makeOkResult({
+          warnings: [{ type: 'other', message: 'test warning' }],
+        }),
+      }),
+    ],
   ]
 
   it('every behavior: either resolves LlmResult or rejects instanceof LlmError (150 iterations)', async () => {
@@ -182,7 +190,10 @@ describe('surface-stress: only LlmErrors escape + record always written', () => 
       let rejectedValue: unknown
 
       try {
-        await client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES }, { auth: TEST_AUTH })
+        await client.generate(
+          { model: 'gemini-2.5-pro', messages: MESSAGES },
+          { auth: TEST_AUTH },
+        )
         resolved = true
       } catch (e) {
         rejected = true
@@ -191,19 +202,31 @@ describe('surface-stress: only LlmErrors escape + record always written', () => 
 
       // Either resolved OR rejected — not neither, not both.
       expect(resolved || rejected, `iter ${i} (${label}): must settle`).toBe(true)
-      expect(resolved && rejected, `iter ${i} (${label}): cannot both resolve and reject`).toBe(false)
+      expect(
+        resolved && rejected,
+        `iter ${i} (${label}): cannot both resolve and reject`,
+      ).toBe(false)
 
       if (rejected) {
         // INVARIANT 1: rejection must be instanceof LlmError
         expect(
           rejectedValue instanceof LlmError,
-          `iter ${i} (${label}): rejection must be LlmError, got ${String(rejectedValue)}`,
+          `iter ${i} (${label}): rejection must be LlmError, got ${String(
+            rejectedValue,
+          )}`,
         ).toBe(true)
         const err = rejectedValue as LlmError
         // LlmError must have a valid kind
         const VALID_KINDS = [
-          'invalid_auth', 'rate_limited', 'server', 'timeout', 'aborted',
-          'bad_request', 'content_filter', 'parse_error', 'unknown',
+          'invalid_auth',
+          'rate_limited',
+          'server',
+          'timeout',
+          'aborted',
+          'bad_request',
+          'content_filter',
+          'parse_error',
+          'unknown',
         ] as const
         expect(
           (VALID_KINDS as readonly string[]).includes(err.kind),
@@ -212,10 +235,9 @@ describe('surface-stress: only LlmErrors escape + record always written', () => 
       }
 
       // INVARIANT 2: exactly one record always written
-      expect(
-        sink.records.length,
-        `iter ${i} (${label}): expected exactly 1 record`,
-      ).toBe(1)
+      expect(sink.records.length, `iter ${i} (${label}): expected exactly 1 record`).toBe(
+        1,
+      )
 
       const rec = sink.last()!
       expect(rec.recordSchemaVersion).toBe(1)
@@ -226,7 +248,14 @@ describe('surface-stress: only LlmErrors escape + record always written', () => 
         expect(rec.errorKind).toBe((rejectedValue as LlmError).kind)
         expect(typeof rec.errorMessage).toBe('string')
         // status reflects errorKind
-        const VALID_STATUSES = ['ok', 'parse_error', 'api_error', 'timeout', 'aborted', 'content_filter']
+        const VALID_STATUSES = [
+          'ok',
+          'parse_error',
+          'api_error',
+          'timeout',
+          'aborted',
+          'content_filter',
+        ]
         expect(VALID_STATUSES).toContain(rec.status)
       } else if (resolved) {
         expect(rec.status).toBe('ok')
@@ -244,7 +273,7 @@ describe('surface-stress: malformed usage', () => {
     const rand = mulberry32(0xdeadbeef)
 
     for (let i = 0; i < 50; i++) {
-      const input = Math.floor(rand() * 1000) + 1      // 1–1000
+      const input = Math.floor(rand() * 1000) + 1 // 1–1000
       const cached = input + Math.floor(rand() * 500) + 1 // > input
 
       const usage: Usage = {
@@ -255,14 +284,23 @@ describe('surface-stress: malformed usage', () => {
         raw: null,
       }
 
-      const adapter = new RawThrowAdapter('google', { kind: 'ok', result: makeOkResult({ usage }) })
+      const adapter = new RawThrowAdapter('google', {
+        kind: 'ok',
+        result: makeOkResult({ usage }),
+      })
       const sink = new RecordingSink()
       const client = createClient({
-        adapters: [adapter], pricing: PRICING, sink,
-        clock: new FakeClock(), ids: new FakeIds(),
+        adapters: [adapter],
+        pricing: PRICING,
+        sink,
+        clock: new FakeClock(),
+        ids: new FakeIds(),
       })
 
-      const result = await client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES }, { auth: TEST_AUTH })
+      const result = await client.generate(
+        { model: 'gemini-2.5-pro', messages: MESSAGES },
+        { auth: TEST_AUTH },
+      )
 
       // Clamped: cachedInputTokens must not exceed inputTokens
       expect(
@@ -275,7 +313,9 @@ describe('surface-stress: malformed usage', () => {
         (w): w is Warning & { type: 'other' } =>
           w.type === 'other' && w.message.includes('cachedInputTokens'),
       )
-      expect(hasClampWarn, `iter ${i}: expected a cachedInputTokens clamp warning`).toBe(true)
+      expect(hasClampWarn, `iter ${i}: expected a cachedInputTokens clamp warning`).toBe(
+        true,
+      )
 
       // Record persists
       expect(sink.records).toHaveLength(1)
@@ -283,7 +323,10 @@ describe('surface-stress: malformed usage', () => {
 
       // Cost sum invariant
       if (result.cost !== undefined && result.cost.microUsd !== null) {
-        const sum = result.cost.details.input + result.cost.details.cached + result.cost.details.output
+        const sum =
+          result.cost.details.input +
+          result.cost.details.cached +
+          result.cost.details.output
         expect(sum).toBe(result.cost.microUsd)
       }
     }
@@ -304,14 +347,23 @@ describe('surface-stress: malformed usage', () => {
         raw: null,
       }
 
-      const adapter = new RawThrowAdapter('google', { kind: 'ok', result: makeOkResult({ usage }) })
+      const adapter = new RawThrowAdapter('google', {
+        kind: 'ok',
+        result: makeOkResult({ usage }),
+      })
       const sink = new RecordingSink()
       const client = createClient({
-        adapters: [adapter], pricing: PRICING, sink,
-        clock: new FakeClock(), ids: new FakeIds(),
+        adapters: [adapter],
+        pricing: PRICING,
+        sink,
+        clock: new FakeClock(),
+        ids: new FakeIds(),
       })
 
-      const result = await client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES }, { auth: TEST_AUTH })
+      const result = await client.generate(
+        { model: 'gemini-2.5-pro', messages: MESSAGES },
+        { auth: TEST_AUTH },
+      )
 
       // Clamped
       expect(
@@ -332,7 +384,10 @@ describe('surface-stress: malformed usage', () => {
 
       // Cost sum invariant
       if (result.cost !== undefined && result.cost.microUsd !== null) {
-        const sum = result.cost.details.input + result.cost.details.cached + result.cost.details.output
+        const sum =
+          result.cost.details.input +
+          result.cost.details.cached +
+          result.cost.details.output
         expect(sum).toBe(result.cost.microUsd)
       }
     }
@@ -346,12 +401,21 @@ describe('surface-stress: malformed usage', () => {
     // is not semantically meaningful and not called out in the SPEC; MAX_SAFE_INTEGER is the
     // stated example. Non-finite values (NaN, ±Infinity) are clamped to 0 by sanitizeUsage.
     const ADVERSARIAL_INPUTS: number[] = [
-      NaN, -Infinity, +Infinity, -1, -100, -999_999,
-      Number.MAX_SAFE_INTEGER, 0, 1, 500,
+      NaN,
+      -Infinity,
+      +Infinity,
+      -1,
+      -100,
+      -999_999,
+      Number.MAX_SAFE_INTEGER,
+      0,
+      1,
+      500,
     ]
 
     for (let i = 0; i < 60; i++) {
-      const pickInput = () => ADVERSARIAL_INPUTS[Math.floor(rand() * ADVERSARIAL_INPUTS.length)]!
+      const pickInput = () =>
+        ADVERSARIAL_INPUTS[Math.floor(rand() * ADVERSARIAL_INPUTS.length)]!
       const usage = {
         inputTokens: pickInput(),
         outputTokens: pickInput(),
@@ -362,16 +426,25 @@ describe('surface-stress: malformed usage', () => {
         raw: null,
       } as unknown as Usage
 
-      const adapter = new RawThrowAdapter('google', { kind: 'ok', result: makeOkResult({ usage }) })
+      const adapter = new RawThrowAdapter('google', {
+        kind: 'ok',
+        result: makeOkResult({ usage }),
+      })
       const sink = new RecordingSink()
       const client = createClient({
-        adapters: [adapter], pricing: PRICING, sink,
-        clock: new FakeClock(), ids: new FakeIds(),
+        adapters: [adapter],
+        pricing: PRICING,
+        sink,
+        clock: new FakeClock(),
+        ids: new FakeIds(),
       })
 
       // Engine must resolve (not throw) for malformed usage — fail-open per spec.
       // Use direct await: if generate() rejects, Vitest will catch and fail the test.
-      const result = await client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES }, { auth: TEST_AUTH })
+      const result = await client.generate(
+        { model: 'gemini-2.5-pro', messages: MESSAGES },
+        { auth: TEST_AUTH },
+      )
 
       // Record always persists
       expect(sink.records, `iter ${i}: record must be written`).toHaveLength(1)
@@ -379,25 +452,47 @@ describe('surface-stress: malformed usage', () => {
 
       // Cost sum invariant — must hold after clamping
       if (result.cost !== undefined && result.cost.microUsd !== null) {
-        const sum = result.cost.details.input + result.cost.details.cached + result.cost.details.output
-        expect(
-          sum,
-          `iter ${i}: sum(details) must equal microUsd`,
-        ).toBe(result.cost.microUsd)
+        const sum =
+          result.cost.details.input +
+          result.cost.details.cached +
+          result.cost.details.output
+        expect(sum, `iter ${i}: sum(details) must equal microUsd`).toBe(
+          result.cost.microUsd,
+        )
       }
 
       // All normalized token counts must be non-negative finite numbers
-      expect(Number.isFinite(result.usage.inputTokens), `iter ${i}: inputTokens must be finite`).toBe(true)
-      expect(result.usage.inputTokens, `iter ${i}: inputTokens must be non-negative`).toBeGreaterThanOrEqual(0)
-      expect(Number.isFinite(result.usage.outputTokens), `iter ${i}: outputTokens must be finite`).toBe(true)
-      expect(result.usage.outputTokens, `iter ${i}: outputTokens must be non-negative`).toBeGreaterThanOrEqual(0)
+      expect(
+        Number.isFinite(result.usage.inputTokens),
+        `iter ${i}: inputTokens must be finite`,
+      ).toBe(true)
+      expect(
+        result.usage.inputTokens,
+        `iter ${i}: inputTokens must be non-negative`,
+      ).toBeGreaterThanOrEqual(0)
+      expect(
+        Number.isFinite(result.usage.outputTokens),
+        `iter ${i}: outputTokens must be finite`,
+      ).toBe(true)
+      expect(
+        result.usage.outputTokens,
+        `iter ${i}: outputTokens must be non-negative`,
+      ).toBeGreaterThanOrEqual(0)
       if (result.usage.cachedInputTokens !== undefined) {
-        expect(Number.isFinite(result.usage.cachedInputTokens), `iter ${i}: cachedInputTokens must be finite`).toBe(true)
+        expect(
+          Number.isFinite(result.usage.cachedInputTokens),
+          `iter ${i}: cachedInputTokens must be finite`,
+        ).toBe(true)
         expect(result.usage.cachedInputTokens).toBeGreaterThanOrEqual(0)
-        expect(result.usage.cachedInputTokens).toBeLessThanOrEqual(result.usage.inputTokens)
+        expect(result.usage.cachedInputTokens).toBeLessThanOrEqual(
+          result.usage.inputTokens,
+        )
       }
       if (result.usage.thinkingTokens !== undefined) {
-        expect(Number.isFinite(result.usage.thinkingTokens), `iter ${i}: thinkingTokens must be finite`).toBe(true)
+        expect(
+          Number.isFinite(result.usage.thinkingTokens),
+          `iter ${i}: thinkingTokens must be finite`,
+        ).toBe(true)
         expect(result.usage.thinkingTokens).toBeGreaterThanOrEqual(0)
         expect(result.usage.thinkingTokens).toBeLessThanOrEqual(result.usage.outputTokens)
       }
@@ -414,27 +509,39 @@ describe('surface-stress: malformed usage', () => {
         inputTokens: input,
         outputTokens: output,
         cachedInputTokens: input + 100 + Math.floor(rand() * 100), // > input
-        thinkingTokens: output + 50 + Math.floor(rand() * 100),    // > output
+        thinkingTokens: output + 50 + Math.floor(rand() * 100), // > output
         details: {},
         raw: null,
       }
 
-      const adapter = new RawThrowAdapter('google', { kind: 'ok', result: makeOkResult({ usage }) })
+      const adapter = new RawThrowAdapter('google', {
+        kind: 'ok',
+        result: makeOkResult({ usage }),
+      })
       const sink = new RecordingSink()
       const client = createClient({
-        adapters: [adapter], pricing: PRICING, sink,
-        clock: new FakeClock(), ids: new FakeIds(),
+        adapters: [adapter],
+        pricing: PRICING,
+        sink,
+        clock: new FakeClock(),
+        ids: new FakeIds(),
       })
 
-      const result = await client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES }, { auth: TEST_AUTH })
+      const result = await client.generate(
+        { model: 'gemini-2.5-pro', messages: MESSAGES },
+        { auth: TEST_AUTH },
+      )
 
-      expect((result.usage.cachedInputTokens ?? 0)).toBe(input)
-      expect((result.usage.thinkingTokens ?? 0)).toBe(output)
+      expect(result.usage.cachedInputTokens ?? 0).toBe(input)
+      expect(result.usage.thinkingTokens ?? 0).toBe(output)
       expect(sink.records).toHaveLength(1)
       expect(sink.last()!.status).toBe('ok')
 
       if (result.cost !== undefined && result.cost.microUsd !== null) {
-        const sum = result.cost.details.input + result.cost.details.cached + result.cost.details.output
+        const sum =
+          result.cost.details.input +
+          result.cost.details.cached +
+          result.cost.details.output
         expect(sum).toBe(result.cost.microUsd)
       }
     }
@@ -467,14 +574,23 @@ describe('surface-stress: non-finite values in usage.details and usage.raw', () 
         raw: null,
       }
 
-      const adapter = new RawThrowAdapter('google', { kind: 'ok', result: makeOkResult({ usage }) })
+      const adapter = new RawThrowAdapter('google', {
+        kind: 'ok',
+        result: makeOkResult({ usage }),
+      })
       const sink = new RecordingSink()
       const client = createClient({
-        adapters: [adapter], pricing: PRICING, sink,
-        clock: new FakeClock(), ids: new FakeIds(),
+        adapters: [adapter],
+        pricing: PRICING,
+        sink,
+        clock: new FakeClock(),
+        ids: new FakeIds(),
       })
 
-      await client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES }, { auth: TEST_AUTH })
+      await client.generate(
+        { model: 'gemini-2.5-pro', messages: MESSAGES },
+        { auth: TEST_AUTH },
+      )
 
       const rec = sink.last()!
 
@@ -519,14 +635,23 @@ describe('surface-stress: non-finite values in usage.details and usage.raw', () 
         raw,
       }
 
-      const adapter = new RawThrowAdapter('google', { kind: 'ok', result: makeOkResult({ usage }) })
+      const adapter = new RawThrowAdapter('google', {
+        kind: 'ok',
+        result: makeOkResult({ usage }),
+      })
       const sink = new RecordingSink()
       const client = createClient({
-        adapters: [adapter], pricing: PRICING, sink,
-        clock: new FakeClock(), ids: new FakeIds(),
+        adapters: [adapter],
+        pricing: PRICING,
+        sink,
+        clock: new FakeClock(),
+        ids: new FakeIds(),
       })
 
-      await client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES }, { auth: TEST_AUTH })
+      await client.generate(
+        { model: 'gemini-2.5-pro', messages: MESSAGES },
+        { auth: TEST_AUTH },
+      )
 
       const rec = sink.last()!
 
@@ -543,7 +668,8 @@ describe('surface-stress: non-finite values in usage.details and usage.raw', () 
 
       // Deeply verify no NaN survived into rawUsage.
       function assertNoNaN(value: unknown, path: string): void {
-        if (value === null || typeof value === 'boolean' || typeof value === 'string') return
+        if (value === null || typeof value === 'boolean' || typeof value === 'string')
+          return
         if (typeof value === 'number') {
           expect(
             Number.isFinite(value),
@@ -552,7 +678,9 @@ describe('surface-stress: non-finite values in usage.details and usage.raw', () 
           return
         }
         if (Array.isArray(value)) {
-          value.forEach((item, i) => { assertNoNaN(item, `${path}[${i}]`) })
+          value.forEach((item, i) => {
+            assertNoNaN(item, `${path}[${i}]`)
+          })
           return
         }
         if (typeof value === 'object') {
@@ -582,25 +710,36 @@ describe('surface-stress: non-finite values in usage.details and usage.raw', () 
           output: rand() > 0.5 ? -Infinity : 20,
           extra: rand() > 0.5 ? NaN : 5,
         },
-        raw: rand() > 0.5
-          ? ({ x: NaN, y: { z: Infinity } } as unknown as JsonValue)
-          : null,
+        raw:
+          rand() > 0.5 ? ({ x: NaN, y: { z: Infinity } } as unknown as JsonValue) : null,
       } as unknown as Usage
 
-      const adapter = new RawThrowAdapter('google', { kind: 'ok', result: makeOkResult({ usage }) })
+      const adapter = new RawThrowAdapter('google', {
+        kind: 'ok',
+        result: makeOkResult({ usage }),
+      })
       const sink = new RecordingSink()
       const client = createClient({
-        adapters: [adapter], pricing: PRICING, sink,
-        clock: new FakeClock(), ids: new FakeIds(),
+        adapters: [adapter],
+        pricing: PRICING,
+        sink,
+        clock: new FakeClock(),
+        ids: new FakeIds(),
       })
 
       // Must resolve (never throw) for malformed usage — fail-open per SPEC.
-      await client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES }, { auth: TEST_AUTH })
+      await client.generate(
+        { model: 'gemini-2.5-pro', messages: MESSAGES },
+        { auth: TEST_AUTH },
+      )
 
       const rec = sink.last()!
 
       // Record must be fully JSON-safe.
-      expect(() => JSON.stringify(rec), `iter ${i}: JSON.stringify must not throw`).not.toThrow()
+      expect(
+        () => JSON.stringify(rec),
+        `iter ${i}: JSON.stringify must not throw`,
+      ).not.toThrow()
       const roundTripped = JSON.parse(JSON.stringify(rec)) as typeof rec
       expect(roundTripped.recordSchemaVersion, `iter ${i}: round-trip sanity`).toBe(1)
     }
@@ -619,7 +758,7 @@ describe('surface-stress: cost property', () => {
     'gemini-3.5-flash',
     'gemini-3.1-flash-lite',
     'gemini-3.1-pro-preview',
-    'gemini-2.5-pro-001',   // prefix match → gemini-2.5-pro
+    'gemini-2.5-pro-001', // prefix match → gemini-2.5-pro
   ]
   const UNKNOWN_MODELS = [
     'gpt-4',
@@ -667,7 +806,12 @@ describe('surface-stress: cost property', () => {
       const input = Math.floor(rand() * 10_000) + 1
       const output = Math.floor(rand() * 5_000) + 1
 
-      const usage: Usage = { inputTokens: input, outputTokens: output, details: {}, raw: null }
+      const usage: Usage = {
+        inputTokens: input,
+        outputTokens: output,
+        details: {},
+        raw: null,
+      }
       const cost: Cost = computeCost(model, usage)
 
       expect(cost.microUsd).toBeNull()
@@ -688,10 +832,17 @@ describe('surface-stress: cost property', () => {
       const thinking = Math.floor(rand() * output)
 
       const usageWithThinking: Usage = {
-        inputTokens: input, outputTokens: output, thinkingTokens: thinking, details: {}, raw: null,
+        inputTokens: input,
+        outputTokens: output,
+        thinkingTokens: thinking,
+        details: {},
+        raw: null,
       }
       const usageNoThinking: Usage = {
-        inputTokens: input, outputTokens: output, details: {}, raw: null,
+        inputTokens: input,
+        outputTokens: output,
+        details: {},
+        raw: null,
       }
 
       const costWith = computeCost(model, usageWithThinking)
@@ -704,8 +855,9 @@ describe('surface-stress: cost property', () => {
 
       // Sum invariant
       if (costWith.microUsd !== null) {
-        expect(costWith.details.input + costWith.details.cached + costWith.details.output)
-          .toBe(costWith.microUsd)
+        expect(
+          costWith.details.input + costWith.details.cached + costWith.details.output,
+        ).toBe(costWith.microUsd)
       }
     }
   })
@@ -720,23 +872,41 @@ describe('surface-stress: cost property', () => {
       const thinking = Math.floor(rand() * output)
 
       const usage: Usage = {
-        inputTokens: input, outputTokens: output, cachedInputTokens: cached,
-        thinkingTokens: thinking, details: {}, raw: null,
+        inputTokens: input,
+        outputTokens: output,
+        cachedInputTokens: cached,
+        thinkingTokens: thinking,
+        details: {},
+        raw: null,
       }
 
-      const adapter = new RawThrowAdapter('google', { kind: 'ok', result: makeOkResult({ usage, model }) })
+      const adapter = new RawThrowAdapter('google', {
+        kind: 'ok',
+        result: makeOkResult({ usage, model }),
+      })
       const sink = new RecordingSink()
       const client = createClient({
-        adapters: [adapter], pricing: PRICING, sink,
-        clock: new FakeClock(), ids: new FakeIds(),
+        adapters: [adapter],
+        pricing: PRICING,
+        sink,
+        clock: new FakeClock(),
+        ids: new FakeIds(),
       })
 
-      const result = await client.generate({ model, messages: MESSAGES }, { auth: TEST_AUTH })
+      const result = await client.generate(
+        { model, messages: MESSAGES },
+        { auth: TEST_AUTH },
+      )
 
       expect(result.cost).toBeDefined()
       if (result.cost !== undefined && result.cost.microUsd !== null) {
-        const sum = result.cost.details.input + result.cost.details.cached + result.cost.details.output
-        expect(sum, `iter ${i}: sum(details) must equal microUsd`).toBe(result.cost.microUsd)
+        const sum =
+          result.cost.details.input +
+          result.cost.details.cached +
+          result.cost.details.output
+        expect(sum, `iter ${i}: sum(details) must equal microUsd`).toBe(
+          result.cost.microUsd,
+        )
         // Result cost === record cost (single source of truth)
         expect(sink.last()!.costMicroUsd).toBe(result.cost.microUsd)
       }
@@ -750,20 +920,23 @@ describe('surface-stress: cost property', () => {
 
 describe('surface-stress: fail-open', () => {
   it('throwing sink does not fail the generate call (5 variants)', async () => {
-    const sinkErrors = [
-      true,
-      new Error('sink boom'),
-    ] as const
+    const sinkErrors = [true, new Error('sink boom')] as const
 
     for (const failSpec of sinkErrors) {
       const sink = new RecordingSink({ failOnRecord: failSpec })
       const client = createClient({
-        adapters: [new FakeAdapter('google', makeOkResult())], pricing: PRICING, sink,
-        clock: new FakeClock(), ids: new FakeIds(),
+        adapters: [new FakeAdapter('google', makeOkResult())],
+        pricing: PRICING,
+        sink,
+        clock: new FakeClock(),
+        ids: new FakeIds(),
       })
 
       // Should NOT throw despite the sink failing
-      const result = await client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES }, { auth: TEST_AUTH })
+      const result = await client.generate(
+        { model: 'gemini-2.5-pro', messages: MESSAGES },
+        { auth: TEST_AUTH },
+      )
       expect(result.text).toBe('ok')
       // Sink threw before storing, so no records
       expect(sink.records).toHaveLength(0)
@@ -775,39 +948,61 @@ describe('surface-stress: fail-open', () => {
     const adapter = new FakeAdapter('google', { status: 500 })
 
     const client = createClient({
-      adapters: [adapter], pricing: PRICING, sink,
-      clock: new FakeClock(), ids: new FakeIds(),
+      adapters: [adapter],
+      pricing: PRICING,
+      sink,
+      clock: new FakeClock(),
+      ids: new FakeIds(),
     })
 
     await expect(
-      client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES }, { auth: TEST_AUTH }),
+      client.generate(
+        { model: 'gemini-2.5-pro', messages: MESSAGES },
+        { auth: TEST_AUTH },
+      ),
     ).rejects.toMatchObject({ kind: 'server' })
   })
 
   it('throwing telemetry never fails the call', async () => {
     const throwingTelemetry: Telemetry = {
-      onStart: () => { throw new Error('telemetry start boom') },
-      onSuccess: () => { throw new Error('telemetry success boom') },
-      onError: () => { throw new Error('telemetry error boom') },
+      onStart: () => {
+        throw new Error('telemetry start boom')
+      },
+      onSuccess: () => {
+        throw new Error('telemetry success boom')
+      },
+      onError: () => {
+        throw new Error('telemetry error boom')
+      },
     }
 
     // Success path — telemetry throws in onStart + onSuccess
     const successClient = createClient({
-      adapters: [new FakeAdapter('google', makeOkResult())], pricing: PRICING,
+      adapters: [new FakeAdapter('google', makeOkResult())],
+      pricing: PRICING,
       telemetry: throwingTelemetry,
-      clock: new FakeClock(), ids: new FakeIds(),
+      clock: new FakeClock(),
+      ids: new FakeIds(),
     })
-    const result = await successClient.generate({ model: 'gemini-2.5-pro', messages: MESSAGES }, { auth: TEST_AUTH })
+    const result = await successClient.generate(
+      { model: 'gemini-2.5-pro', messages: MESSAGES },
+      { auth: TEST_AUTH },
+    )
     expect(result.text).toBe('ok')
 
     // Error path — telemetry throws in onStart + onError, error still rethrown
     const failClient = createClient({
-      adapters: [new FakeAdapter('google', { status: 503 })], pricing: PRICING,
+      adapters: [new FakeAdapter('google', { status: 503 })],
+      pricing: PRICING,
       telemetry: throwingTelemetry,
-      clock: new FakeClock(), ids: new FakeIds(),
+      clock: new FakeClock(),
+      ids: new FakeIds(),
     })
     await expect(
-      failClient.generate({ model: 'gemini-2.5-pro', messages: MESSAGES }, { auth: TEST_AUTH }),
+      failClient.generate(
+        { model: 'gemini-2.5-pro', messages: MESSAGES },
+        { auth: TEST_AUTH },
+      ),
     ).rejects.toMatchObject({ kind: 'server' })
   })
 
@@ -821,11 +1016,17 @@ describe('surface-stress: fail-open', () => {
 
     const sink = new RecordingSink()
     const client = createClient({
-      adapters: [new FakeAdapter('google', makeOkResult())], pricing: throwingPricing, sink,
-      clock: new FakeClock(), ids: new FakeIds(),
+      adapters: [new FakeAdapter('google', makeOkResult())],
+      pricing: throwingPricing,
+      sink,
+      clock: new FakeClock(),
+      ids: new FakeIds(),
     })
 
-    const result = await client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES }, { auth: TEST_AUTH })
+    const result = await client.generate(
+      { model: 'gemini-2.5-pro', messages: MESSAGES },
+      { auth: TEST_AUTH },
+    )
     // Cost is absent (pricing failed, fail-open)
     expect(result.cost).toBeUndefined()
     // Call still succeeded
@@ -847,102 +1048,112 @@ describe('surface-stress: fail-open', () => {
 // ---------------------------------------------------------------------------
 
 describe('surface-stress: cancellation', () => {
-  it(
-    'timeoutMs < adapter delay → always classified as timeout (10 iterations)',
-    async () => {
-      const rand = mulberry32(0x33221100)
-      for (let i = 0; i < 10; i++) {
-        const adapterDelayMs = 200 + Math.floor(rand() * 200) // 200–400ms
-        const timeoutMs = 1 + Math.floor(rand() * 20)          // 1–21ms
+  it('timeoutMs < adapter delay → always classified as timeout (10 iterations)', async () => {
+    const rand = mulberry32(0x33221100)
+    for (let i = 0; i < 10; i++) {
+      const adapterDelayMs = 200 + Math.floor(rand() * 200) // 200–400ms
+      const timeoutMs = 1 + Math.floor(rand() * 20) // 1–21ms
 
-        const adapter = new FakeAdapter('google', makeOkResult(), { delayMs: adapterDelayMs })
-        const sink = new RecordingSink()
-        const client = createClient({
-          adapters: [adapter], pricing: PRICING, sink,
-          clock: new FakeClock(), ids: new FakeIds(),
-        })
+      const adapter = new FakeAdapter('google', makeOkResult(), {
+        delayMs: adapterDelayMs,
+      })
+      const sink = new RecordingSink()
+      const client = createClient({
+        adapters: [adapter],
+        pricing: PRICING,
+        sink,
+        clock: new FakeClock(),
+        ids: new FakeIds(),
+      })
 
-        await expect(
-          client.generate({
-            model: 'gemini-2.5-pro', messages: MESSAGES,
+      await expect(
+        client.generate(
+          {
+            model: 'gemini-2.5-pro',
+            messages: MESSAGES,
             config: { timeoutMs },
-          }, { auth: TEST_AUTH }),
-        ).rejects.toMatchObject({ kind: 'timeout', retryable: true })
+          },
+          { auth: TEST_AUTH },
+        ),
+      ).rejects.toMatchObject({ kind: 'timeout', retryable: true })
+
+      const rec = sink.last()!
+      expect(rec.status).toBe('timeout')
+      expect(rec.errorKind).toBe('timeout')
+    }
+  }, 10_000)
+
+  it('caller abort mid-flight → always classified as aborted (10 iterations)', async () => {
+    const rand = mulberry32(0x99887766)
+    for (let i = 0; i < 10; i++) {
+      const adapterDelayMs = 200 + Math.floor(rand() * 100) // 200–300ms
+      const abortAfterMs = 10 + Math.floor(rand() * 30) // 10–40ms
+
+      const adapter = new SignalAwareFakeAdapter('google', makeOkResult(), {
+        delayMs: adapterDelayMs,
+      })
+      const sink = new RecordingSink()
+      const client = createClient({
+        adapters: [adapter],
+        pricing: PRICING,
+        sink,
+        clock: new FakeClock(),
+        ids: new FakeIds(),
+      })
+
+      const ctrl = new AbortController()
+      const timer = setTimeout(() => ctrl.abort(), abortAfterMs)
+
+      try {
+        await expect(
+          client.generate(
+            { model: 'gemini-2.5-pro', messages: MESSAGES },
+            { auth: TEST_AUTH, signal: ctrl.signal },
+          ),
+        ).rejects.toMatchObject({ kind: 'aborted', retryable: false })
 
         const rec = sink.last()!
-        expect(rec.status).toBe('timeout')
-        expect(rec.errorKind).toBe('timeout')
+        expect(rec.status).toBe('aborted')
+        expect(rec.errorKind).toBe('aborted')
+      } finally {
+        clearTimeout(timer)
       }
-    },
-    10_000,
-  )
+    }
+  }, 10_000)
 
-  it(
-    'caller abort mid-flight → always classified as aborted (10 iterations)',
-    async () => {
-      const rand = mulberry32(0x99887766)
-      for (let i = 0; i < 10; i++) {
-        const adapterDelayMs = 200 + Math.floor(rand() * 100) // 200–300ms
-        const abortAfterMs = 10 + Math.floor(rand() * 30)     // 10–40ms
+  it('timeout + synchronously-aborting adapter → timeout wins, never aborted (5 iterations)', async () => {
+    const rand = mulberry32(0x55443322)
+    for (let i = 0; i < 5; i++) {
+      const timeoutMs = 5 + Math.floor(rand() * 20) // 5–25ms
 
-        const adapter = new SignalAwareFakeAdapter('google', makeOkResult(), {
-          delayMs: adapterDelayMs,
-        })
-        const sink = new RecordingSink()
-        const client = createClient({
-          adapters: [adapter], pricing: PRICING, sink,
-          clock: new FakeClock(), ids: new FakeIds(),
-        })
+      const adapter = new SignalAwareFakeAdapter('google', makeOkResult(), {
+        delayMs: 5_000,
+        abortsSynchronouslyOnSignal: true,
+      })
+      const sink = new RecordingSink()
+      const client = createClient({
+        adapters: [adapter],
+        pricing: PRICING,
+        sink,
+        clock: new FakeClock(),
+        ids: new FakeIds(),
+      })
 
-        const ctrl = new AbortController()
-        const timer = setTimeout(() => ctrl.abort(), abortAfterMs)
-
-        try {
-          await expect(
-            client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES }, { auth: TEST_AUTH, signal: ctrl.signal }),
-          ).rejects.toMatchObject({ kind: 'aborted', retryable: false })
-
-          const rec = sink.last()!
-          expect(rec.status).toBe('aborted')
-          expect(rec.errorKind).toBe('aborted')
-        } finally {
-          clearTimeout(timer)
-        }
-      }
-    },
-    10_000,
-  )
-
-  it(
-    'timeout + synchronously-aborting adapter → timeout wins, never aborted (5 iterations)',
-    async () => {
-      const rand = mulberry32(0x55443322)
-      for (let i = 0; i < 5; i++) {
-        const timeoutMs = 5 + Math.floor(rand() * 20) // 5–25ms
-
-        const adapter = new SignalAwareFakeAdapter('google', makeOkResult(), {
-          delayMs: 5_000,
-          abortsSynchronouslyOnSignal: true,
-        })
-        const sink = new RecordingSink()
-        const client = createClient({
-          adapters: [adapter], pricing: PRICING, sink,
-          clock: new FakeClock(), ids: new FakeIds(),
-        })
-
-        await expect(
-          client.generate({
-            model: 'gemini-2.5-pro', messages: MESSAGES,
+      await expect(
+        client.generate(
+          {
+            model: 'gemini-2.5-pro',
+            messages: MESSAGES,
             config: { timeoutMs },
-          }, { auth: TEST_AUTH }),
-        ).rejects.toMatchObject({ kind: 'timeout' })
+          },
+          { auth: TEST_AUTH },
+        ),
+      ).rejects.toMatchObject({ kind: 'timeout' })
 
-        const rec = sink.last()!
-        expect(rec.status).toBe('timeout')
-      }
-    },
-    10_000,
-  )
+      const rec = sink.last()!
+      expect(rec.status).toBe('timeout')
+    }
+  }, 10_000)
 
   it('already-aborted signal → LlmError aborted, record status aborted', async () => {
     const ctrl = new AbortController()
@@ -951,12 +1162,18 @@ describe('surface-stress: cancellation', () => {
     const adapter = new SignalAwareFakeAdapter('google', makeOkResult(), { delayMs: 300 })
     const sink = new RecordingSink()
     const client = createClient({
-      adapters: [adapter], pricing: PRICING, sink,
-      clock: new FakeClock(), ids: new FakeIds(),
+      adapters: [adapter],
+      pricing: PRICING,
+      sink,
+      clock: new FakeClock(),
+      ids: new FakeIds(),
     })
 
     await expect(
-      client.generate({ model: 'gemini-2.5-pro', messages: MESSAGES }, { auth: TEST_AUTH, signal: ctrl.signal }),
+      client.generate(
+        { model: 'gemini-2.5-pro', messages: MESSAGES },
+        { auth: TEST_AUTH, signal: ctrl.signal },
+      ),
     ).rejects.toMatchObject({ kind: 'aborted' })
 
     expect(sink.last()!.status).toBe('aborted')
@@ -979,7 +1196,10 @@ describe('surface-stress: parse error', () => {
       { schema: z.object({ answer: z.number() }), badValue: undefined },
       { schema: z.object({ answer: z.number() }), badValue: 42 }, // number, not object
       { schema: z.object({ name: z.string() }), badValue: { name: 123 } },
-      { schema: z.object({ items: z.array(z.string()) }), badValue: { items: [1, 2, 3] } },
+      {
+        schema: z.object({ items: z.array(z.string()) }),
+        badValue: { items: [1, 2, 3] },
+      },
       { schema: z.object({ id: z.string().uuid() }), badValue: { id: 'not-a-uuid' } },
       { schema: z.object({ score: z.number().min(0).max(1) }), badValue: { score: 99 } },
     ]
@@ -994,19 +1214,28 @@ describe('surface-stress: parse error', () => {
       })
 
       const client = createClient({
-        adapters: [adapter], pricing: PRICING, sink,
-        clock: new FakeClock(), ids: new FakeIds(),
+        adapters: [adapter],
+        pricing: PRICING,
+        sink,
+        clock: new FakeClock(),
+        ids: new FakeIds(),
       })
 
       await expect(
-        client.generate({
-          model: 'gemini-2.5-pro', messages: MESSAGES,
-          output: { schema },
-        }, { auth: TEST_AUTH }),
+        client.generate(
+          {
+            model: 'gemini-2.5-pro',
+            messages: MESSAGES,
+            output: { schema },
+          },
+          { auth: TEST_AUTH },
+        ),
       ).rejects.toMatchObject({ kind: 'parse_error', retryable: false })
 
       const rec = sink.last()!
-      expect(rec.status, `iter ${i}: record status must be parse_error`).toBe('parse_error')
+      expect(rec.status, `iter ${i}: record status must be parse_error`).toBe(
+        'parse_error',
+      )
       expect(rec.errorKind).toBe('parse_error')
     }
   })
@@ -1023,14 +1252,21 @@ describe('surface-stress: parse error', () => {
       })
       const sink = new RecordingSink()
       const client = createClient({
-        adapters: [adapter], pricing: PRICING, sink,
-        clock: new FakeClock(), ids: new FakeIds(),
+        adapters: [adapter],
+        pricing: PRICING,
+        sink,
+        clock: new FakeClock(),
+        ids: new FakeIds(),
       })
 
-      const result = await client.generate({
-        model: 'gemini-2.5-pro', messages: MESSAGES,
-        output: { schema },
-      }, { auth: TEST_AUTH })
+      const result = await client.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: MESSAGES,
+          output: { schema },
+        },
+        { auth: TEST_AUTH },
+      )
       expect(result.output).toEqual({ answer })
       expect(sink.last()!.status).toBe('ok')
     }
@@ -1060,8 +1296,10 @@ describe('surface-stress: providerOptions deep nesting preserved', () => {
       }
 
       const client = createClient({
-        adapters: [captureAdapter], pricing: PRICING,
-        clock: new FakeClock(), ids: new FakeIds(),
+        adapters: [captureAdapter],
+        pricing: PRICING,
+        clock: new FakeClock(),
+        ids: new FakeIds(),
         defaults: {
           providerOptions: {
             google: { base: { x: 1, y: 2 }, fixed: true },
@@ -1069,14 +1307,18 @@ describe('surface-stress: providerOptions deep nesting preserved', () => {
         },
       })
 
-      await client.generate({
-        model: 'gemini-2.5-pro', messages: MESSAGES,
-        config: {
-          providerOptions: {
-            google: { [nestedKey]: { deep: { value: uniqueVal } } },
+      await client.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: MESSAGES,
+          config: {
+            providerOptions: {
+              google: { [nestedKey]: { deep: { value: uniqueVal } } },
+            },
           },
         },
-      }, { auth: TEST_AUTH })
+        { auth: TEST_AUTH },
+      )
 
       const merged = capturedOptions[0]
       expect(merged).toBeDefined()

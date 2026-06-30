@@ -76,7 +76,10 @@ describe('fakeGeminiResponse', () => {
   })
 
   it('sets modelVersion and responseId at the top level', () => {
-    const r = fakeGeminiResponse({ modelVersion: 'gemini-2.5-pro-001', responseId: 'resp-abc' })
+    const r = fakeGeminiResponse({
+      modelVersion: 'gemini-2.5-pro-001',
+      responseId: 'resp-abc',
+    })
     expect(r.modelVersion).toBe('gemini-2.5-pro-001')
     expect(r.responseId).toBe('resp-abc')
   })
@@ -221,20 +224,28 @@ describe('makeFakeGemini — function script', () => {
       throw { status: 429 }
     })
     const params = { model: 'gemini-2.5-pro' }
-    await expect(client.models.generateContent(params)).rejects.toMatchObject({ status: 429 })
+    await expect(client.models.generateContent(params)).rejects.toMatchObject({
+      status: 429,
+    })
     expect(client.calls).toHaveLength(1)
     expect(client.calls[0]).toBe(params)
   })
 
   it('propagates injected plain-object errors (status: 429)', async () => {
-    const client = makeFakeGemini(() => { throw { status: 429 } })
+    const client = makeFakeGemini(() => {
+      throw { status: 429 }
+    })
     await expect(client.models.generateContent({})).rejects.toMatchObject({ status: 429 })
   })
 
   it('propagates injected Error instances', async () => {
     const err = new Error('internal server error')
-    const client = makeFakeGemini(() => { throw err })
-    await expect(client.models.generateContent({})).rejects.toThrow('internal server error')
+    const client = makeFakeGemini(() => {
+      throw err
+    })
+    await expect(client.models.generateContent({})).rejects.toThrow(
+      'internal server error',
+    )
   })
 
   it('accumulates params from multiple function calls', async () => {

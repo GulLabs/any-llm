@@ -1,7 +1,8 @@
 import { defineConfig } from 'vitest/config'
 import { fileURLToPath } from 'node:url'
 
-const src = (p: string) => fileURLToPath(new URL(`./packages/${p}/src/index.ts`, import.meta.url))
+const src = (p: string) =>
+  fileURLToPath(new URL(`./packages/${p}/src/index.ts`, import.meta.url))
 
 export default defineConfig({
   resolve: {
@@ -14,6 +15,10 @@ export default defineConfig({
   },
   test: {
     include: ['packages/*/src/**/*.{test,spec}.ts'],
-    coverage: { provider: 'v8', include: ['packages/*/src/**/*.ts'], exclude: ['**/*.test.ts', '**/index.ts'] },
+    coverage: {
+      provider: 'v8',
+      include: ['packages/*/src/**/*.ts'],
+      exclude: ['**/*.test.ts', '**/index.ts'],
+    },
   },
 })

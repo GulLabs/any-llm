@@ -20,47 +20,47 @@ pnpm add @gullabs/testing    # test fakes (dev only)
 The four v1 goals in ~25 lines:
 
 ```ts
-import { z } from "zod";
-import { createClient, geminiPricingSource, defineCallSite } from "@gullabs/core";
-import { geminiAdapter } from "@gullabs/google";
-import { drizzleUsageSink, llmCalls } from "@gullabs/drizzle";
+import { z } from 'zod'
+import { createClient, geminiPricingSource, defineCallSite } from '@gullabs/core'
+import { geminiAdapter } from '@gullabs/google'
+import { drizzleUsageSink, llmCalls } from '@gullabs/drizzle'
 
 // 1. Wire up the client — no auth here; the library never reads credentials
 const client = createClient({
   adapters: [geminiAdapter()],
   pricing: geminiPricingSource(),
   sink: drizzleUsageSink(db, llmCalls),
-});
+})
 
 // 2. Define a typed, reusable call site
 const ReviewSchema = z.object({
   rating: z.number().int().min(1).max(5),
   summary: z.string(),
-});
+})
 
 const codeReview = defineCallSite({
-  id: "code-review",
-  model: "gemini-2.5-flash",
+  id: 'code-review',
+  model: 'gemini-2.5-flash',
   schema: ReviewSchema,
-  system: "You are a senior code reviewer.",
-  userTemplate: "Review this diff:\n\n{{diff}}",
+  system: 'You are a senior code reviewer.',
+  userTemplate: 'Review this diff:\n\n{{diff}}',
   config: {
-    reasoning: { includeThoughts: true, effort: "medium" },
-    serviceTier: "flex",
+    reasoning: { includeThoughts: true, effort: 'medium' },
+    serviceTier: 'flex',
   },
-});
+})
 
 // 3. Your application owns the key — bring it from wherever makes sense
-const auth = { apiKey: process.env.MY_APP_GEMINI_KEY! };
+const auth = { apiKey: process.env.MY_APP_GEMINI_KEY! }
 
 // 4. Run it — pass auth on every call
-const result = await client.runStructured(codeReview, { diff: myDiff }, { auth });
+const result = await client.runStructured(codeReview, { diff: myDiff }, { auth })
 
 // All four goals satisfied:
-console.log(result.output); // { rating: 4, summary: '...' }  — Zod-validated
-console.log(result.usage); // { inputTokens, outputTokens, cachedInputTokens, thinkingTokens }
-console.log(result.cost?.microUsd); // integer micro-USD, frozen at call time
-console.log(result.reasoningText); // thought summary from the model
+console.log(result.output) // { rating: 4, summary: '...' }  — Zod-validated
+console.log(result.usage) // { inputTokens, outputTokens, cachedInputTokens, thinkingTokens }
+console.log(result.cost?.microUsd) // integer micro-USD, frozen at call time
+console.log(result.reasoningText) // thought summary from the model
 // The record has already been persisted to llm_calls via the Drizzle sink.
 ```
 
@@ -73,9 +73,9 @@ no `AuthProvider` port, and no client-level `auth` on `createClient`. The caller
 every call:
 
 ```ts
-client.generate(request, { auth: { apiKey } });
-client.runStructured(callSite, { auth: { apiKey } }); // no template vars
-client.runStructured(callSite, { ...vars }, { auth: { apiKey } }); // with template vars
+client.generate(request, { auth: { apiKey } })
+client.runStructured(callSite, { auth: { apiKey } }) // no template vars
+client.runStructured(callSite, { ...vars }, { auth: { apiKey } }) // with template vars
 ```
 
 `auth` is required. `AuthMaterial` is `{ apiKey: string }`. Where the key comes from is entirely
@@ -83,9 +83,9 @@ your concern — read it from an environment variable, a secret vault, a databas
 
 ```ts
 // For an 18-call loop, build auth once and pass it each time:
-const auth = { apiKey: process.env.MY_APP_GEMINI_KEY! };
+const auth = { apiKey: process.env.MY_APP_GEMINI_KEY! }
 for (const item of items) {
-  results.push(await client.runStructured(callSite, { item }, { auth }));
+  results.push(await client.runStructured(callSite, { item }, { auth }))
 }
 ```
 
@@ -130,40 +130,40 @@ The design is **Ports & Adapters (hexagonal)**: the core engine depends only on 
 ```ts
 // Inline image (base64, no data: prefix)
 const result = await client.generate({
-  model: "gemini-2.5-flash",
+  model: 'gemini-2.5-flash',
   messages: [
     {
-      role: "user",
+      role: 'user',
       parts: [
-        { kind: "text", text: "What is in this image?" },
+        { kind: 'text', text: 'What is in this image?' },
         {
-          kind: "inline-media",
-          mimeType: "image/png",
-          data: Buffer.from(pngBytes).toString("base64"),
-          mediaResolution: "high", // optional; adapter maps to PartMediaResolutionLevel
+          kind: 'inline-media',
+          mimeType: 'image/png',
+          data: Buffer.from(pngBytes).toString('base64'),
+          mediaResolution: 'high', // optional; adapter maps to PartMediaResolutionLevel
         },
       ],
     },
   ],
-});
+})
 
 // File already uploaded to Gemini Files API
 const result2 = await client.generate({
-  model: "gemini-2.5-flash",
+  model: 'gemini-2.5-flash',
   messages: [
     {
-      role: "user",
+      role: 'user',
       parts: [
-        { kind: "text", text: "Summarise this video." },
+        { kind: 'text', text: 'Summarise this video.' },
         {
-          kind: "file-uri",
-          uri: "https://generativelanguage.googleapis.com/v1beta/files/abc123",
-          mimeType: "video/mp4",
+          kind: 'file-uri',
+          uri: 'https://generativelanguage.googleapis.com/v1beta/files/abc123',
+          mimeType: 'video/mp4',
         },
       ],
     },
   ],
-});
+})
 ```
 
 ## Files API (`GoogleFileStore`)
@@ -171,67 +171,67 @@ const result2 = await client.generate({
 Upload bytes once, reuse the URI across many calls. The provider auto-deletes files after ~48 h.
 
 ```ts
-import { GoogleFileStore } from "@gullabs/google";
+import { GoogleFileStore } from '@gullabs/google'
 
-const auth = { apiKey: process.env.GEMINI_API_KEY! };
-const store = new GoogleFileStore({ auth });
+const auth = { apiKey: process.env.GEMINI_API_KEY! }
+const store = new GoogleFileStore({ auth })
 
 // Upload and wait for ACTIVE (polls until ready, default timeout 120 s)
-const handle = await store.upload(pdfBytes, "application/pdf", {
-  displayName: "report.pdf",
-});
+const handle = await store.upload(pdfBytes, 'application/pdf', {
+  displayName: 'report.pdf',
+})
 
 // handle.uri → FileUriPart.uri
 const result = await client.generate({
-  model: "gemini-2.5-pro",
+  model: 'gemini-2.5-pro',
   messages: [
     {
-      role: "user",
+      role: 'user',
       parts: [
-        { kind: "text", text: "Extract the key figures from this document." },
-        { kind: "file-uri", uri: handle.uri, mimeType: "application/pdf" },
+        { kind: 'text', text: 'Extract the key figures from this document.' },
+        { kind: 'file-uri', uri: handle.uri, mimeType: 'application/pdf' },
       ],
     },
   ],
-});
+})
 
 // Delete when done (fail-open — errors go to onDeleteError, not rethrown)
-await store.delete(handle);
+await store.delete(handle)
 ```
 
 ## Context caching (`GoogleCacheStore`)
 
 ```ts
-import { GoogleCacheStore } from "@gullabs/google";
+import { GoogleCacheStore } from '@gullabs/google'
 
-const auth = { apiKey: process.env.GEMINI_API_KEY! };
-const cacheStore = new GoogleCacheStore({ auth });
+const auth = { apiKey: process.env.GEMINI_API_KEY! }
+const cacheStore = new GoogleCacheStore({ auth })
 
 // getOrCreate returns a live handle; creates at most once per process lifetime
 const cacheHandle = await cacheStore.getOrCreate(
-  { model: "gemini-2.5-pro", stableKey: "system-docs-v3" },
+  { model: 'gemini-2.5-pro', stableKey: 'system-docs-v3' },
   async () => ({
     ttlSeconds: 3600,
     contents: [
       /* large content to cache */
     ],
-    systemInstruction: "You are a helpful assistant with access to the following docs.",
-  })
-);
+    systemInstruction: 'You are a helpful assistant with access to the following docs.',
+  }),
+)
 
 // Pass the cache name via providerOptions; the adapter forwards it verbatim
 const result = await client.generate({
-  model: "gemini-2.5-pro",
-  messages: [{ role: "user", parts: [{ kind: "text", text: "Summarise section 3." }] }],
+  model: 'gemini-2.5-pro',
+  messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Summarise section 3.' }] }],
   config: {
     providerOptions: {
       google: { cachedContent: cacheHandle.cacheName },
     },
   },
-});
+})
 
 // Extend the TTL if it is expiring within 5 minutes (default threshold)
-const refreshed = await cacheStore.refreshIfExpiringSoon(cacheHandle);
+const refreshed = await cacheStore.refreshIfExpiringSoon(cacheHandle)
 ```
 
 ## Flex long-timeout calls
@@ -242,18 +242,18 @@ per-call deadline on top of that:
 
 ```ts
 const result = await client.generate({
-  model: "gemini-2.5-pro",
+  model: 'gemini-2.5-pro',
   messages: [
     {
-      role: "user",
-      parts: [{ kind: "text", text: "Write a very long essay." }],
+      role: 'user',
+      parts: [{ kind: 'text', text: 'Write a very long essay.' }],
     },
   ],
   config: {
-    serviceTier: "flex",
+    serviceTier: 'flex',
     timeoutMs: 600_000, // 10 min engine deadline; SDK transport timeout = 605 000 ms
   },
-});
+})
 ```
 
 **Verified field syntax for Flex:** set `serviceTier: 'flex'` in `config` (not in
@@ -269,10 +269,10 @@ buffer. **Vertex AI caveat:** on Vertex, the `serviceTier` body field is silentl
 calculations and aggregation, use `microUsd` from the persisted record.
 
 ```ts
-const result = await client.generate({ model: "gemini-2.5-flash", messages });
+const result = await client.generate({ model: 'gemini-2.5-flash', messages })
 if (result.cost) {
-  console.log(`$${result.cost.usd?.toFixed(6)}`); // display
-  console.log(result.cost.microUsd); // canonical integer, stored in the sink
+  console.log(`$${result.cost.usd?.toFixed(6)}`) // display
+  console.log(result.cost.microUsd) // canonical integer, stored in the sink
 }
 ```
 
@@ -337,15 +337,15 @@ Inject a structured logger via `ClientConfig.logger`. The `Logger` port uses an 
 signature (`(o, m)`) compatible with pino, bunyan, and similar libraries:
 
 ```ts
-import pino from "pino";
-const logger = pino();
+import pino from 'pino'
+const logger = pino()
 
 const client = createClient({
   adapters: [geminiAdapter()],
   pricing: geminiPricingSource(),
   sink: drizzleUsageSink(db, llmCalls),
   logger, // inject your logger here
-});
+})
 ```
 
 Four levels are supported: `debug`, `info`, `warn`, `error`. The engine emits structured events at
@@ -376,20 +376,20 @@ const client = createClient({
   telemetry: {
     onStart(e) {
       // e: { callId, model, callSiteId?, metadata }
-      return myTracer.startSpan("llm.call", { attributes: { model: e.model } });
+      return myTracer.startSpan('llm.call', { attributes: { model: e.model } })
     },
     onSuccess(e, span) {
       // e: { callId, attemptId, model, latencyMs, usage, cost?, metadata }
-      span?.setStatus({ code: SpanStatusCode.OK });
-      span?.end();
+      span?.setStatus({ code: SpanStatusCode.OK })
+      span?.end()
     },
     onError(e, span) {
       // e: { callId, attemptId?, model, latencyMs, errorKind, retryable, metadata }
-      span?.setStatus({ code: SpanStatusCode.ERROR });
-      span?.end();
+      span?.setStatus({ code: SpanStatusCode.ERROR })
+      span?.end()
     },
   },
-});
+})
 ```
 
 Telemetry hook failures are swallowed (fail-open) and emit a `debug` breadcrumb

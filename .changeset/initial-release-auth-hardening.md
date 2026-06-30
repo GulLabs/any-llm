@@ -1,6 +1,6 @@
 ---
-"@gullabs/core": minor
-"@gullabs/google": minor
+'@gullabs/core': minor
+'@gullabs/google': minor
 ---
 
 Simplify auth and harden production readiness.

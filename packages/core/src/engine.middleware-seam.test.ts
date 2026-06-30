@@ -110,10 +110,13 @@ describe('engine — middleware ordering (onion model)', () => {
       middleware: [mw1, mw2, mw3],
     })
 
-    await client.generate({
-      model: 'gemini-2.5-flash',
-      messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-    }, { auth: TEST_AUTH })
+    await client.generate(
+      {
+        model: 'gemini-2.5-flash',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
 
     // Outermost-first request, innermost-first response (onion model).
     expect(order).toEqual([
@@ -135,103 +138,101 @@ describe('engine — middleware ordering (onion model)', () => {
 // ---------------------------------------------------------------------------
 
 describe('engine — retry + rate-limiter integration', () => {
-  it(
-    'limiter slot acquired+released per attempt; no slot leak; stable callId, distinct attemptIds; final result succeeds',
-    async () => {
-      // Adapter fails once with rate_limited, then succeeds.
-      let adapterCallCount = 0
-      const adapter: ProviderAdapter = {
-        id: 'google',
-        async run(_req, _ctx): Promise<AdapterResult> {
-          adapterCallCount++
-          if (adapterCallCount === 1) {
-            throw new LlmError('upstream rate limited', {
-              kind: 'rate_limited',
-              retryable: true,
-            })
-          }
-          return makeSuccessResult()
-        },
-      }
+  it('limiter slot acquired+released per attempt; no slot leak; stable callId, distinct attemptIds; final result succeeds', async () => {
+    // Adapter fails once with rate_limited, then succeeds.
+    let adapterCallCount = 0
+    const adapter: ProviderAdapter = {
+      id: 'google',
+      async run(_req, _ctx): Promise<AdapterResult> {
+        adapterCallCount++
+        if (adapterCallCount === 1) {
+          throw new LlmError('upstream rate limited', {
+            kind: 'rate_limited',
+            retryable: true,
+          })
+        }
+        return makeSuccessResult()
+      },
+    }
 
-      // Wrap inMemoryRateLimiter with a spy that tracks acquire/release counts.
-      const inner = inMemoryRateLimiter({ maxConcurrency: 1 })
-      let acquireCount = 0
-      let releaseCount = 0
-      const spyLimiter: RateLimiter = {
-        async acquire(key: string, signal?: AbortSignal): Promise<Release> {
-          acquireCount++
-          const release = await inner.acquire(key, signal)
-          return (): void => {
-            releaseCount++
-            release()
-          }
-        },
-      }
+    // Wrap inMemoryRateLimiter with a spy that tracks acquire/release counts.
+    const inner = inMemoryRateLimiter({ maxConcurrency: 1 })
+    let acquireCount = 0
+    let releaseCount = 0
+    const spyLimiter: RateLimiter = {
+      async acquire(key: string, signal?: AbortSignal): Promise<Release> {
+        acquireCount++
+        const release = await inner.acquire(key, signal)
+        return (): void => {
+          releaseCount++
+          release()
+        }
+      },
+    }
 
-      const sink = new RecordingSink()
-      const ids = new FakeIds()
+    const sink = new RecordingSink()
+    const ids = new FakeIds()
 
-      const client = createClient({
-        adapters: [adapter],
-        pricing: PRICING,
-        clock: new FakeClock(),
-        ids,
-        sink,
-        rateLimiter: spyLimiter,
-        middleware: [
-          retryMiddleware(
-            { maxAttempts: 3 },
-            // Inject zero-delay sleep so the test is instant.
-            { sleep: async () => {} },
-          ),
-        ],
-      })
+    const client = createClient({
+      adapters: [adapter],
+      pricing: PRICING,
+      clock: new FakeClock(),
+      ids,
+      sink,
+      rateLimiter: spyLimiter,
+      middleware: [
+        retryMiddleware(
+          { maxAttempts: 3 },
+          // Inject zero-delay sleep so the test is instant.
+          { sleep: async () => {} },
+        ),
+      ],
+    })
 
-      const result = await client.generate({
+    const result = await client.generate(
+      {
         model: 'gemini-2.5-flash',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      }, { auth: TEST_AUTH })
+      },
+      { auth: TEST_AUTH },
+    )
 
-      // Final result is a success.
-      expect(result.text).toBe('ok')
+    // Final result is a success.
+    expect(result.text).toBe('ok')
 
-      // Adapter was called twice (fail on 1st, succeed on 2nd).
-      expect(adapterCallCount).toBe(2)
+    // Adapter was called twice (fail on 1st, succeed on 2nd).
+    expect(adapterCallCount).toBe(2)
 
-      // Limiter slot was acquired and released once per attempt — no leak.
-      expect(acquireCount).toBe(2)
-      expect(releaseCount).toBe(2)
+    // Limiter slot was acquired and released once per attempt — no leak.
+    expect(acquireCount).toBe(2)
+    expect(releaseCount).toBe(2)
 
-      // Limiter ends with full capacity (the slot was released after each attempt).
-      // Verify by acquiring immediately (should resolve without blocking).
-      let canAcquireAfter = false
-      await inner
-        .acquire('google:gemini-2.5-flash')
-        .then((r) => {
-          canAcquireAfter = true
-          r()
-        })
-      expect(canAcquireAfter).toBe(true)
+    // Limiter ends with full capacity (the slot was released after each attempt).
+    // Verify by acquiring immediately (should resolve without blocking).
+    let canAcquireAfter = false
+    await inner.acquire('google:gemini-2.5-flash').then((r) => {
+      canAcquireAfter = true
+      r()
+    })
+    expect(canAcquireAfter).toBe(true)
 
-      // Exactly two records: one error (attempt 1) and one ok (attempt 2).
-      expect(sink.records).toHaveLength(2)
+    // Exactly two records: one error (attempt 1) and one ok (attempt 2).
+    expect(sink.records).toHaveLength(2)
 
-      // Stable callId across retries.
-      const callId = sink.records[0]!.callId
-      expect(sink.records[1]!.callId).toBe(callId)
+    // Stable callId across retries.
+    const callId = sink.records[0]!.callId
+    expect(sink.records[1]!.callId).toBe(callId)
 
-      // Distinct attemptIds.
-      const attemptId0 = sink.records[0]!.attemptId
-      const attemptId1 = sink.records[1]!.attemptId
-      expect(attemptId0).not.toBe(attemptId1)
+    // Distinct attemptIds.
+    const attemptId0 = sink.records[0]!.attemptId
+    const attemptId1 = sink.records[1]!.attemptId
+    expect(attemptId0).not.toBe(attemptId1)
 
-      // First record is the error attempt.
-      expect(sink.records[0]!.status).toBe('api_error')
-      expect(sink.records[0]!.errorKind).toBe('rate_limited')
+    // First record is the error attempt.
+    expect(sink.records[0]!.status).toBe('api_error')
+    expect(sink.records[0]!.errorKind).toBe('rate_limited')
 
-      // Second record is the success.
-      expect(sink.records[1]!.status).toBe('ok')
-    },
-  )
+    // Second record is the success.
+    expect(sink.records[1]!.status).toBe('ok')
+  })
 })

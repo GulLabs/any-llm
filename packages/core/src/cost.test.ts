@@ -55,7 +55,12 @@ function expectedComponents(
   const inputCost = Math.round((billableInput * inputPerM) / 1_000_000)
   const cachedCost = Math.round((cached * cachedPerM) / 1_000_000)
   const outputCost = Math.round((outputTokens * outputPerM) / 1_000_000)
-  return { inputCost, cachedCost, outputCost, microUsd: inputCost + cachedCost + outputCost }
+  return {
+    inputCost,
+    cachedCost,
+    outputCost,
+    microUsd: inputCost + cachedCost + outputCost,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -104,9 +109,9 @@ describe('computeCost — codex-mandated double-counting scenario', () => {
     expect(cost.microUsd).toBe(expected.microUsd)
 
     // Assert each component individually.
-    expect(cost.details.input).toBe(expected.inputCost)    // 150k billed at >200k input rate
-    expect(cost.details.cached).toBe(expected.cachedCost)  // 100k at cached rate
-    expect(cost.details.output).toBe(expected.outputCost)  // 5k billed once at output rate
+    expect(cost.details.input).toBe(expected.inputCost) // 150k billed at >200k input rate
+    expect(cost.details.cached).toBe(expected.cachedCost) // 100k at cached rate
+    expect(cost.details.output).toBe(expected.outputCost) // 5k billed once at output rate
 
     // Assert: thinkingTokens (2k) adds ZERO incremental cost.
     // Verify: same result with thinkingTokens stripped out.
@@ -120,7 +125,9 @@ describe('computeCost — codex-mandated double-counting scenario', () => {
     expect(cost.details).toEqual(costNoThinking.details)
 
     // Assert sum invariant — the critical constraint.
-    expect(cost.details.input + cost.details.cached + cost.details.output).toBe(cost.microUsd)
+    expect(cost.details.input + cost.details.cached + cost.details.output).toBe(
+      cost.microUsd,
+    )
 
     // Confirm >200k rates produce a higher cost than base rates would.
     const baseExpected = expectedComponents(
@@ -158,7 +165,9 @@ describe('computeCost — tier boundary', () => {
       1_000,
     )
     expect(cost.microUsd).toBe(expected.microUsd)
-    expect(cost.details.input + cost.details.cached + cost.details.output).toBe(cost.microUsd)
+    expect(cost.details.input + cost.details.cached + cost.details.output).toBe(
+      cost.microUsd,
+    )
   })
 
   it('GROSS input one token above 200k triggers >200k tier', () => {
@@ -175,7 +184,9 @@ describe('computeCost — tier boundary', () => {
       1_000,
     )
     expect(cost.microUsd).toBe(expected.microUsd)
-    expect(cost.details.input + cost.details.cached + cost.details.output).toBe(cost.microUsd)
+    expect(cost.details.input + cost.details.cached + cost.details.output).toBe(
+      cost.microUsd,
+    )
   })
 })
 
@@ -194,7 +205,9 @@ describe('computeCost — edge cases', () => {
 
     expect(cost.microUsd).not.toBeNull()
     expect(cost.details.input).toBe(0) // 0 billable input tokens
-    expect(cost.details.input + cost.details.cached + cost.details.output).toBe(cost.microUsd)
+    expect(cost.details.input + cost.details.cached + cost.details.output).toBe(
+      cost.microUsd,
+    )
   })
 
   it('cached > input → clamps to zero billable input (no negative cost)', () => {
@@ -208,7 +221,9 @@ describe('computeCost — edge cases', () => {
 
     expect(cost.microUsd).not.toBeNull()
     expect(cost.details.input).toBeGreaterThanOrEqual(0) // never negative
-    expect(cost.details.input + cost.details.cached + cost.details.output).toBe(cost.microUsd)
+    expect(cost.details.input + cost.details.cached + cost.details.output).toBe(
+      cost.microUsd,
+    )
   })
 
   it('zero tokens everywhere → microUsd = 0', () => {
@@ -217,7 +232,9 @@ describe('computeCost — edge cases', () => {
 
     expect(cost.microUsd).toBe(0)
     expect(cost.details).toEqual({ input: 0, cached: 0, output: 0 })
-    expect(cost.details.input + cost.details.cached + cost.details.output).toBe(cost.microUsd)
+    expect(cost.details.input + cost.details.cached + cost.details.output).toBe(
+      cost.microUsd,
+    )
   })
 
   it('unknown model → microUsd null, confidence estimated, details zero', () => {
@@ -253,7 +270,9 @@ describe('computeCost — edge cases', () => {
 
     expect(cost.microUsd).toBe(expected.microUsd)
     expect(cost.confidence).toBe('exact')
-    expect(cost.details.input + cost.details.cached + cost.details.output).toBe(cost.microUsd)
+    expect(cost.details.input + cost.details.cached + cost.details.output).toBe(
+      cost.microUsd,
+    )
   })
 
   it('prefix match: gemini-2.5-pro-001 → matched to gemini-2.5-pro rates', () => {
@@ -346,7 +365,7 @@ describe('property — sum(details) === microUsd', () => {
       if (sum !== cost.microUsd) {
         failures.push(
           `i=${i} model=${model} input=${inputTokens} cached=${cachedInputTokens} output=${outputTokens}` +
-          ` → sum=${sum} !== microUsd=${cost.microUsd}`,
+            ` → sum=${sum} !== microUsd=${cost.microUsd}`,
         )
       }
     }

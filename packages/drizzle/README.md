@@ -6,11 +6,11 @@ Reference Postgres schema and `UsageSink` implementation for any-llm using Drizz
 
 ## Key exports
 
-| Export | What it is |
-|---|---|
-| `llmCalls` | Drizzle `pgTable('llm_calls', ...)` — the reference schema |
+| Export                         | What it is                                                                                                    |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `llmCalls`                     | Drizzle `pgTable('llm_calls', ...)` — the reference schema                                                    |
 | `drizzleUsageSink(db, table?)` | Returns a `UsageSink` that writes records via `INSERT ... ON CONFLICT DO NOTHING` (idempotent on `attemptId`) |
-| `InsertableDb` | Type of the `db` argument accepted by `drizzleUsageSink` |
+| `InsertableDb`                 | Type of the `db` argument accepted by `drizzleUsageSink`                                                      |
 
 ## Quick example
 
@@ -30,9 +30,13 @@ const client = createClient({
 })
 
 // Auth is required per call — pass it at call time, never at client construction.
-const result = await client.runStructured(myCallSite, { text: 'hello' }, {
-  auth: { apiKey: process.env.GEMINI_API_KEY! },
-})
+const result = await client.runStructured(
+  myCallSite,
+  { text: 'hello' },
+  {
+    auth: { apiKey: process.env.GEMINI_API_KEY! },
+  },
+)
 ```
 
 ## Schema

@@ -1,7 +1,7 @@
 ## What & why
 
-
 ## Checklist
+
 - [ ] `pnpm typecheck` passes
 - [ ] `pnpm test` passes (tests are network-free)
 - [ ] `pnpm -r build` passes
