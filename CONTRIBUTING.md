@@ -6,9 +6,11 @@ and `DESIGN.md` for the north-star.
 ## Dev setup
 ```bash
 pnpm install
+pnpm lint           # minimal ESLint flat config across source, tests, examples, and configs
 pnpm typecheck      # tsc across the workspace
 pnpm test           # vitest (no network — the Gemini SDK is mocked)
 pnpm -r build       # tsup: ESM + CJS + d.ts
+pnpm quality        # lint + typecheck + test + build (same gate CI runs)
 pnpm example        # runnable, network-free end-to-end demo
 ```
 
@@ -20,4 +22,4 @@ pnpm example        # runnable, network-free end-to-end demo
 - Keep the public surface small and additive; breaking changes follow SemVer.
 
 ## PRs
-Keep them focused. Include tests. `pnpm typecheck && pnpm test && pnpm -r build` must pass.
+Keep them focused. Include tests. `pnpm quality` must pass.

@@ -8,7 +8,7 @@
  * @module
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { z } from 'zod'
 import {
   createClient,
@@ -1337,13 +1337,11 @@ describe('engine — fail-closed auth guard', () => {
   it('generate() with no opts arg throws LlmError invalid_auth (not TypeError)', async () => {
     const { client } = makeClient()
     // Simulate a JS/any-typed caller omitting the options object entirely.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await expect((client.generate as any)(req)).rejects.toMatchObject({
       kind: 'invalid_auth',
       retryable: false,
     })
     // Must be LlmError, not a raw TypeError.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await expect((client.generate as any)(req)).rejects.toBeInstanceOf(LlmError)
   })
 
@@ -1356,18 +1354,15 @@ describe('engine — fail-closed auth guard', () => {
 
   it('runStructured() with no opts arg (one arg form) throws LlmError invalid_auth', async () => {
     const { client } = makeClient()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await expect((client.runStructured as any)(callSite)).rejects.toMatchObject({
       kind: 'invalid_auth',
       retryable: false,
     })
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await expect((client.runStructured as any)(callSite)).rejects.toBeInstanceOf(LlmError)
   })
 
   it('runStructured() with (callSite, vars) and no opts throws LlmError invalid_auth', async () => {
     const { client } = makeClient()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await expect((client.runStructured as any)(callSite, { x: 'y' })).rejects.toMatchObject({
       kind: 'invalid_auth',
       retryable: false,

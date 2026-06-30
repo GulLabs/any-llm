@@ -89,9 +89,7 @@ describe('retryMiddleware — overall timeout (FIX 1)', () => {
       virtualTime += ms
     }
 
-    let attemptCount = 0
     const handler: Handler = async (_req) => {
-      attemptCount++
       virtualTime += 100 // each attempt "takes" 100 ms
       throw rateLimited()
     }
@@ -162,20 +160,6 @@ describe('retryMiddleware — overall timeout (FIX 1)', () => {
     // But the post-attempt check throws first, so we get rate_limited.
     // To guarantee we get a 'timeout' pre-attempt: set budget = 0.
     let virtualTime = 100 // already past budget from the start
-    const now = () => virtualTime
-
-    const sleep = async (_ms: number): Promise<void> => {}
-
-    let attemptCount = 0
-    const handler: Handler = async () => {
-      attemptCount++
-      throw rateLimited()
-    }
-
-    const mw = retryMiddleware(
-      { maxAttempts: 5 },
-      { sleep, random: () => 0, now },
-    )
 
     // Budget is 100, but start = 100 (nowFn() returns 100 at entry), so
     // remaining = 100 - (100 - 100) = 100 on the first check — still positive.
@@ -241,9 +225,7 @@ describe('retryMiddleware — overall timeout (FIX 1)', () => {
       virtualTime += ms
     }
 
-    let attemptCount = 0
     const handler: Handler = async () => {
-      attemptCount++
       virtualTime += 100
       throw rateLimited()
     }

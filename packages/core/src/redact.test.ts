@@ -36,7 +36,6 @@ describe('redactSecrets — Google API keys', () => {
 
   it('does NOT redact short AIza prefixes (under 20 suffix chars)', () => {
     // 19 suffix chars — below the minimum
-    const text = 'AIzaSyABCDEFGHIJKLMNO' // 4 + 19 = 23 total, but regex needs ≥20 after AIza
     // AIza = 4 chars, then [0-9A-Za-z_\-]{20,}, so 'AIzaSyABCDEFGHIJKLMNO' has 19 after 'AIza'
     // Actually: 'AIzaSyABCDEFGHIJKLMNO' → 'AIza' + 'SyABCDEFGHIJKLMNO' = 18 chars after AIza
     // The regex needs 20+, so this should NOT be redacted.

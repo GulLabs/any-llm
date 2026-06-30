@@ -77,7 +77,7 @@ export function inMemoryRateLimiter(
       return new Promise<Release>((resolve, reject) => {
         // Reject immediately if the signal is already aborted.
         if (signal?.aborted === true) {
-          const reason = signal.reason
+          const reason: unknown = signal.reason
           reject(
             reason instanceof Error
               ? reason
@@ -126,7 +126,7 @@ export function inMemoryRateLimiter(
               s.queue.splice(idx, 1)
             }
             abortCleanup = undefined
-            const reason = signal.reason
+            const reason: unknown = signal.reason
             reject(
               reason instanceof Error
                 ? reason

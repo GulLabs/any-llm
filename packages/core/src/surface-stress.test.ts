@@ -111,7 +111,6 @@ class RawThrowAdapter implements ProviderAdapter {
   async run(req: ResolvedRequest, _ctx: AdapterCtx): Promise<AdapterResult> {
     this.calls.push(req)
     if (this._action.kind === 'ok') return this._action.result
-    // eslint-disable-next-line @typescript-eslint/no-throw-literal
     throw this._action.value
   }
 }

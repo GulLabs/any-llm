@@ -226,7 +226,6 @@ export function retryMiddleware(
       const start = nowFn()
       let attempt = 0
 
-      // eslint-disable-next-line no-constant-condition
       while (true) {
         attempt++
 

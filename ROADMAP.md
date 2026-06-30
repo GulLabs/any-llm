@@ -7,6 +7,19 @@ implementation is deferred until the Gemini-only, non-streaming foundation is st
 
 ## Future / Deferred
 
+### Deep lint-policy audit
+
+The repo will start with a deliberately minimal ESLint stack: core ESLint, `@eslint/js`,
+`typescript-eslint`, and `globals`, scoped tightly to real library source with lighter handling for
+tests/examples/config.
+
+Defer a deeper lint audit until this baseline is stable in day-to-day use. That later pass should
+re-evaluate:
+- whether any additional correctness rules are worth the noise,
+- whether docs/examples need their own stricter gate,
+- whether the repo should stay on ESLint or switch part of the surface to another tool,
+- and whether any plugin additions are justified by real recurring defects rather than fashion.
+
 ### Vertex AI support
 
 Removed in v0.2.x because it depended on Google Application Default Credentials (ADC): ambient

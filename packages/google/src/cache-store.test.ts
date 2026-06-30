@@ -8,7 +8,6 @@
  */
 
 import { describe, it, expect, vi } from 'vitest'
-import { LlmError } from '@gullabs/core'
 import { GoogleCacheStore } from './cache-store.js'
 import type { GeminiCachesClientLike, GoogleCacheHandle } from './cache-store.js'
 

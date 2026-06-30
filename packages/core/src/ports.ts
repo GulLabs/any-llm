@@ -253,7 +253,7 @@ export interface PricingSource {
    * @param usage - Token usage for the call (GROSS convention).
    * @param tier - Service tier (`'flex'` | `'standard'`), if relevant to pricing.
    */
-  price(model: string, usage: Usage, tier?: string): import('./types.js').Cost
+  price(model: string, usage: Usage, tier?: string): Cost
 }
 
 // ---------------------------------------------------------------------------

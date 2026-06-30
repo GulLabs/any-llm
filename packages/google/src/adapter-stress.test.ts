@@ -688,7 +688,6 @@ describe('adapter-stress: injected HTTP errors → correct classification', () =
   it('each error type is classified to the expected LlmErrorKind', async () => {
     for (const { throwValue, expectedKind, expectedRetryable } of ERROR_CASES) {
       const fakeClient = makeFakeGemini(() => {
-        // eslint-disable-next-line @typescript-eslint/no-throw-literal
         throw throwValue
       })
 
@@ -721,7 +720,6 @@ describe('adapter-stress: injected HTTP errors → correct classification', () =
 
     for (const extra of RETRY_CASES) {
       const fakeClient = makeFakeGemini(() => {
-        // eslint-disable-next-line @typescript-eslint/no-throw-literal
         throw { status: 429, ...extra }
       })
 
@@ -744,7 +742,6 @@ describe('adapter-stress: injected HTTP errors → correct classification', () =
       const status = HTTP_STATUSES[Math.floor(rand() * HTTP_STATUSES.length)]!
 
       const fakeClient = makeFakeGemini(() => {
-        // eslint-disable-next-line @typescript-eslint/no-throw-literal
         throw { status }
       })
 

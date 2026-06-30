@@ -370,11 +370,11 @@ function sanitizeUsage(usage: Usage): SanitizeUsageResult {
   // We intentionally check the runtime value even though TypeScript says `number`
   // because malformed adapter output can sneak in undefined/NaN via a cast.
   const inputResult = clampToken('inputTokens', usage.inputTokens, warnings)
-  let inputTokens = inputResult.value
+  const inputTokens = inputResult.value
   if (inputResult.changed) needsRebuild = true
 
   const outputResult = clampToken('outputTokens', usage.outputTokens, warnings)
-  let outputTokens = outputResult.value
+  const outputTokens = outputResult.value
   if (outputResult.changed) needsRebuild = true
 
   let cachedInputTokens = usage.cachedInputTokens

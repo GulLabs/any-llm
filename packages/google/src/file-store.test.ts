@@ -7,7 +7,7 @@
  * @module
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { LlmError } from '@gullabs/core'
 import { GoogleFileStore } from './file-store.js'
 import type { GeminiFilesClientLike, GoogleFileHandle } from './file-store.js'
