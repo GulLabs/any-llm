@@ -37,6 +37,7 @@ import type { LlmCallRecord, JsonValue } from '@gullabs/core'
 //   finish_reason:       text (nullable)
 //   output_parsed:       boolean (nullable)
 //   latency_ms:          integer (nullable)
+//   queue_delay_ms:      integer (nullable)
 //   input_tokens:        integer (nullable)
 //   output_tokens:       integer (nullable)
 //   cached_input_tokens: integer (nullable)
@@ -73,6 +74,7 @@ const CREATE_TABLE_SQL = /* sql */ `
     finish_reason         TEXT,
     output_parsed         BOOLEAN,
     latency_ms            INTEGER,
+    queue_delay_ms        INTEGER,
     input_tokens          INTEGER,
     output_tokens         INTEGER,
     cached_input_tokens   INTEGER,
@@ -118,6 +120,7 @@ function makeRecord(overrides: Partial<LlmCallRecord> = {}): LlmCallRecord {
     finishReason: 'stop',
     outputParsed: true,
     latencyMs: 250,
+    queueDelayMs: 45,
     inputTokens: 200,
     outputTokens: 40,
     cachedInputTokens: 20,
@@ -206,6 +209,7 @@ describe('drizzleUsageSink — real PGlite integration', () => {
     expect(row.finishReason).toBe('stop')
     expect(row.outputParsed).toBe(true)
     expect(row.latencyMs).toBe(250)
+    expect(row.queueDelayMs).toBe(45)
 
     // Token hot fields
     expect(row.inputTokens).toBe(200)

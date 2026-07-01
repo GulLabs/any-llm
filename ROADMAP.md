@@ -58,12 +58,6 @@ Refreshable credentials (OAuth/STS short-lived tokens): resolve at the engine en
 resolver function; primary design work is the long-lived cache/file stores that currently memoize
 a client from a single auth snapshot (see ADR-020 in DECISIONS.md).
 
-### Caller-owned structured output validation
-
-Provide optional helper packages or examples for validating `LlmResult.output` with common
-libraries. Core remains forward-only: it accepts `output.jsonSchema`, forwards it as a provider
-hint, and leaves acceptance policy to the caller.
-
 ### `Redactor` port
 
 A port for scrubbing sensitive content from messages and results before persistence. Currently only
@@ -92,8 +86,6 @@ or future companion packages, not library responsibilities.
   requires per-adapter schema work.
 - **TTFB / streaming latency** — time-to-first-byte and per-token streaming latency require a
   streaming pipeline (`stream()`) which is not yet implemented.
-- **Rate-limiter wait-time attribution** — the time spent inside `RateLimiter.acquire` is not
-  currently broken out from `latencyMs`; this requires instrumenting the acquire/release cycle.
 - **Sink-side logical-call latency** — `latencyMs` is per-attempt; deriving the total logical-call
   latency from the sink requires a terminal-row marker or an aggregation over `attemptNumber`.
 - **Configurable custom-redaction-pattern API** — a `Redactor` port (see existing roadmap item)

@@ -9,10 +9,11 @@ The provider-agnostic heart of any-llm. Contains all types, port interfaces, the
 | `createClient(config)`  | Wires ports into a `{ generate, runStructured }` client                  |
 | `defineCallSite(opts)`  | Defines a typed, reusable prompt template bound to a model               |
 | `geminiPricingSource()` | Returns a `PricingSource` backed by the built-in Gemini pricing snapshot |
+| `resolveReasoning()`    | Resolves numeric reasoning budgets into provider effort/budget settings  |
 | `LlmError`              | Typed error class — always thrown on call failure                        |
 | `buildRecord(input)`    | Assembles an `LlmCallRecord` from engine state (used internally)         |
 
-Port interfaces you implement: `ProviderAdapter`, `UsageSink`, `PricingSource`, `Clock`, `IdGenerator`, `Logger`, `Telemetry`.
+Port interfaces you implement: `ProviderAdapter`, `UsageSink`, `PricingSource`, `RateLimiter`, `Clock`, `IdGenerator`, `Logger`, `Telemetry`.
 
 ## Quick example
 
@@ -50,7 +51,12 @@ const result = await client.runStructured(
 // result.usage    — { inputTokens, outputTokens, thinkingTokens, cachedInputTokens }
 // result.cost     — { microUsd, pricingVersion, details: { input, cached, output } }
 // result.reasoningText — thought summary if includeThoughts was set
+// result.queueDelayMs — wait inside RateLimiter.acquire, separate from latencyMs
 ```
+
+`createClient({ strictPricing: true, ... })` performs an opt-in construction-time check that every
+registered model resolves to a priced entry. Runtime pricing remains fail-open: pricing failures do
+not fail LLM calls.
 
 ## Logging & Observability
 
@@ -97,7 +103,8 @@ and `onError`. Hook failures are swallowed fail-open.
 Every call attempt is persisted via `UsageSink.record(r: LlmCallRecord)`. The sink must be
 idempotent on `r.attemptId`. Key traceability fields: `callId` (stable across retries),
 `attemptId`, `attemptNumber` (1-based), `latencyMs`, token counts, `costMicroUsd`, `errorKind`,
-and `metadata` (host-supplied, stored verbatim).
+`queueDelayMs`, and `metadata` (host-supplied, stored verbatim). `latencyMs` measures provider
+dispatch only; `queueDelayMs` measures pre-send wait inside `RateLimiter.acquire`.
 
 If a request includes `idempotencyKey`, attempt 1 uses that exact value as `attemptId`. In-process
 library retries suffix later attempts (`key:2`, `key:3`, ...), so callers should correlate the final

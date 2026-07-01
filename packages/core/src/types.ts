@@ -148,13 +148,15 @@ export type Message = { role: 'user' | 'assistant'; parts: Part[] }
  * Adapters map this to provider-specific knobs (e.g. Gemini `thinkingConfig`)
  * Adapters throw `LlmError('bad_request')` when the mapping cannot be applied.
  */
+export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high'
+
 export interface ReasoningIntent {
   /**
    * Abstract effort level.
    * - Gemini 2.5 → maps to `thinkingBudget` tokens.
    * - Gemini 3.x → maps to `thinkingLevel`.
    */
-  effort?: 'none' | 'low' | 'medium' | 'high'
+  effort?: ReasoningEffort
   /** Explicit token budget for thinking (overrides `effort` when both present). */
   budgetTokens?: number
   /**
@@ -399,6 +401,8 @@ export interface LlmResult {
   servedServiceTier?: string
   /** Wall-clock time from request dispatch to response ready, in milliseconds. */
   latencyMs: number
+  /** Time spent waiting in the configured RateLimiter before provider dispatch. */
+  queueDelayMs?: number
   /**
    * Warnings emitted during the call.
    * Always an array (possibly empty); never `undefined`.

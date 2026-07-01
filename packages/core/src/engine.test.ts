@@ -26,6 +26,7 @@ import type {
   Logger,
   CallStartEvent,
   CallSuccessEvent,
+  ModelRegistry,
 } from './index.js'
 import {
   FakeAdapter,
@@ -1233,6 +1234,98 @@ describe('engine — pricingFamily routing', () => {
     // Cost should be computed (not null) because pricingFamily → 'gemini-2.5-pro' IS priced.
     expect(rec.costMicroUsd).not.toBeNull()
     expect(rec.pricingVersion).toBeDefined()
+  })
+
+  it('strictPricing rejects the default registry because Gemma 4 is intentionally unpriced', () => {
+    expect(() =>
+      createClient({
+        adapters: [new FakeAdapter('google', makeSuccessResult())],
+        pricing: PRICING,
+        strictPricing: true,
+      }),
+    ).toThrow(LlmError)
+  })
+
+  it('strictPricing constructs when every registered descriptor resolves to pricing', () => {
+    const customRegistry = createModelRegistry([
+      {
+        id: 'my-priced-model',
+        provider: 'google',
+        pricingFamily: 'gemini-2.5-pro',
+      },
+    ])
+
+    expect(() =>
+      createClient({
+        adapters: [new FakeAdapter('google', makeSuccessResult())],
+        pricing: PRICING,
+        modelRegistry: customRegistry,
+        strictPricing: true,
+      }),
+    ).not.toThrow()
+  })
+
+  it('strictPricing requires custom registries to implement listDescriptors', () => {
+    const registryWithoutEnumeration: ModelRegistry = {
+      resolve(model) {
+        if (model === 'my-priced-model') {
+          return {
+            id: 'my-priced-model',
+            provider: 'google',
+            pricingFamily: 'gemini-2.5-pro',
+          }
+        }
+        return undefined
+      },
+    }
+
+    expect(() =>
+      createClient({
+        adapters: [new FakeAdapter('google', makeSuccessResult())],
+        pricing: PRICING,
+        modelRegistry: registryWithoutEnumeration,
+        strictPricing: true,
+      }),
+    ).toThrow(/listDescriptors/)
+  })
+
+  it('default pricing remains fail-open for unpriced models and emits a warning', async () => {
+    const sink = new RecordingSink()
+    const client = createClient({
+      adapters: [
+        new FakeAdapter(
+          'google',
+          makeSuccessResult({ model: 'gemma-4-31b-it' }),
+        ),
+      ],
+      pricing: PRICING,
+      sink,
+      clock: new FakeClock(),
+      ids: new FakeIds(),
+    })
+
+    const result = await client.generate(
+      {
+        model: 'gemma-4-31b-it',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
+
+    expect(result.cost?.microUsd).toBeNull()
+    expect(result.warnings).toEqual([
+      expect.objectContaining({
+        type: 'other',
+        message: expect.stringContaining('unpriced'),
+      }),
+    ])
+    expect(sink.last()!.costMicroUsd).toBeNull()
+    expect(sink.last()!.warnings).toEqual([
+      expect.objectContaining({
+        type: 'other',
+        message: expect.stringContaining('unpriced'),
+      }),
+    ])
   })
 })
 

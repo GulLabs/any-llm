@@ -40,9 +40,8 @@ Concrete implementations live outside the engine, in separate packages or in hos
 | ----------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------ |
 | `ProviderAdapter` | `@gullabs/google`, future provider packages           | Translates `ResolvedRequest` ↔ raw SDK. Never validates, costs, or persists.   |
 | `UsageSink`       | Host app, `@gullabs/drizzle`                          | Receives completed `LlmCallRecord`. Called fail-open.                          |
-| `PricingSource`   | `@gullabs/core` (built-in Gemini snapshot), or custom | Returns `Cost` for a model + usage. Called fail-open.                          |
-| `AuthProvider`    | Host app                                              | Returns `AuthMaterial` (`{ apiKey }` or Vertex WIF) per provider at call time. |
-| `RateLimiter`     | Host app or companion package                         | Pre-send backpressure. `acquire` is fail-closed. Default is a no-op.           |
+| `PricingSource`   | `@gullabs/core` (built-in Gemini snapshot), or custom | Returns `Cost` for a model + usage; exposes `hasModel`/`listModels` for strict construction-time checks. Runtime pricing is fail-open. |
+| `RateLimiter`     | Host app, `@gullabs/quota`, or another companion package | Pre-send backpressure. `acquire` is fail-closed. Default is a no-op; wait time is recorded as `queueDelayMs`. |
 | `Telemetry`       | Host app (Sentry / PostHog / OTel hook)               | Optional; all callbacks are optional. Called fail-open.                        |
 | `Logger`          | Host app                                              | Structured logger (`info`, `warn`, `error`). Defaults to no-op.                |
 | `Clock`           | `@gullabs/testing` (`FakeClock`) or default           | `Date.now()` abstraction for deterministic latency in tests.                   |
@@ -65,14 +64,14 @@ Concrete implementations live outside the engine, in separate packages or in hos
   │  • callId assignment + telemetry.onStart               │
   │  • Middleware chain composition (reduceRight)          │
   │  • Per-attempt: route → auth → acquire → adapter.run   │
-  │    → normalizeUsage → safeParse → price → buildRecord  │
+  │    → normalizeUsage → parse JSON → price → buildRecord │
   │    → sink.record → LlmResult                           │
   │  • Epilogue: telemetry.onSuccess / onError             │
   └────┬──────┬───────┬──────┬──────┬──────┬──────┬───────┘
        │      │       │      │      │      │      │
-  ProviderAdapter  UsageSink  PricingSource  AuthProvider
+  ProviderAdapter  UsageSink  PricingSource  RateLimiter
        │      │       │      │      │      │      │
-  RateLimiter  Telemetry  Logger  Clock  IdGenerator
+    Telemetry  Logger  Clock  IdGenerator
        │
        ▼
   @gullabs/google (geminiAdapter)
@@ -148,7 +147,8 @@ Each invocation generates a fresh `attemptId`. Steps:
 5. **Rate-limiter acquire.** `rateLimiter.acquire("${provider}:${model}", signal)` is raced
    against the cancellation promises. On rejection (caller abort, timeout, or limiter error),
    the call fails. On resolution, a `Release` function is returned; it is called on every exit
-   path (success and error).
+   path (success and error). Time spent waiting here is recorded as `queueDelayMs` and excluded
+   from provider-dispatch `latencyMs`.
 
 6. **Adapter invocation.** `adapter.run(resolvedReq, adapterCtx)` is raced against the
    cancellation promises. The adapter receives the merged abort signal (caller + timeout).
@@ -176,8 +176,8 @@ Each invocation generates a fresh `attemptId`. Steps:
     path and the error path (postmortem record with whatever usage was known).
 
 12. **Return `LlmResult`.** The result carries `usage`, `cost` (including derived `cost.usd`),
-    `text`, `output` (schema-validated), `reasoningText`, `latencyMs`, `warnings`,
-    `providerMetadata`, and provider metadata fields.
+    `text`, parsed `output` + `outputParsed` for structured-output calls, `reasoningText`,
+    `latencyMs`, `queueDelayMs`, `warnings`, `providerMetadata`, and provider metadata fields.
 
 ### Phase 4 — Epilogue (once per logical call)
 
@@ -506,13 +506,13 @@ The `@google/genai` SDK defaults its HTTP transport timeout to ~60 seconds. The 
 | -------------------------------------------- | ------------------------------------------------------ |
 | `providerOptions.google.httpOptions` present | Caller value wins (spread over any computed value)     |
 | `timeoutMs` is set                           | `timeoutMs + 5 000 ms` (`TRANSPORT_TIMEOUT_BUFFER_MS`) |
-| `serviceTier === 'flex'`, no `timeoutMs`     | `FLEX_DEFAULT_TIMEOUT_MS` (900 000 ms)                 |
-| `serviceTier === 'standard'`, no `timeoutMs` | No forced timeout; SDK default applies                 |
+| `serviceTier === 'flex'`, no `timeoutMs`     | `FLEX_DEFAULT_TIMEOUT_MS` (1 500 000 ms)               |
+| `serviceTier === 'standard'`, no `timeoutMs` | `STANDARD_DEFAULT_TIMEOUT_MS` (300 000 ms)             |
 
 The 5 000 ms buffer ensures the engine's `AbortSignal` fires before the SDK transport timer so
 the error is classified as `LlmError('timeout')` rather than a raw SDK error.
-`FLEX_DEFAULT_TIMEOUT_MS` and `TRANSPORT_TIMEOUT_BUFFER_MS` are exported constants from
-`@gullabs/google`.
+`FLEX_DEFAULT_TIMEOUT_MS`, `STANDARD_DEFAULT_TIMEOUT_MS`, and `TRANSPORT_TIMEOUT_BUFFER_MS` are
+exported constants from `@gullabs/google`.
 
 ---
 
@@ -537,5 +537,6 @@ union's `kind` discriminant is reserved for future `tool-call` and `tool-result`
 `ResolvedRequest` pointing to a different model. A fallback middleware (retry on `server` with
 a different provider) is implementable today; no first-party implementation ships in v1.
 
-**Distributed rate limiting.** The `RateLimiter` port is in place. v1 ships only a no-op default.
-A companion package wrapping Upstash or Redis would satisfy the port without any engine changes.
+**Distributed rate limiting.** The `RateLimiter` port is in place. Core defaults to a no-op
+limiter, while `@gullabs/quota` provides companion quota primitives for shared enforcement.
+Custom Upstash or Redis implementations can still satisfy the port without engine changes.

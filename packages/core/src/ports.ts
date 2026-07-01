@@ -216,7 +216,8 @@ export type Release = () => void
  * Temporal task-queue rate limiting (via `maxConcurrentActivityTaskExecutors`
  * and workflow `RateLimitInterceptor`) gates execution upstream, so the engine
  * running inside a Temporal activity typically uses the no-op
- * `NOOP_RATE_LIMITER` — the seam is satisfied trivially.
+ * `NOOP_RATE_LIMITER` — the seam is satisfied trivially. See `@gullabs/quota`'s
+ * README for the quota-specific discussion of this conscious fail-open default.
  *
  * **In-process concurrency cap** (tests / single-node):
  * Use `inMemoryRateLimiter` from `@gullabs/core` to enforce a per-key
@@ -271,6 +272,10 @@ export interface PricingSource {
    * @param tier - Service tier (`'flex'` | `'standard'`), if relevant to pricing.
    */
   price(model: string, usage: Usage, tier?: string): Cost
+  /** True when `model` resolves to a priced entry via the same exact/prefix rules as `price()`. */
+  hasModel(model: string): boolean
+  /** All model keys this source can price (exact-match keys only, not derived prefixes). */
+  listModels(): readonly string[]
 }
 
 // ---------------------------------------------------------------------------

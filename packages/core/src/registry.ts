@@ -8,7 +8,7 @@
  */
 
 import { LlmError } from './errors.js'
-import type { JsonValue } from './types.js'
+import type { JsonValue, ReasoningEffort } from './types.js'
 import type { StandardSchemaV1 } from './standard-schema.js'
 
 // ---------------------------------------------------------------------------
@@ -57,6 +57,11 @@ export interface ModelDescriptor {
      */
     reasoningApi?: 'budget' | 'level'
     /**
+     * Reasoning effort tiers the model admits for `thinkingConfig`.
+     * Omitted for models that do not support reasoning.
+     */
+    admittedReasoningEfforts?: ReadonlyArray<ReasoningEffort>
+    /**
      * Whether the model supports tunable sampling parameters.
      * - `'tunable'` — temperature, topP, topK are accepted (Gemini 2.5 series).
      * - `'fixed'`   — sampling is fixed; temperature/topP/topK are rejected
@@ -77,6 +82,10 @@ export interface ModelDescriptor {
     /**
      * Provider service tiers safe to send to the SDK for this model.
      * Omit when the adapter should not emit serviceTier at all.
+     *
+     * `priority` is intentionally NOT a member of this union. It was evaluated
+     * and excluded: Gemini Developer API pricing and availability semantics for
+     * `priority` are unverified. Revisit only after confirming both with Google.
      */
     serviceTiers?: ('flex' | 'standard')[]
   }
@@ -104,6 +113,12 @@ export interface ModelDescriptor {
  */
 export interface ModelRegistry {
   resolve(model: string): ModelDescriptor | undefined
+  /**
+   * Optional: enumerate every descriptor this registry knows about. Required
+   * for `ClientConfig.strictPricing` to walk the full registered model set at
+   * construction time. Custom registries that omit this cannot use strict mode.
+   */
+  listDescriptors?(): readonly ModelDescriptor[]
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +163,9 @@ export function createModelRegistry(descriptors: ModelDescriptor[]): ModelRegist
       }
       return best
     },
+    listDescriptors(): readonly ModelDescriptor[] {
+      return descriptors.slice()
+    },
   }
 }
 
@@ -168,7 +186,7 @@ export function createModelRegistry(descriptors: ModelDescriptor[]): ModelRegist
  */
 export function makeGeminiConfigSchema(opts: {
   sampling: 'tunable' | 'fixed'
-  reasoningEfforts?: ReadonlyArray<'none' | 'low' | 'medium' | 'high'>
+  reasoningEfforts?: ReadonlyArray<ReasoningEffort>
 }): JsonValue {
   const samplingProps: { [k: string]: JsonValue } =
     opts.sampling === 'tunable'
@@ -192,7 +210,7 @@ export function makeGeminiConfigSchema(opts: {
             type: 'string',
             enum: opts.reasoningEfforts
               ? [...opts.reasoningEfforts]
-              : ['none', 'low', 'medium', 'high'],
+              : [...ALL_REASONING_EFFORTS],
           },
           budgetTokens: { type: 'integer' },
           includeThoughts: { type: 'boolean' },
@@ -218,7 +236,7 @@ export function makeGeminiConfigSchema(opts: {
  */
 export function makeGeminiConfigValidator(opts: {
   sampling: 'tunable' | 'fixed'
-  reasoningEfforts?: ReadonlyArray<'none' | 'low' | 'medium' | 'high'>
+  reasoningEfforts?: ReadonlyArray<ReasoningEffort>
 }): StandardSchemaV1 {
   return {
     '~standard': {
@@ -290,6 +308,22 @@ export function makeGeminiConfigValidator(opts: {
   }
 }
 
+const ALL_REASONING_EFFORTS = [
+  'none',
+  'low',
+  'medium',
+  'high',
+] as const satisfies ReadonlyArray<ReasoningEffort>
+const PRO_PREVIEW_REASONING_EFFORTS = [
+  'low',
+  'medium',
+  'high',
+] as const satisfies ReadonlyArray<ReasoningEffort>
+const GEMMA_REASONING_EFFORTS = [
+  'none',
+  'high',
+] as const satisfies ReadonlyArray<ReasoningEffort>
+
 // ---------------------------------------------------------------------------
 // Built-in Gemini descriptor set (derived from GEMINI_PRICING + adapter logic)
 // ---------------------------------------------------------------------------
@@ -322,13 +356,20 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       nativeStructuredOutput: true,
       vision: true,
       reasoningApi: 'budget',
+      admittedReasoningEfforts: ALL_REASONING_EFFORTS,
       sampling: 'tunable',
       caching: { explicit: true, minTokens: 2048 },
       grounding: true,
       serviceTiers: ['flex', 'standard'],
     },
-    configJsonSchema: makeGeminiConfigSchema({ sampling: 'tunable' }),
-    validateConfig: makeGeminiConfigValidator({ sampling: 'tunable' }),
+    configJsonSchema: makeGeminiConfigSchema({
+      sampling: 'tunable',
+      reasoningEfforts: ALL_REASONING_EFFORTS,
+    }),
+    validateConfig: makeGeminiConfigValidator({
+      sampling: 'tunable',
+      reasoningEfforts: ALL_REASONING_EFFORTS,
+    }),
   },
   {
     id: 'gemini-2.5-flash',
@@ -340,13 +381,20 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       nativeStructuredOutput: true,
       vision: true,
       reasoningApi: 'budget',
+      admittedReasoningEfforts: ALL_REASONING_EFFORTS,
       sampling: 'tunable',
       caching: { explicit: true, minTokens: 2048 },
       grounding: true,
       serviceTiers: ['flex', 'standard'],
     },
-    configJsonSchema: makeGeminiConfigSchema({ sampling: 'tunable' }),
-    validateConfig: makeGeminiConfigValidator({ sampling: 'tunable' }),
+    configJsonSchema: makeGeminiConfigSchema({
+      sampling: 'tunable',
+      reasoningEfforts: ALL_REASONING_EFFORTS,
+    }),
+    validateConfig: makeGeminiConfigValidator({
+      sampling: 'tunable',
+      reasoningEfforts: ALL_REASONING_EFFORTS,
+    }),
   },
   {
     id: 'gemini-2.5-flash-lite',
@@ -358,13 +406,20 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       nativeStructuredOutput: true,
       vision: true,
       reasoningApi: 'budget',
+      admittedReasoningEfforts: ALL_REASONING_EFFORTS,
       sampling: 'tunable',
       caching: { explicit: true, minTokens: 2048 },
       grounding: true,
       serviceTiers: ['flex', 'standard'],
     },
-    configJsonSchema: makeGeminiConfigSchema({ sampling: 'tunable' }),
-    validateConfig: makeGeminiConfigValidator({ sampling: 'tunable' }),
+    configJsonSchema: makeGeminiConfigSchema({
+      sampling: 'tunable',
+      reasoningEfforts: ALL_REASONING_EFFORTS,
+    }),
+    validateConfig: makeGeminiConfigValidator({
+      sampling: 'tunable',
+      reasoningEfforts: ALL_REASONING_EFFORTS,
+    }),
   },
 
   // ── Gemini 3.x series — thinkingLevel API, fixed sampling ───────────────
@@ -379,13 +434,20 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       nativeStructuredOutput: true,
       vision: true,
       reasoningApi: 'level',
+      admittedReasoningEfforts: ALL_REASONING_EFFORTS,
       sampling: 'fixed',
       caching: { explicit: true, minTokens: 2048 },
       grounding: true,
       serviceTiers: ['flex', 'standard'],
     },
-    configJsonSchema: makeGeminiConfigSchema({ sampling: 'fixed' }),
-    validateConfig: makeGeminiConfigValidator({ sampling: 'fixed' }),
+    configJsonSchema: makeGeminiConfigSchema({
+      sampling: 'fixed',
+      reasoningEfforts: ALL_REASONING_EFFORTS,
+    }),
+    validateConfig: makeGeminiConfigValidator({
+      sampling: 'fixed',
+      reasoningEfforts: ALL_REASONING_EFFORTS,
+    }),
   },
   {
     id: 'gemini-3.1-flash-lite',
@@ -397,13 +459,20 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       nativeStructuredOutput: true,
       vision: true,
       reasoningApi: 'level',
+      admittedReasoningEfforts: ALL_REASONING_EFFORTS,
       sampling: 'fixed',
       caching: { explicit: true, minTokens: 2048 },
       grounding: true,
       serviceTiers: ['flex', 'standard'],
     },
-    configJsonSchema: makeGeminiConfigSchema({ sampling: 'fixed' }),
-    validateConfig: makeGeminiConfigValidator({ sampling: 'fixed' }),
+    configJsonSchema: makeGeminiConfigSchema({
+      sampling: 'fixed',
+      reasoningEfforts: ALL_REASONING_EFFORTS,
+    }),
+    validateConfig: makeGeminiConfigValidator({
+      sampling: 'fixed',
+      reasoningEfforts: ALL_REASONING_EFFORTS,
+    }),
   },
   {
     // gemini-3.1-pro-preview cannot disable thinking: the model rejects thinkingLevel
@@ -417,6 +486,7 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       nativeStructuredOutput: true,
       vision: true,
       reasoningApi: 'level',
+      admittedReasoningEfforts: PRO_PREVIEW_REASONING_EFFORTS,
       sampling: 'fixed',
       caching: { explicit: true, minTokens: 2048 },
       grounding: true,
@@ -424,11 +494,11 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
     },
     configJsonSchema: makeGeminiConfigSchema({
       sampling: 'fixed',
-      reasoningEfforts: ['low', 'medium', 'high'],
+      reasoningEfforts: PRO_PREVIEW_REASONING_EFFORTS,
     }),
     validateConfig: makeGeminiConfigValidator({
       sampling: 'fixed',
-      reasoningEfforts: ['low', 'medium', 'high'],
+      reasoningEfforts: PRO_PREVIEW_REASONING_EFFORTS,
     }),
   },
   {
@@ -441,13 +511,20 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       nativeStructuredOutput: true,
       vision: true,
       reasoningApi: 'level',
+      admittedReasoningEfforts: ALL_REASONING_EFFORTS,
       sampling: 'fixed',
       caching: { explicit: true, minTokens: 2048 },
       grounding: true,
       serviceTiers: ['flex', 'standard'],
     },
-    configJsonSchema: makeGeminiConfigSchema({ sampling: 'fixed' }),
-    validateConfig: makeGeminiConfigValidator({ sampling: 'fixed' }),
+    configJsonSchema: makeGeminiConfigSchema({
+      sampling: 'fixed',
+      reasoningEfforts: ALL_REASONING_EFFORTS,
+    }),
+    validateConfig: makeGeminiConfigValidator({
+      sampling: 'fixed',
+      reasoningEfforts: ALL_REASONING_EFFORTS,
+    }),
   },
 ]
 
@@ -482,6 +559,7 @@ export const gemmaModelDescriptors: ModelDescriptor[] = [
     capabilities: {
       reasoning: true,
       reasoningApi: 'level',
+      admittedReasoningEfforts: GEMMA_REASONING_EFFORTS,
       structuredOutput: true,
       nativeStructuredOutput: true,
       grounding: true,
@@ -490,11 +568,11 @@ export const gemmaModelDescriptors: ModelDescriptor[] = [
     },
     configJsonSchema: makeGeminiConfigSchema({
       sampling: 'tunable',
-      reasoningEfforts: ['none', 'high'],
+      reasoningEfforts: GEMMA_REASONING_EFFORTS,
     }),
     validateConfig: makeGeminiConfigValidator({
       sampling: 'tunable',
-      reasoningEfforts: ['none', 'high'],
+      reasoningEfforts: GEMMA_REASONING_EFFORTS,
     }),
   },
   {
@@ -503,6 +581,7 @@ export const gemmaModelDescriptors: ModelDescriptor[] = [
     capabilities: {
       reasoning: true,
       reasoningApi: 'level',
+      admittedReasoningEfforts: GEMMA_REASONING_EFFORTS,
       structuredOutput: true,
       nativeStructuredOutput: true,
       grounding: true,
@@ -511,11 +590,11 @@ export const gemmaModelDescriptors: ModelDescriptor[] = [
     },
     configJsonSchema: makeGeminiConfigSchema({
       sampling: 'tunable',
-      reasoningEfforts: ['none', 'high'],
+      reasoningEfforts: GEMMA_REASONING_EFFORTS,
     }),
     validateConfig: makeGeminiConfigValidator({
       sampling: 'tunable',
-      reasoningEfforts: ['none', 'high'],
+      reasoningEfforts: GEMMA_REASONING_EFFORTS,
     }),
   },
 ]

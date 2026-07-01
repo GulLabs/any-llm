@@ -322,6 +322,20 @@ describe('geminiPricingSource', () => {
     expect(cost.microUsd).toBeNull()
     expect(cost.confidence).toBe('estimated')
   })
+
+  it('hasModel uses the same exact and prefix matching as price()', () => {
+    const src = geminiPricingSource()
+
+    expect(src.hasModel('gemini-2.5-pro')).toBe(true)
+    expect(src.hasModel('gemini-2.5-pro-001')).toBe(true)
+    expect(src.hasModel('gemma-4-31b-it')).toBe(false)
+  })
+
+  it('listModels returns the exact pricing-table keys', () => {
+    const src = geminiPricingSource()
+
+    expect(src.listModels()).toEqual(Object.keys(GEMINI_PRICING))
+  })
 })
 
 // ---------------------------------------------------------------------------

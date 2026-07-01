@@ -1003,6 +1003,12 @@ describe('surface-stress: fail-open', () => {
       price(): Cost {
         throw new Error('pricing exploded')
       },
+      hasModel(): boolean {
+        return true
+      },
+      listModels(): readonly string[] {
+        return ['gemini-2.5-pro']
+      },
     }
 
     const sink = new RecordingSink()

@@ -1,4 +1,4 @@
-# @gullabs/testing
+# @gullabs/quota
 
 ## 0.2.0
 
@@ -18,16 +18,9 @@
 - Updated dependencies
   - @gullabs/core@0.4.0
 
-## 0.1.2
+## 0.1.0
 
-### Patch Changes
+### Minor Changes
 
-- Updated dependencies [ea4b941]
-  - @gullabs/core@0.3.0
-
-## 0.1.1
-
-### Patch Changes
-
-- Updated dependencies [8f1bf61]
-  - @gullabs/core@0.2.0
+- Add the provider-quota companion package for any-llm with typed allow/defer/deny decisions,
+  middleware and `RateLimiter` adapters, and an Upstash-compatible distributed store.

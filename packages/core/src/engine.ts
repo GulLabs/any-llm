@@ -66,6 +66,15 @@ export interface ClientConfig {
   /** Pricing table used to compute micro-USD cost for each call. */
   pricing: PricingSource
   /**
+   * Opt-in construction-time pricing integrity check.
+   *
+   * When true, `createClient()` walks the configured model registry and throws
+   * if any registered model has no entry in the configured pricing source.
+   * Runtime pricing remains fail-open; this guard is deliberately only at
+   * construction time.
+   */
+  strictPricing?: boolean
+  /**
    * Where completed call records are persisted.
    * Failures are logged and swallowed (fail-open) — a broken sink must never
    * fail the LLM call.
@@ -617,6 +626,7 @@ function buildSuccessRecord(
   cost: Cost | undefined,
   allWarnings: Warning[],
   latencyMs: number,
+  queueDelayMs: number | undefined,
   startMs: number,
   attemptNumber: number,
   externalId: string | undefined,
@@ -649,6 +659,7 @@ function buildSuccessRecord(
       : {}),
     ...(outputParsed !== undefined ? { outputParsed } : {}),
     warnings: allWarnings,
+    ...(queueDelayMs !== undefined ? { queueDelayMs } : {}),
     generationConfig: resolvedConfig,
     metadata: metadata ?? {},
     createdAt: new Date(startMs).toISOString(),
@@ -674,6 +685,7 @@ function buildErrorRecord(
   resolvedConfig: ResolvedConfig,
   usage: Usage,
   latencyMs: number,
+  queueDelayMs: number | undefined,
   startMs: number,
   err: LlmError,
   attemptNumber: number,
@@ -689,6 +701,7 @@ function buildErrorRecord(
     model,
     usage,
     latencyMs,
+    ...(queueDelayMs !== undefined ? { queueDelayMs } : {}),
     // buildRecord overrides status from error.kind via errorKindToStatus.
     status: 'api_error',
     ...(err.servedServiceTier !== undefined
@@ -865,6 +878,27 @@ export function createClient(config: ClientConfig): Client {
     }
   }
 
+  if (config.strictPricing === true) {
+    const descriptors = registry.listDescriptors?.()
+    if (descriptors === undefined) {
+      throw new LlmError(
+        'strictPricing requires a ModelRegistry that implements listDescriptors(); ' +
+          'the configured custom registry does not.',
+        { kind: 'bad_request', retryable: false },
+      )
+    }
+    for (const d of descriptors) {
+      const pricingKey = d.pricingFamily ?? d.id
+      if (!pricing.hasModel(pricingKey)) {
+        throw new LlmError(
+          `strictPricing: model "${d.id}" (pricing key "${pricingKey}") has no entry in the ` +
+            'configured PricingSource.',
+          { kind: 'bad_request', retryable: false },
+        )
+      }
+    }
+  }
+
   const routeFn =
     config.route ??
     ((model: string, adpts: ProviderAdapter[]) =>
@@ -991,6 +1025,8 @@ export function createClient(config: ClientConfig): Client {
       let cost: Cost | undefined
       // Release function returned by rateLimiter.acquire — called on every exit path.
       let release: Release | undefined
+      let queueDelayMs: number | undefined
+      let dispatchStartMs: number | undefined
       // Cancellation cleanup — idempotent; safe to call on both paths.
       let cleanup: () => void = () => {}
 
@@ -1055,15 +1091,28 @@ export function createClient(config: ClientConfig): Client {
         cleanup = cancellation.cleanup
         const { raceParts, combinedSignal } = cancellation
 
-        // Step 6b: Rate-limiter acquire — PRE-SEND backpressure.
+        // Step 6b: Rate-limiter acquire — PRE-SEND backpressure. Measure
+        // queueDelayMs separately from provider-dispatch latencyMs below.
+        const acquireStartMs = ctx.clock.now()
         const acquirePromise = rateLimiter.acquire(
           `${provider}:${req.model}`,
           combinedSignal,
         )
-        release =
-          raceParts.length > 0
-            ? await Promise.race([acquirePromise, ...raceParts])
-            : await acquirePromise
+        try {
+          release =
+            raceParts.length > 0
+              ? await Promise.race([acquirePromise, ...raceParts])
+              : await acquirePromise
+        } catch (acquireErr) {
+          queueDelayMs = ctx.clock.now() - acquireStartMs
+          throw acquireErr
+        }
+        queueDelayMs = ctx.clock.now() - acquireStartMs
+
+        ctx.logger.debug(
+          { callId: ctx.callId, attemptNumber, queueDelayMs },
+          'llm.call.attempt.dispatch',
+        )
 
         // Step 6c: Build adapter-specific request (with the combined signal)
         // and the AdapterCtx.
@@ -1077,6 +1126,7 @@ export function createClient(config: ClientConfig): Client {
         }
 
         // Step 7: Run adapter — raced against all cancellation promises.
+        dispatchStartMs = ctx.clock.now()
         const runPromise = adapter.run(adapterReq, adapterCtx)
         const adapterResult =
           raceParts.length > 0
@@ -1118,6 +1168,12 @@ export function createClient(config: ClientConfig): Client {
             normalizedResult.usage,
             adapterResult.servedServiceTier ?? req.config.serviceTier,
           )
+          if (cost.microUsd === null) {
+            costWarnings.push({
+              type: 'other',
+              message: `Model "${req.model}" is unpriced (cost.microUsd is null); usage was recorded but not costed.`,
+            })
+          }
         } catch (costErr) {
           costWarnings.push({
             type: 'other',
@@ -1137,7 +1193,7 @@ export function createClient(config: ClientConfig): Client {
         ]
 
         // Step 10: Build LlmCallRecord.
-        const latencyMs = ctx.clock.now() - attemptStartMs
+        const latencyMs = ctx.clock.now() - dispatchStartMs
         const record = buildSuccessRecord(
           ctx.callId,
           attemptId,
@@ -1151,6 +1207,7 @@ export function createClient(config: ClientConfig): Client {
           cost,
           allWarnings,
           latencyMs,
+          queueDelayMs,
           attemptStartMs,
           attemptNumber,
           request.externalId,
@@ -1167,6 +1224,7 @@ export function createClient(config: ClientConfig): Client {
           usage: normalizedResult.usage,
           model: adapterResult.model,
           latencyMs,
+          queueDelayMs,
           warnings: allWarnings,
           ...(output !== undefined ? { output } : {}),
           ...(outputParsed !== undefined ? { outputParsed } : {}),
@@ -1206,7 +1264,7 @@ export function createClient(config: ClientConfig): Client {
         const err = classifyError(rawErr)
 
         // Build postmortem record with whatever we know.
-        const latencyMs = ctx.clock.now() - attemptStartMs
+        const latencyMs = ctx.clock.now() - (dispatchStartMs ?? attemptStartMs)
         const errorRecord = buildErrorRecord(
           ctx.callId,
           attemptId,
@@ -1217,6 +1275,7 @@ export function createClient(config: ClientConfig): Client {
           resolvedConfig,
           normalizedResult?.usage ?? EMPTY_USAGE,
           latencyMs,
+          queueDelayMs,
           attemptStartMs,
           err,
           attemptNumber,

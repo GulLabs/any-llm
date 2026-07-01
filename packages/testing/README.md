@@ -14,6 +14,7 @@ Reusable test fakes for any-llm. Lets you drive the full engine pipeline — inc
 | `fakeGeminiBlocked(opts)`  | Builds a safety-blocked `GeminiResponseLike` (no candidates, `promptFeedback.blockReason` set) |
 | `FakeAdapter`              | Scriptable `ProviderAdapter` — use at the port level (bypasses Gemini SDK entirely)            |
 | `SignalAwareFakeAdapter`   | Like `FakeAdapter` but observes and honours `AbortSignal` from `AdapterCtx`                    |
+| `scriptedRateLimiter(opts)` | RateLimiter fake with injectable wait for deterministic `queueDelayMs` assertions              |
 
 ## Quick example — end-to-end with fake Gemini client
 

@@ -7,7 +7,7 @@
  * @module
  */
 
-import { LlmError, classifyError, assertNever } from '@gullabs/core'
+import { LlmError, classifyError, assertNever, EFFORT_BUDGET } from '@gullabs/core'
 import type {
   ProviderAdapter,
   ResolvedRequest,
@@ -40,17 +40,6 @@ import { isGeminiCapacityError } from './flex-fallback.js'
 // Exported types for consumers that inject a custom client
 // ---------------------------------------------------------------------------
 export type { GeminiClientLike }
-
-// ---------------------------------------------------------------------------
-// Reasoning effort → thinkingBudget mapping (gemini-2.5* models)
-// ---------------------------------------------------------------------------
-
-const EFFORT_BUDGET: Record<string, number> = {
-  none: 0,
-  low: 1024,
-  medium: 8192,
-  high: 24576,
-}
 
 // ---------------------------------------------------------------------------
 // FinishReason mapping (Gemini SDK enum → our FinishReason)
@@ -315,7 +304,7 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
             reasoning.budgetTokens !== undefined
               ? reasoning.budgetTokens
               : reasoning.effort !== undefined
-              ? EFFORT_BUDGET[reasoning.effort] ?? 0
+              ? EFFORT_BUDGET[reasoning.effort]
               : undefined
 
           config.thinkingConfig = {
@@ -390,6 +379,26 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
         googleOpts !== null
       ) {
         Object.assign(config, googleOpts)
+      }
+
+      // ------------------------------------------------------------------
+      // 5a. Re-assert serviceTier validity AFTER providerOptions merge.
+      //     providerOptions.google is a last-write-wins escape hatch; without
+      //     this re-check a caller can inject an arbitrary serviceTier string
+      //     that bypasses the earlier validation.
+      // ------------------------------------------------------------------
+      const mergedServiceTier = (config as { serviceTier?: string }).serviceTier
+      if (mergedServiceTier !== undefined && req.modelDescriptor !== undefined) {
+        const supportedAfterMerge = req.modelDescriptor.capabilities?.serviceTiers
+        if (
+          supportedAfterMerge === undefined ||
+          !supportedAfterMerge.includes(mergedServiceTier as 'flex' | 'standard')
+        ) {
+          throw new LlmError(
+            `serviceTier "${mergedServiceTier}" is not supported for model "${model}".`,
+            { kind: 'bad_request', retryable: false },
+          )
+        }
       }
 
       // ------------------------------------------------------------------

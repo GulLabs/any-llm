@@ -7,6 +7,70 @@ This project does not use semantic versioning yet — it will adopt semver on fi
 
 ---
 
+## [Unreleased] / 0.3.0 — next
+
+### Added
+
+**`@gullabs/quota`**
+
+- New companion package for provider-level quota control. It exports
+  `providerQuotaMiddleware`, `providerQuotaRateLimiter`, `upstashQuotaStore`, typed quota decisions,
+  and Gemini quota defaults for RPM/RPD enforcement outside core.
+- `QuotaDecision` now separates temporary `defer` outcomes from permanent `deny` outcomes;
+  `provider_disabled` is deny-only and throws non-retryable `rate_limited` errors.
+
+**`@gullabs/core`**
+
+- New `resolveReasoning`, `EFFORT_BUDGET`, and `ReasoningEffort` exports centralize Gemini/Gemma
+  reasoning-budget resolution in core.
+- `ClientConfig.strictPricing` adds an opt-in construction-time check that every registered model
+  resolves to a priced entry.
+- `LlmResult` and `LlmCallRecord` now include `queueDelayMs`, separating rate-limiter wait time from
+  provider-dispatch `latencyMs`.
+- Unpriced calls now emit an always-on warning when `cost.microUsd === null`, even when
+  `strictPricing` is not enabled.
+
+**`@gullabs/testing`**
+
+- Added `scriptedRateLimiter()` for deterministic `queueDelayMs` tests.
+
+**Docs**
+
+- Added adoption docs for ledger sidecars, grounded-to-structured correlation via
+  `metadata.operationId`, multi-runtime retry caveats, and caller-owned structured-output
+  validation.
+
+### Breaking Changes
+
+**`@gullabs/core`**
+
+- Structured output is now forward-only. `LlmRequest.output` takes `{ jsonSchema: JsonValue }`
+  instead of a Zod schema; the engine forwards the schema to the provider as a generation hint,
+  JSON.parses the response, and returns `LlmResult.output: unknown` + `outputParsed: boolean`. The
+  library performs no output validation of its own — callers own validation, retry, and acceptance
+  policy. `InferOutput`, generic `LlmRequest`/`LlmResult` output typing, `output.schema`,
+  `parse_error`, and `zodToGeminiSchema` are removed.
+- `LlmRequest` gains `idempotencyKey` and `externalId` for ledger correlation. `idempotencyKey`
+  only affects the durable ledger row (attempt 1 uses it as `attemptId`; in-process retries suffix
+  it `:2`, `:3`, …) — it does not deduplicate provider calls.
+- `PricingSource` implementations must now provide `hasModel()` and `listModels()` so strict
+  pricing checks use the same exact/prefix model-resolution rules as runtime pricing.
+- `ModelDescriptor.capabilities` gains `admittedReasoningEfforts` for level-based reasoning models.
+
+**`@gullabs/drizzle`**
+
+- `llm_calls` primary key is now `attempt_id` (the redundant UUID `id` column is removed). Adds
+  `external_id`, `served_service_tier`, `output_parsed`, and `queue_delay_ms` columns.
+
+**`@gullabs/google`**
+
+- Gemini Flex calls that hit capacity pressure now fall back to standard tier automatically. The
+  tier actually served is returned as `servedServiceTier` and persisted, so cost accounting uses
+  the real tier rather than the one requested. `retryMiddleware` pins the served tier once observed
+  so later retry attempts don't flip-flop between flex and standard.
+
+---
+
 ## [Unreleased] / 0.2.0 — next
 
 ### Breaking Changes

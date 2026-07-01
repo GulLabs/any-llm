@@ -19,6 +19,7 @@ export type {
   FileUriPart,
   Part,
   Message,
+  ReasoningEffort,
   ReasoningIntent,
   GenConfig,
   LlmRequest,
@@ -69,6 +70,10 @@ export type { ModelRates } from './pricing.js'
 
 // Cost computation
 export { computeCost, geminiPricingSource } from './cost.js'
+
+// Reasoning resolution
+export type { ResolveReasoningInput, ResolvedReasoning } from './reasoning.js'
+export { resolveReasoning, EFFORT_BUDGET } from './reasoning.js'
 
 // Engine
 export type {

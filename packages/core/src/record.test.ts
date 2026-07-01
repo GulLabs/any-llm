@@ -122,6 +122,11 @@ describe('buildRecord — success path', () => {
     expect(r.latencyMs).toBe(9876)
   })
 
+  it('maps queueDelayMs when provided', () => {
+    const r = buildRecord(makeBaseInput({ queueDelayMs: 250 }))
+    expect(r.queueDelayMs).toBe(250)
+  })
+
   it('maps usage hot fields', () => {
     const r = buildRecord(
       makeBaseInput({

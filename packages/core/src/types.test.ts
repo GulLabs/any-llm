@@ -54,6 +54,10 @@ describe('LlmResult type shape', () => {
     expectTypeOf<LlmResult['latencyMs']>().toEqualTypeOf<number>()
   })
 
+  it('queueDelayMs is number | undefined', () => {
+    expectTypeOf<LlmResult['queueDelayMs']>().toEqualTypeOf<number | undefined>()
+  })
+
   it('warnings is Warning[] (required, never undefined)', () => {
     expectTypeOf<LlmResult['warnings']>().toEqualTypeOf<Warning[]>()
   })

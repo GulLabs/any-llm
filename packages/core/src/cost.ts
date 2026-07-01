@@ -186,5 +186,11 @@ export function geminiPricingSource(): PricingSource {
     price(model: string, usage: Usage, tier?: string): Cost {
       return computeCost(model, usage, tier)
     },
+    hasModel(model: string): boolean {
+      return lookupRates(model) !== undefined
+    },
+    listModels(): readonly string[] {
+      return Object.keys(GEMINI_PRICING)
+    },
   }
 }

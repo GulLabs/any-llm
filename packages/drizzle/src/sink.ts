@@ -39,6 +39,7 @@ export function drizzleUsageSink(db: InsertableDb, table = llmCalls): UsageSink 
         finishReason: r.finishReason,
         outputParsed: r.outputParsed,
         latencyMs: r.latencyMs,
+        queueDelayMs: r.queueDelayMs,
         inputTokens: r.inputTokens,
         outputTokens: r.outputTokens,
         cachedInputTokens: r.cachedInputTokens,

@@ -75,6 +75,8 @@ export interface LlmCallRecord {
   outputParsed?: boolean
   /** Wall-clock latency in milliseconds from dispatch to response. */
   latencyMs: number
+  /** Time spent waiting in the configured RateLimiter before provider dispatch. */
+  queueDelayMs?: number
 
   // --- usage (typed hot fields) ---
   /** Total input tokens (includes cached; GROSS). */
@@ -168,6 +170,8 @@ export interface BuildRecordInput {
   cost?: Cost
   /** Wall-clock latency in milliseconds. */
   latencyMs: number
+  /** Time spent waiting in the configured RateLimiter before provider dispatch. */
+  queueDelayMs?: number
   /**
    * Call outcome status.
    * The engine computes this from the call result or classified error.
@@ -594,6 +598,7 @@ export function buildRecord(input: BuildRecordInput): LlmCallRecord {
     ...(input.finishReason !== undefined ? { finishReason: input.finishReason } : {}),
     ...(input.outputParsed !== undefined ? { outputParsed: input.outputParsed } : {}),
     latencyMs: input.latencyMs,
+    ...(input.queueDelayMs !== undefined ? { queueDelayMs: input.queueDelayMs } : {}),
     // Usage hot fields — always present since Usage.inputTokens/outputTokens are required.
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,

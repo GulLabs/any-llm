@@ -67,6 +67,14 @@ describe('createModelRegistry', () => {
     expect(registry.resolve('')).toBeUndefined()
   })
 
+  it('listDescriptors returns the registered descriptors without exposing registry internals', () => {
+    const registry = createModelRegistry(descriptors)
+    const listed = registry.listDescriptors?.()
+
+    expect(listed).toEqual(descriptors)
+    expect(listed).not.toBe(descriptors)
+  })
+
   it('throws LlmError on duplicate id', () => {
     expect(() =>
       createModelRegistry([

@@ -320,9 +320,11 @@ const result = await client.generate({
 **Verified field syntax for Flex:** set `serviceTier: 'flex'` in `config` (not in
 `providerOptions.google`) and set `timeoutMs` in ms in `config` for the engine deadline. The
 adapter automatically sets `httpOptions.timeout` to `timeoutMs + 5 000 ms` as a transport-layer
-buffer. **Vertex AI caveat:** on Vertex, the `serviceTier` body field is silently ignored (SDK bug
-#1468); the adapter works around this by injecting `X-Vertex-AI-LLM-Request-Type` and
-`X-Vertex-AI-LLM-Shared-Request-Type` headers on the Vertex Flex path.
+buffer. `priority` was evaluated and intentionally excluded until Google pricing and availability
+for that tier are verified. **Vertex AI caveat:** on Vertex, the `serviceTier` body field is
+silently ignored (SDK bug #1468); the adapter works around this by injecting
+`X-Vertex-AI-LLM-Request-Type` and `X-Vertex-AI-LLM-Shared-Request-Type` headers on the Vertex
+Flex path.
 
 ## Cost
 
@@ -534,3 +536,7 @@ These are **designed seams** — the ports exist, the machinery is not built yet
 
 - [`SPEC.md`](./SPEC.md) — v1 build contract (goals, invariants, type definitions, engine pipeline)
 - [`DECISIONS.md`](./DECISIONS.md) — autonomous decision log and parked questions
+- [`docs/ledger.md`](./docs/ledger.md) — canonical `llm_calls` guidance, sidecar-table pattern, and query examples
+- [`docs/grounded-structured.md`](./docs/grounded-structured.md) — the recommended two-call Gemini grounding -> structured-output recipe
+- [`docs/multi-runtime.md`](./docs/multi-runtime.md) — web route + Temporal worker integration pattern, auth, metadata, and retry ownership
+- [`docs/structured-output-validation.md`](./docs/structured-output-validation.md) — validating `result.output` after `outputParsed` with a Standard-Schema-compatible helper

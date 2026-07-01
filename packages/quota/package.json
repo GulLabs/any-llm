@@ -1,13 +1,13 @@
 {
-  "name": "@gullabs/drizzle",
-  "version": "0.3.0",
-  "description": "Drizzle ORM companion for any-llm — reference llm_calls schema and UsageSink for Postgres.",
+  "name": "@gullabs/quota",
+  "version": "0.2.0",
+  "description": "Provider quota primitives for any-llm — middleware, RateLimiter wrapper, distributed store integration, and typed allow/defer/deny decisions.",
   "type": "module",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/gullabs/any-llm.git",
-    "directory": "packages/drizzle"
+    "directory": "packages/quota"
   },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -23,17 +23,11 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup"
+    "build": "tsup",
+    "test": "vitest run --root ../../ --config vitest.config.ts packages/quota/src/index.test.ts"
   },
   "dependencies": {
     "@gullabs/core": "workspace:*"
-  },
-  "peerDependencies": {
-    "drizzle-orm": ">=0.36.0"
-  },
-  "devDependencies": {
-    "@electric-sql/pglite": "^0.5.3",
-    "drizzle-orm": "^0.36.0"
   },
   "engines": {
     "node": ">=20.9.0"
@@ -42,17 +36,15 @@
   "keywords": [
     "llm",
     "gemini",
-    "google-genai",
-    "ai",
-    "tokens",
-    "cost",
-    "usage",
-    "observability",
+    "rate-limit",
+    "quota",
+    "upstash",
+    "middleware",
     "typescript"
   ],
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/gullabs/any-llm/tree/main/packages/drizzle#readme",
+  "homepage": "https://github.com/gullabs/any-llm/tree/main/packages/quota#readme",
   "bugs": "https://github.com/gullabs/any-llm/issues"
 }

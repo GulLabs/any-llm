@@ -26,6 +26,7 @@ export const llmCalls = pgTable(
     finishReason: text('finish_reason'),
     outputParsed: boolean('output_parsed'),
     latencyMs: integer('latency_ms'),
+    queueDelayMs: integer('queue_delay_ms'),
     inputTokens: integer('input_tokens'),
     outputTokens: integer('output_tokens'),
     cachedInputTokens: integer('cached_input_tokens'),

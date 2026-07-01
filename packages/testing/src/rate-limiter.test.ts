@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { inMemoryRateLimiter } from './rate-limiter.js'
+import { inMemoryRateLimiter, scriptedRateLimiter } from './rate-limiter.js'
+import { FakeClock } from './clock.js'
 
 describe('inMemoryRateLimiter', () => {
   it('resolves immediately when under the concurrency cap', async () => {
@@ -127,5 +128,28 @@ describe('inMemoryRateLimiter', () => {
   it('satisfies the RateLimiter interface structurally', () => {
     const limiter: import('@gullabs/core').RateLimiter = inMemoryRateLimiter()
     expect(typeof limiter.acquire).toBe('function')
+  })
+})
+
+describe('scriptedRateLimiter', () => {
+  it('advances an injected FakeClock by delayMs before resolving', async () => {
+    const clock = new FakeClock(1_000)
+    const limiter = scriptedRateLimiter({ delayMs: 250, clock })
+
+    const release = await limiter.acquire('google:gemini-2.5-pro')
+
+    expect(clock.now()).toBe(1_250)
+    expect(typeof release).toBe('function')
+    release()
+  })
+
+  it('rejects when aborted before the scripted delay resolves', async () => {
+    const limiter = scriptedRateLimiter({ delayMs: 10 })
+    const controller = new AbortController()
+    const acquire = limiter.acquire('google:gemini-2.5-pro', controller.signal)
+
+    controller.abort()
+
+    await expect(acquire).rejects.toThrow()
   })
 })

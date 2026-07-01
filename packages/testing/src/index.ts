@@ -35,5 +35,8 @@ export { FakeAdapter } from './fake-adapter.js'
 export type { FakeAdapterEntry } from './fake-adapter.js'
 export { SignalAwareFakeAdapter } from './signal-aware-fake-adapter.js'
 export type { SignalAwareFakeAdapterOptions } from './signal-aware-fake-adapter.js'
-export { inMemoryRateLimiter } from './rate-limiter.js'
-export type { InMemoryRateLimiterOptions } from './rate-limiter.js'
+export { inMemoryRateLimiter, scriptedRateLimiter } from './rate-limiter.js'
+export type {
+  InMemoryRateLimiterOptions,
+  ScriptedRateLimiterOptions,
+} from './rate-limiter.js'

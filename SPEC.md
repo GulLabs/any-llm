@@ -20,7 +20,9 @@ Seams are present; machinery is intentionally small.
 
 ## Non-negotiable invariants
 
-- **Engine validates output; adapters never do.** Adapter returns `rawStructured: unknown`.
+- **Neither engine nor adapters validate output.** The engine forwards `output.jsonSchema` to the
+  provider as a generation hint, JSON.parses the response, and surfaces `output: unknown` +
+  `outputParsed: boolean`. The caller owns all validation, retry, and acceptance policy.
 - **GROSS token convention:** `cachedInputTokens` is a SUBSET of `inputTokens`;
   `thinkingTokens` is a SUBSET of `outputTokens`. Cost math must not double-count.
 - **Cost is frozen at write time:** integer micro-USD + `pricingVersion` on every record.
@@ -60,11 +62,11 @@ export type JsonValue =
   | { [k: string]: JsonValue }
 
 // ---- request ----
-export interface LlmRequest<S extends ZodType = ZodType> {
+export interface LlmRequest {
   model: string // routing key; v1 only resolves gemini-* (seam: provider map)
   system?: string
   messages: Message[] // v1: text parts only (seam: image/file/audio parts later)
-  output?: { schema: S } // structured output; Zod is the source of truth
+  output?: { jsonSchema: JsonValue } // forward-only hint; adapter forwards it, engine never validates
   config?: GenConfig
   metadata?: CallMetadata // host anchors: tenantId, runId, callSiteId, traceId…
 }
@@ -90,8 +92,9 @@ export interface ReasoningIntent {
 }
 
 // ---- result ----
-export interface LlmResult<T> {
-  output?: T // present iff request had output.jsonSchema and validation passed
+export interface LlmResult {
+  output?: unknown // present iff request had output.jsonSchema and JSON.parse succeeded; ALWAYS unknown, never validated
+  outputParsed?: boolean // present iff output.jsonSchema was requested; true iff JSON.parse succeeded (NOT validated)
   text?: string
   reasoningText?: string // provider thought-summary, present iff includeThoughts requested
   usage: Usage
@@ -159,7 +162,8 @@ export class LlmError extends Error {
 ```ts
 export interface ProviderAdapter {
   id: string // 'google'
-  // returns RAW result; engine validates output, computes cost, persists. Adapter does none of that.
+  // returns RAW result; engine JSON.parses it, computes cost, persists. Nobody validates it —
+  // the caller owns validation.
   run(req: ResolvedRequest, ctx: AdapterCtx): Promise<AdapterResult>
 }
 export interface ResolvedRequest {
@@ -177,7 +181,7 @@ export interface AdapterCtx {
   logger: Logger
 }
 export interface AdapterResult {
-  rawStructured?: unknown // engine will Zod-validate this
+  rawStructured?: unknown // engine JSON.parses this into LlmResult.output (unknown); never validated
   text?: string
   reasoningText?: string // thought summary if includeThoughts requested
   usage: Usage
@@ -185,6 +189,8 @@ export interface AdapterResult {
   modelVersion?: string
   finishReason?: FinishReason
   responseId?: string
+  queueDelayMs?: number // time spent waiting in RateLimiter.acquire before provider dispatch
+  latencyMs: number // provider-dispatch latency; excludes queueDelayMs
   warnings: Warning[]
   providerMetadata?: JsonValue
 }
@@ -195,13 +201,10 @@ export interface UsageSink {
 export interface PricingSource {
   version: string
   price(model: string, usage: Usage, tier?: string): Cost
+  hasModel(model: string): boolean
+  listModels(): readonly string[]
 }
-export interface AuthProvider {
-  credentials(provider: string): Promise<AuthMaterial>
-}
-export type AuthMaterial =
-  | { apiKey: string }
-  | { vertex: { project: string; location: string } }
+export type AuthMaterial = { apiKey: string }
 export interface Clock {
   now(): number
 }
@@ -222,8 +225,8 @@ export interface Telemetry {
 }
 ```
 
-Seams deferred (designed, NOT in v1): `RateLimiter`, `Redactor`, `BlobStore`, `ConfigSource`,
-`FileStore`, streaming `stream()`. They can be added without changing the above.
+Seams deferred (designed, NOT in v1): `Redactor`, `BlobStore`, `ConfigSource`, `FileStore`,
+streaming `stream()`. They can be added without changing the above.
 
 ---
 
@@ -236,14 +239,15 @@ runStructured(callSite, vars?, opts?)  /  generate(request)
   3. ids              callId + attemptId
   4. telemetry.onStart + log 'llm.call.start'
   5. resolve adapter  (model→provider map; v1: gemini-* → google adapter; unknown → LlmError 'bad_request')
-  6. auth.credentials(provider)
-  7. adapter.run(resolved, ctx)   with timeout + AbortSignal
-  8. normalize usage  (GROSS convention enforced; details map + raw populated by adapter)
-  9. parse structured output  (JSON.parse result → output + outputParsed; caller validates)
- 10. pricing.price()  → Cost (micro-USD, frozen)   [fail-open → cost=null on pricing error]
- 11. build LlmCallRecord  + sink.record()           [fail-open: swallow+log sink errors]
- 12. telemetry.onSuccess + log 'llm.call.success'
- 13. return LlmResult
+  6. require per-call auth material ({ apiKey })
+  7. rateLimiter.acquire("${provider}:${model}")  [queueDelayMs measured separately]
+  8. adapter.run(resolved, ctx)   with timeout + AbortSignal
+  9. normalize usage  (GROSS convention enforced; details map + raw populated by adapter)
+ 10. parse structured output  (JSON.parse result → output + outputParsed; caller validates)
+ 11. pricing.price()  → Cost (micro-USD, frozen)   [fail-open → cost absent on pricing error]
+ 12. build LlmCallRecord  + sink.record()           [fail-open: swallow+log sink errors]
+ 13. telemetry.onSuccess + log 'llm.call.success'
+ 14. return LlmResult
   (any throw → classify → telemetry.onError + log 'llm.call.error' + record status + rethrow LlmError)
 ```
 
@@ -295,6 +299,7 @@ export interface LlmCallRecord {
   status: 'ok' | 'api_error' | 'timeout' | 'aborted' | 'content_filter'
   finishReason?: FinishReason
   latencyMs: number
+  queueDelayMs?: number
   // usage (typed hot fields)
   inputTokens?: number
   outputTokens?: number

@@ -1,0 +1,218 @@
+# Ledger Guide
+
+`@gullabs/drizzle` gives you the canonical per-attempt `llm_calls` table. Treat that table as the
+source of truth for LLM facts that are universal across hosts: provider, model, usage, cost,
+warnings, error classification, provider metadata, and the IDs the library owns.
+
+If your application needs domain-specific anchors such as `reportId`, `workflowId`, `matterId`, or
+artifact keys, keep those in a host-owned sidecar table keyed by `attemptId`. Do not fork the base
+ledger shape unless you have a concrete reason to stop consuming the shared sink.
+
+## What each field is for
+
+| Field | Owner | Use it for |
+| --- | --- | --- |
+| `callId` | library | Group all attempts belonging to one logical call. |
+| `attemptId` | library or caller via `idempotencyKey` | Primary key for the attempt row and the foreign-key target for sidecars. |
+| `attemptNumber` | library | Distinguish first attempt vs in-process retries. |
+| `callSiteId` | caller | Prompt-family grouping and observability. |
+| `externalId` | caller | One convenient correlation id for host-ledger queries. |
+| `metadata` | caller | Small, stable, non-secret host anchors persisted verbatim. |
+
+Rules that matter:
+
+- `attemptId` is the durable row identity.
+- `idempotencyKey` gives you ledger idempotency only. It does not deduplicate provider calls.
+- `metadata` is for low-cardinality JSON anchors, not secrets or large debug payloads.
+- If a host field needs typed indexes or joins, put it in a sidecar table.
+
+## When to use `metadata`, `externalId`, or a sidecar
+
+Use `metadata` when:
+
+- the value is useful for logs/telemetry and ad hoc inspection;
+- JSON storage is acceptable;
+- you do not need dedicated database constraints or hot-path indexes.
+
+Use `externalId` when:
+
+- there is one caller-owned id you frequently filter on;
+- denormalized convenience matters more than modeling multiple typed columns.
+
+Use a sidecar table when:
+
+- you need multiple typed host columns;
+- you need indexed joins into domain tables;
+- retention, deletion, or access control differs from the shared ledger.
+
+## Recommended sidecar pattern
+
+Example host-owned table:
+
+```ts
+import { pgTable, text, timestamp } from 'drizzle-orm/pg-core'
+import { llmCalls } from '@gullabs/drizzle'
+
+export const llmCallContext = pgTable('llm_call_context', {
+  attemptId: text('attempt_id')
+    .primaryKey()
+    .references(() => llmCalls.attemptId, { onDelete: 'cascade' }),
+  tenantId: text('tenant_id').notNull(),
+  orgId: text('org_id'),
+  workspaceId: text('workspace_id'),
+  route: text('route'),
+  workflowId: text('workflow_id'),
+  reportId: text('report_id'),
+  jobType: text('job_type'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+})
+```
+
+Write pattern:
+
+1. call the library normally with `sink: drizzleUsageSink(db, llmCalls)`;
+2. use `result.attemptId` or `LlmError.attemptId` as the sidecar key;
+3. persist your host row in the same request/activity flow.
+
+`externalId` can mirror one of those host ids for convenience, but the typed join should still go
+through the sidecar table. Retention and deletion ownership is entirely host-owned: no TTL or
+`deleted_at` policy is defined in `llm_calls` today, so host code that implements those policies must
+also decide whether and how to clean dependent sidecar rows.
+
+## Atomic sidecar writes (transaction composition)
+
+```ts
+function hostUsageSink(db: NodePgDatabase): UsageSink {
+  return {
+    async record(r: LlmCallRecord): Promise<void> {
+      await db.transaction(async (tx) => {
+        await tx.insert(llmCalls).values(mapRecord(r)).onConflictDoNothing({ target: llmCalls.attemptId })
+        const ctx = r.metadata as { matterId?: string; auditRunId?: string }
+        if (ctx?.matterId) {
+          await tx.insert(llmCallContext).values({ attemptId: r.attemptId, matterId: ctx.matterId, ... })
+            .onConflictDoNothing({ target: llmCallContext.attemptId })
+        }
+      })
+    },
+  }
+}
+```
+
+The engine wraps `UsageSink.record()` in `recordToSink` fail-open handling (`engine.ts:713-730`).
+So if this composed transaction fails, both canonical and sidecar writes roll back together and the LLM
+call still succeeds.
+
+If a host needs richer typed joins and retention-oriented indexes, use a richer schema:
+
+```ts
+export const llmCallContext = pgTable(
+  'llm_call_context',
+  {
+    attemptId: text('attempt_id')
+      .primaryKey()
+      .references(() => llmCalls.attemptId, { onDelete: 'cascade' }),
+    matterId: text('matter_id').notNull(),
+    auditRunId: text('audit_run_id'),
+    documentId: text('document_id'),
+    moduleId: text('module_id'),
+    inputR2Key: text('input_r2_key'),
+    debugPayload: jsonb('debug_payload'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('llm_call_context_matter_id_idx').on(table.matterId),
+    index('llm_call_context_audit_run_id_idx').on(table.auditRunId),
+    index('llm_call_context_document_id_idx').on(table.documentId),
+  ],
+)
+```
+
+`attemptId` as PK+FK gives you a strict 1:1 anchor, and `ON DELETE CASCADE` is the correct default once
+host retention/deletion is implemented even though this repo’s canonical ledger is append-only today.
+
+## Query examples (index-coverage note)
+
+Spend by day (today: **seq-scan**, no `created_at` index):
+
+```sql
+select
+  date_trunc('day', created_at) as day,
+  sum(cost_micro_usd) as spend_micro_usd
+from llm_calls
+where cost_micro_usd is not null
+group by 1
+order by 1 desc;
+```
+
+Failures by call-site (today: **seq-scan**, `call_site_id` has no index):
+
+```sql
+select
+  call_site_id,
+  error_kind,
+  count(*) as failures
+from llm_calls
+where status <> 'ok'
+group by 1, 2
+order by failures desc;
+```
+
+Retries by model (`callId` → `attemptId` is 1:many; `count(*) filter (...)` counts physical retry attempts, and `count(distinct call_id)` counts logical calls):
+
+In-process retries with the same `idempotencyKey` become `key`, `key:2`, `key:3` for later attempts,
+or fresh UUIDs when no `idempotencyKey` is provided. This pattern is the correct retry count across a
+logical call.
+
+```sql
+select
+  model,
+  count(*) filter (where attempt_number > 1) as retry_attempts,
+  count(distinct call_id) as logical_calls
+from llm_calls
+group by 1
+order by retry_attempts desc;
+
+```
+
+This aggregation is full-table by design for most workloads; no dedicated call-site index is required to
+collect per-model retry totals this way.
+
+Grounded-call audit trail (today: **seq-scan**, no GIN index on `provider_metadata`):
+
+```sql
+select
+  attempt_id,
+  call_site_id,
+  provider_metadata -> 'groundingMetadata' as grounding_metadata,
+  provider_metadata -> 'promptFeedback' as prompt_feedback
+from llm_calls
+where provider_metadata ? 'groundingMetadata';
+
+```
+
+Add a GIN index on `provider_metadata` if this query becomes hot.
+
+Host-domain join (index-backed):
+
+```sql
+select
+  c.report_id,
+  l.attempt_id,
+  l.model,
+  l.status,
+  l.cost_micro_usd
+from llm_call_context c
+join llm_calls l on l.attempt_id = c.attempt_id
+where c.report_id = $1
+order by l.created_at asc;
+```
+
+## Migration notes
+
+If you are replacing a legacy wrapper that stuffed usage JSON into domain rows:
+
+1. keep `llm_calls` canonical for universal LLM facts;
+2. move typed domain anchors into a sidecar keyed by `attemptId`;
+3. keep legacy response-shape adapters at the application edge, not in the library.
+
+That keeps the shared ledger stable while letting each host evolve its own reporting model.

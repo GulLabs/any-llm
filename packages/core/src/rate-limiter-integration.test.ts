@@ -9,8 +9,14 @@
 
 import { describe, it, expect } from 'vitest'
 import { createClient, geminiPricingSource, LlmError } from './index.js'
-import type { RateLimiter, Release } from './index.js'
-import { FakeAdapter, FakeClock, FakeIds } from '@gullabs/testing'
+import type { ProviderAdapter, RateLimiter, Release } from './index.js'
+import {
+  FakeAdapter,
+  FakeClock,
+  FakeIds,
+  RecordingSink,
+  scriptedRateLimiter,
+} from '@gullabs/testing'
 import type { AdapterResult, Usage } from './index.js'
 
 // ---------------------------------------------------------------------------
@@ -150,6 +156,110 @@ describe('engine — rateLimiter integration', () => {
 
     // Release must still have been called despite the adapter error.
     expect(spy.releaseCalls).toBe(1)
+  })
+
+  it('records queueDelayMs separately from provider-dispatch latency on success', async () => {
+    const clock = new FakeClock(1_000)
+    const sink = new RecordingSink()
+    const debugEvents: Array<{ payload: object; message: string }> = []
+    const adapter: ProviderAdapter = {
+      id: 'google',
+      async run() {
+        clock.advance(40)
+        return makeSuccessResult()
+      },
+    }
+
+    const client = createClient({
+      adapters: [adapter],
+      pricing: PRICING,
+      sink,
+      clock,
+      ids: new FakeIds(),
+      rateLimiter: scriptedRateLimiter({ delayMs: 250, clock }),
+      logger: {
+        info() {},
+        warn() {},
+        error() {},
+        debug(payload, message) {
+          debugEvents.push({ payload, message })
+        },
+      },
+    })
+
+    const result = await client.generate(
+      {
+        model: 'gemini-2.5-flash',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
+
+    expect(result.queueDelayMs).toBe(250)
+    expect(result.latencyMs).toBe(40)
+    expect(sink.last()!.queueDelayMs).toBe(250)
+    expect(sink.last()!.latencyMs).toBe(40)
+    expect(debugEvents).toContainEqual({
+      payload: expect.objectContaining({ queueDelayMs: 250 }),
+      message: 'llm.call.attempt.dispatch',
+    })
+  })
+
+  it('records queueDelayMs separately from provider-dispatch latency on adapter error', async () => {
+    const clock = new FakeClock(1_000)
+    const sink = new RecordingSink()
+    const adapter: ProviderAdapter = {
+      id: 'google',
+      async run() {
+        clock.advance(30)
+        throw new LlmError('upstream failed', { kind: 'server', retryable: true })
+      },
+    }
+
+    const client = createClient({
+      adapters: [adapter],
+      pricing: PRICING,
+      sink,
+      clock,
+      ids: new FakeIds(),
+      rateLimiter: scriptedRateLimiter({ delayMs: 250, clock }),
+    })
+
+    await expect(
+      client.generate(
+        {
+          model: 'gemini-2.5-flash',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
+        },
+        { auth: TEST_AUTH },
+      ),
+    ).rejects.toMatchObject({ kind: 'server' })
+
+    expect(sink.last()!.queueDelayMs).toBe(250)
+    expect(sink.last()!.latencyMs).toBe(30)
+  })
+
+  it('records zero queueDelayMs for the default no-op limiter', async () => {
+    const clock = new FakeClock(1_000)
+    const sink = new RecordingSink()
+    const client = createClient({
+      adapters: [new FakeAdapter('google', makeSuccessResult())],
+      pricing: PRICING,
+      sink,
+      clock,
+      ids: new FakeIds(),
+    })
+
+    const result = await client.generate(
+      {
+        model: 'gemini-2.5-flash',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
+
+    expect(result.queueDelayMs).toBe(0)
+    expect(sink.last()!.queueDelayMs).toBe(0)
   })
 
   it('(d) if acquire rejects, the call fails and the adapter is never invoked', async () => {

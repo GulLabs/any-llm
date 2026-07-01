@@ -10,6 +10,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
   LlmError,
+  EFFORT_BUDGET,
   createClient,
   geminiPricingSource,
   retryMiddleware,
@@ -399,7 +400,7 @@ describe('flex fallback', () => {
 // ---------------------------------------------------------------------------
 
 describe('reasoning mapping', () => {
-  it('maps effort to thinkingBudget for gemini-2.5 models', async () => {
+  it('maps effort to thinkingBudget for gemini-2.5 models using the shared core EFFORT_BUDGET', async () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
 
@@ -427,7 +428,7 @@ describe('reasoning mapping', () => {
     const call = client.calls[0] as {
       config?: { thinkingConfig?: { thinkingBudget?: number } }
     }
-    expect(call?.config?.thinkingConfig?.thinkingBudget).toBe(24576)
+    expect(call?.config?.thinkingConfig?.thinkingBudget).toBe(EFFORT_BUDGET.high)
   })
 
   it('uses budgetTokens directly for gemini-2.5 models', async () => {
@@ -977,9 +978,11 @@ describe('providerOptions.google passthrough', () => {
   it('providerOptions.google can override serviceTier', async () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
+    const descriptor = geminiModelDescriptors.find((d) => d.id === 'gemini-2.5-pro')!
 
     await adapter.run(
       makeResolvedReq({
+        modelDescriptor: descriptor,
         config: {
           serviceTier: 'flex',
           providerOptions: {
@@ -993,6 +996,27 @@ describe('providerOptions.google passthrough', () => {
     const call = client.calls[0] as { config?: { serviceTier?: string } }
     // providerOptions spread last, so it wins
     expect(call?.config?.serviceTier).toBe('standard')
+  })
+
+  it('throws LlmError bad_request when providerOptions.google supplies an unsupported serviceTier string', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+    const descriptor = geminiModelDescriptors.find((d) => d.id === 'gemini-2.5-pro')!
+
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          modelDescriptor: descriptor,
+          config: {
+            serviceTier: 'flex',
+            providerOptions: {
+              google: { serviceTier: 'priority' },
+            },
+          },
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request', retryable: false })
   })
 
   it('passes Gemini safetySettings through providerOptions.google', async () => {
