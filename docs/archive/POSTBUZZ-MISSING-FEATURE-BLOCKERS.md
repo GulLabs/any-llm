@@ -1,5 +1,9 @@
 # PostBuzz Migration Blockers
 
+> **Archived.** This is a historical planning/execution record from internal development, kept for
+> project history. It is not maintained documentation and may not reflect the current state of the
+> library — see the [root README](../../README.md) and [docs/](../) for current, maintained docs.
+
 Last updated: 2026-07-01.
 
 **Status: RESOLVED.** This doc previously recorded three library-side features believed to be

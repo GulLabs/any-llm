@@ -11,7 +11,7 @@ pnpm lint           # minimal ESLint flat config across source, tests, examples,
 pnpm typecheck      # tsc across the workspace
 pnpm test           # vitest (no network — the Gemini SDK is mocked)
 pnpm -r build       # tsup: ESM + CJS + d.ts
-pnpm quality        # lint + typecheck + test + build (same gate CI runs)
+pnpm quality        # build + lint + typecheck + test (same gate CI runs)
 pnpm example        # runnable, network-free end-to-end demo
 ```
 

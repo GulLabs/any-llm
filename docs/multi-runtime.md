@@ -16,7 +16,12 @@ duplication proves a library helper is warranted. That is why the repo does not 
 
 ## Application-local metadata helper
 
-Keep a small host helper for repeatable metadata anchors:
+`metadata` is caller-owned, low-cardinality JSON (see `docs/ledger.md`) — the library does not
+constrain its shape. That freedom is easy to lose track of across a codebase: without a shared
+convention, different call sites drift toward ad hoc field names (`tenant`, `tenantId`, `tid`, ...)
+for the same concept, which makes cross-call-site queries and dashboards harder to write. Define one
+`AnyLlmMetadata` shape per host and route every call site through it, rather than inlining a fresh
+metadata object literal at each call site:
 
 ```ts
 type AnyLlmMetadata = {
@@ -35,8 +40,9 @@ function buildAnyLlmMetadata(input: AnyLlmMetadata) {
 }
 ```
 
-That is enough for most hosts. If this shape stabilizes across multiple repos, it can graduate into
-a library helper later.
+That one-helper-per-host convention is enough for most hosts — it is what keeps `metadata` queryable
+later without adding library surface. If this shape stabilizes across multiple repos, it can graduate
+into a library helper later.
 
 Set `operationId` once for a workflow operation and reuse it on every correlated call in that flow
 (including the grounded-then-structured pattern from `docs/grounded-structured.md`).
@@ -102,10 +108,13 @@ rows across activity replays/retries.
 
 ### Testing note: RecordingSink does not dedupe
 
-`RecordingSink` (`packages/testing/src/recording-sink.ts`) pushes every record it receives and does not
-implement `onConflictDoNothing` deduplication. `drizzleUsageSink` (`packages/drizzle/src/sink.ts`) only
-gets dedupe via the `attempt_id` primary key. In a test, if you replay a Temporal activity with the same
-`idempotencyKey`, `RecordingSink` can still accumulate multiple rows.
+**Important for test correctness:** `RecordingSink` (`packages/testing/src/recording-sink.ts`) pushes
+every record it receives and does not implement `onConflictDoNothing` deduplication.
+`drizzleUsageSink` (`packages/drizzle/src/sink.ts`) only gets dedupe via the `attempt_id` primary key.
+In a test, if you replay a Temporal activity with the same `idempotencyKey`, `RecordingSink` can still
+accumulate multiple rows — so `sink.records.length` after a replay is not a reliable proxy for
+"deduplication happened." Assert on `attemptId` values (or dedupe in the test itself) rather than raw
+record counts when a test exercises replay/retry behavior against `RecordingSink`.
 
 ```ts
 function makeWorkerClient(db: DbLike) {

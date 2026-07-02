@@ -20,7 +20,8 @@ diverge per provider.
 **Decision:**
 The core engine depends only on typed interfaces (`ports.ts`). Every pluggable dependency —
 provider communication (`ProviderAdapter`), persistence (`UsageSink`), pricing (`PricingSource`),
-credentials (`AuthProvider`), backpressure (`RateLimiter`), observability (`Telemetry`, `Logger`),
+credentials (`AuthProvider` — removed in ADR-019; auth is now a per-call `AuthMaterial` value, not a
+port), backpressure (`RateLimiter`), observability (`Telemetry`, `Logger`),
 and time/identity sources (`Clock`, `IdGenerator`) — is expressed as a port. Concrete
 implementations live in separate packages (`@gullabs/google`, `@gullabs/drizzle`, etc.) that the
 engine never imports directly.
@@ -143,7 +144,7 @@ constant couples cost accuracy to library release cadence.
 **Decision:**
 Pricing is expressed as a `PricingSource` port with a `version` string and a `price()` method.
 The library ships a built-in `geminiPricingSource()` that holds a dated, named snapshot
-(`gemini-2026-06-27`). The snapshot version is frozen into every `Cost` record at write time so
+(`gemini-2026-06-28`). The snapshot version is frozen into every `Cost` record at write time so
 historical records can identify which rate card was used.
 
 Hosts can supply a custom `PricingSource` to override rates (e.g. committed-use discounts) without
@@ -269,7 +270,7 @@ port is a no-op in that context.
 
 ---
 
-## ADR-009: Zod for v1 Structured Output Validation
+## ADR-009: Forward-Only JSON Schema for v1 Structured Output
 
 **Status:** Accepted
 
@@ -417,7 +418,9 @@ The Gemini adapter sets `config.httpOptions.timeout` on every request according 
 3. **`serviceTier === 'flex'`, no `timeoutMs`** — transport timeout = `FLEX_DEFAULT_TIMEOUT_MS`
    (currently 1 500 000 ms, 25 minutes). No buffer is applied because there is no engine `AbortSignal`
    deadline in this case.
-4. **`serviceTier === 'standard'`, no `timeoutMs`** — no forced timeout; the SDK default applies.
+4. **`serviceTier === 'standard'`, no `timeoutMs`** — transport timeout = `STANDARD_DEFAULT_TIMEOUT_MS`
+   (currently 300 000 ms, 5 minutes), backed by a client-side `AbortController` so the ceiling is a
+   real client-side cutoff rather than only an SDK transport hint.
 
 The computed `httpOptions` is built from the computed base and then the caller's value is spread on
 top, so extra keys in a caller-supplied `httpOptions` object are preserved alongside any fields the
@@ -432,8 +435,8 @@ and fallback logic belongs in the middleware chain where it is explicit and audi
 - Long Flex calls complete without being killed by the SDK transport layer.
 - When `timeoutMs` is set, the engine's `AbortSignal` is always the hard ceiling; the SDK transport
   timer cannot preempt it.
-- `FLEX_DEFAULT_TIMEOUT_MS` and `TRANSPORT_TIMEOUT_BUFFER_MS` are exported constants so callers
-  can reason about the values they're building on.
+- `FLEX_DEFAULT_TIMEOUT_MS`, `STANDARD_DEFAULT_TIMEOUT_MS`, and `TRANSPORT_TIMEOUT_BUFFER_MS` are
+  exported constants so callers can reason about the values they're building on.
 - Callers that need a different transport timeout set it via `providerOptions.google.httpOptions`
   and their value wins.
 
@@ -687,6 +690,12 @@ _Mitigation:_ On the Vertex flex path, the adapter injects two HTTP headers:
 These headers are the correct Vertex-native mechanism for requesting Flex tier and are honoured
 by the Vertex AI backend independently of the body field.
 
+**Note:** Vertex AI auth support (and this mitigation) was removed from the library — see
+ADR-019, which dropped the `AuthProvider` port and made the library per-call, API-key-only
+(no Vertex, no ambient/env auth). This bug and its mitigation are retained here as a
+historical record only; the header-injection code path no longer exists in the current
+adapter (`packages/google/src/adapter.ts`, `packages/google/src/client.ts`).
+
 **Consequences:**
 
 - Flex calls will time out correctly via `AbortSignal` even if the SDK's transport timeout is
@@ -858,7 +867,8 @@ The following are **explicitly deferred as consumer concerns**:
 - Error sampling/dedup, persisted stack traces, typed provider-error schema.
 - TTFB/streaming latency (requires `stream()` pipeline).
 - Rate-limiter wait-time attribution, sink-side logical-call latency.
-- Configurable custom-redaction-pattern API (deferred to the `Redactor` port; see ROADMAP).
+- Configurable custom-redaction-pattern API (deferred to the `Redactor` port; see the "`Redactor`
+  port" entry in ROADMAP.md).
 
 **Rationale:**
 This is a library, not a service. The library's job is to provide rich, accurate data (records and

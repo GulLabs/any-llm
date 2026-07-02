@@ -61,9 +61,11 @@ a client from a single auth snapshot (see ADR-020 in DECISIONS.md).
 ### `Redactor` port
 
 A port for scrubbing sensitive content from messages and results before persistence. Currently only
-`redactSecrets` (regex-based, applied to `errorMessage`) exists. A proper `Redactor` port would
-allow host-supplied DLP logic and would be fail-closed to prevent accidental persistence of
-unredacted content.
+`redactSecrets` (regex-based, applied to `errorMessage` and select `generationConfig` fields) exists.
+A proper `Redactor` port would allow host-supplied DLP logic and would be fail-closed to prevent
+accidental persistence of unredacted content.
+
+See ADR-021 in DECISIONS.md for the reasoning behind deferring this to a host/consumer concern.
 
 ### Deferred observability
 
@@ -86,8 +88,11 @@ or future companion packages, not library responsibilities.
   requires per-adapter schema work.
 - **TTFB / streaming latency** — time-to-first-byte and per-token streaming latency require a
   streaming pipeline (`stream()`) which is not yet implemented.
-- **Sink-side logical-call latency** — `latencyMs` is per-attempt; deriving the total logical-call
-  latency from the sink requires a terminal-row marker or an aggregation over `attemptNumber`.
+- **Sink-side logical-call latency** — per-attempt `latencyMs` is already captured on every
+  `LlmCallRecord`, correlated by a stable `callId` and ordered by `attemptNumber`, so hosts can
+  already aggregate per-attempt records into a logical-call latency at the sink/query layer today
+  (e.g. group rows by `callId`). What's deferred is a built-in helper/API in the library for this
+  aggregation — today it's a query the host writes itself.
 - **Configurable custom-redaction-pattern API** — a `Redactor` port (see existing roadmap item)
   would allow host-supplied DLP patterns; today only the built-in regex patterns in `redactSecrets`
   are applied.

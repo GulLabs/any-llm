@@ -340,7 +340,7 @@ const GEMMA_REASONING_EFFORTS = [
  * here.  Enable it by passing `{ googleSearch: {} }` in
  * `config.providerOptions.google.tools`.  Note: grounding is mutually exclusive
  * with structured output (`output.jsonSchema`) — the adapter enforces this at call
- * time with a `bad_request` LlmError.  postbuzz uses grounding primarily with
+ * time with a `bad_request` LlmError.  Grounding is primarily used with
  * gemini-3.1-flash-lite and gemini-3.5-flash.
  */
 export const geminiModelDescriptors: ModelDescriptor[] = [

@@ -89,7 +89,7 @@ const citationShapeSchema: StandardSchemaV1 = {
 ```
 
 This pattern is the caller-owned fix for the gap documented as **"New gap: silent structured-output parse failures"**
-in `docs/ADOPTION-FEEDBACK.md`.
+in `docs/archive/ADOPTION-FEEDBACK.md`.
 
 ## Example usage
 
@@ -113,5 +113,4 @@ if (!validation.ok && validation.reason === 'not_parsed') {
 }
 ```
 
-The helper does not mutate `result`; it is pure and composable in your retry, retry-window, and audit
-pipelines.
+The helper does not mutate `result`; it is pure and composable in your retry and audit pipelines.

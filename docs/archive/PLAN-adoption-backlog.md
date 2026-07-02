@@ -1,5 +1,9 @@
 # Adoption Backlog Implementation Plan — `@gullabs/any-llm`
 
+> **Archived.** This is a historical planning/execution record from internal development, kept for
+> project history. It is not maintained documentation and may not reflect the current state of the
+> library — see the [root README](../../README.md) and [docs/](../) for current, maintained docs.
+
 > **Status:** Draft — pending codex signoff.
 
 ---
@@ -12,7 +16,7 @@ compatibility with something that does not exist.
 
 ## Summary
 
-`docs/ADOPTION-FEEDBACK.md` is the source-checked backlog derived from two host adoption passes
+`./ADOPTION-FEEDBACK.md` is the source-checked backlog derived from two host adoption passes
 (PostBuzz, RED LINE) plus five independent expert reviews (backend-craft, db-craft, infra-craft,
 security-craft, observability-craft, testing-craft) run against the _current_ code, not against
 host prose. This plan turns that backlog into an execution-ready, phase-ordered sequence of work.

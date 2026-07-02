@@ -2,6 +2,15 @@
 
 The provider-agnostic heart of any-llm. Contains all types, port interfaces, the engine pipeline, call-site definitions, cost computation, and the persisted record builder. Has no provider dependencies.
 
+## Install
+
+```bash
+pnpm add @gullabs/core
+```
+
+`@gullabs/core` has no provider adapter and no SDK dependency of its own — pair it with
+`@gullabs/google` (or another `ProviderAdapter`) to actually make calls.
+
 ## Key exports
 
 | Export                  | What it is                                                               |
@@ -47,12 +56,22 @@ const result = await client.runStructured(
   },
 )
 // result.output   — JSON-parsed; caller validates
-// result.outputParsed — true when JSON.parse succeeded
+// result.outputParsed — true only when the provider's response text was
+//                        successfully JSON.parsed. The engine does NOT
+//                        validate output *shape* against jsonSchema — that
+//                        stays the caller's job (reject, don't map: any
+//                        shape mismatch is the caller's to reject).
 // result.usage    — { inputTokens, outputTokens, thinkingTokens, cachedInputTokens }
 // result.cost     — { microUsd, pricingVersion, details: { input, cached, output } }
 // result.reasoningText — thought summary if includeThoughts was set
 // result.queueDelayMs — wait inside RateLimiter.acquire, separate from latencyMs
 ```
+
+`output.jsonSchema` is a provider hint, not an engine-enforced contract: it is forwarded to the
+provider and used only to gate JSON parsing. Always check `outputParsed` before trusting `output`,
+then validate its shape yourself — see
+[`docs/structured-output-validation.md`](../../docs/structured-output-validation.md) for a
+Standard-Schema-based helper.
 
 `createClient({ strictPricing: true, ... })` performs an opt-in construction-time check that every
 registered model resolves to a priced entry. Runtime pricing remains fail-open: pricing failures do
@@ -121,3 +140,10 @@ scanned — do **not** put secrets in `metadata`.
 ## Token convention
 
 **GROSS**: `cachedInputTokens` is a subset of `inputTokens`; `thinkingTokens` is a subset of `outputTokens`. Cost math never double-counts. See `SPEC.md` for the full invariant.
+
+## Learn more
+
+- [Monorepo root README](../../README.md) — full architecture, auth model, and package overview
+- [`SPEC.md`](../../SPEC.md) — v1 build contract: goals, invariants, type definitions, engine pipeline
+- [`docs/architecture.md`](../../docs/architecture.md) — canonical engineering deep-dive
+- [`docs/structured-output-validation.md`](../../docs/structured-output-validation.md) — validating `result.output` after `outputParsed`

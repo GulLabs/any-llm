@@ -1,261 +1,91 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to this project are documented per-package. This file is a short
+pointer plus a condensed, human-readable project history — not the authoritative
+changelog.
 
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
-This project does not use semantic versioning yet — it will adopt semver on first public release.
+## Where to find changes
 
----
+Each package in this monorepo versions and releases independently via
+[changesets](https://github.com/changesets/changesets), cut automatically on every merge
+to `main`. For the authoritative, current, per-version change history of a package, see
+its own changelog:
 
-## [Unreleased] / 0.3.0 — next
+- [packages/any-llm/CHANGELOG.md](packages/any-llm/CHANGELOG.md)
+- [packages/core/CHANGELOG.md](packages/core/CHANGELOG.md)
+- [packages/google/CHANGELOG.md](packages/google/CHANGELOG.md)
+- [packages/drizzle/CHANGELOG.md](packages/drizzle/CHANGELOG.md)
+- [packages/quota/CHANGELOG.md](packages/quota/CHANGELOG.md)
+- [packages/testing/CHANGELOG.md](packages/testing/CHANGELOG.md)
 
-### Added
-
-**`@gullabs/quota`**
-
-- New companion package for provider-level quota control. It exports
-  `providerQuotaMiddleware`, `providerQuotaRateLimiter`, `upstashQuotaStore`, typed quota decisions,
-  and Gemini quota defaults for RPM/RPD enforcement outside core.
-- `QuotaDecision` now separates temporary `defer` outcomes from permanent `deny` outcomes;
-  `provider_disabled` is deny-only and throws non-retryable `rate_limited` errors.
-
-**`@gullabs/core`**
-
-- New `resolveReasoning`, `EFFORT_BUDGET`, and `ReasoningEffort` exports centralize Gemini/Gemma
-  reasoning-budget resolution in core.
-- `ClientConfig.strictPricing` adds an opt-in construction-time check that every registered model
-  resolves to a priced entry.
-- `LlmResult` and `LlmCallRecord` now include `queueDelayMs`, separating rate-limiter wait time from
-  provider-dispatch `latencyMs`.
-- Unpriced calls now emit an always-on warning when `cost.microUsd === null`, even when
-  `strictPricing` is not enabled.
-
-**`@gullabs/testing`**
-
-- Added `scriptedRateLimiter()` for deterministic `queueDelayMs` tests.
-
-**Docs**
-
-- Added adoption docs for ledger sidecars, grounded-to-structured correlation via
-  `metadata.operationId`, multi-runtime retry caveats, and caller-owned structured-output
-  validation.
-
-### Breaking Changes
-
-**`@gullabs/core`**
-
-- Structured output is now forward-only. `LlmRequest.output` takes `{ jsonSchema: JsonValue }`
-  instead of a Zod schema; the engine forwards the schema to the provider as a generation hint,
-  JSON.parses the response, and returns `LlmResult.output: unknown` + `outputParsed: boolean`. The
-  library performs no output validation of its own — callers own validation, retry, and acceptance
-  policy. `InferOutput`, generic `LlmRequest`/`LlmResult` output typing, `output.schema`,
-  `parse_error`, and `zodToGeminiSchema` are removed.
-- `LlmRequest` gains `idempotencyKey` and `externalId` for ledger correlation. `idempotencyKey`
-  only affects the durable ledger row (attempt 1 uses it as `attemptId`; in-process retries suffix
-  it `:2`, `:3`, …) — it does not deduplicate provider calls.
-- `PricingSource` implementations must now provide `hasModel()` and `listModels()` so strict
-  pricing checks use the same exact/prefix model-resolution rules as runtime pricing.
-- `ModelDescriptor.capabilities` gains `admittedReasoningEfforts` for level-based reasoning models.
-
-**`@gullabs/drizzle`**
-
-- `llm_calls` primary key is now `attempt_id` (the redundant UUID `id` column is removed). Adds
-  `external_id`, `served_service_tier`, `output_parsed`, and `queue_delay_ms` columns.
-
-**`@gullabs/google`**
-
-- Gemini Flex calls that hit capacity pressure now fall back to standard tier automatically. The
-  tier actually served is returned as `servedServiceTier` and persisted, so cost accounting uses
-  the real tier rather than the one requested. `retryMiddleware` pins the served tier once observed
-  so later retry attempts don't flip-flop between flex and standard.
+All packages follow [semantic versioning](https://semver.org/). They are currently
+pre-1.0 (`0.x`), so per semver's pre-1.0 convention, breaking changes may land in minor
+version bumps rather than being reserved for a major release — always check the
+per-package changelog above before upgrading.
 
 ---
 
-## [Unreleased] / 0.2.0 — next
+## Highlights
 
-### Breaking Changes
+A condensed, narrative history of the project for newcomers. For exact per-version
+details, use the per-package changelogs linked above.
 
-**`@gullabs/core`**
+### Initial v1 scope
 
-- `AuthProvider` port removed. There is no longer a pluggable credential resolver in the engine
-  pipeline. Client-level `auth` on `createClient` is gone.
-- `envAuth()` removed. The library no longer ships any helper that reads credentials from
-  `process.env` or any ambient source.
-- `auth` is now **required per call**. Pass `{ auth: { apiKey } }` to every `generate()` and
-  `runStructured()` call:
-  ```ts
-  client.generate(request, { auth: { apiKey } })
-  client.runStructured(callSite, { auth: { apiKey }, vars: { ... } })
-  ```
-- `AuthMaterial` narrowed to `{ apiKey: string }`. The `{ vertex: { ... } }` variant is removed.
+The first implementation shipped a deliberately narrow scope (see `SPEC.md`): a
+`createClient` engine with a config-resolution → adapter → normalize → validate → cost →
+record pipeline, `defineCallSite` for typed reusable prompt templates, a Gemini
+`ProviderAdapter` over `@google/genai`, cost computation with a Gemini pricing snapshot,
+structured `LlmError` classification, a Drizzle `UsageSink` reference schema, and a
+`@gullabs/testing` package of fakes (clock, id generator, recording sink, scriptable
+Gemini client) for testing consumers without hitting real provider APIs.
 
-**`@gullabs/google`**
+### Multimodal content and per-model config validation
 
-- Vertex AI auth path removed from `buildGoogleClient`. Vertex AI is not supported in this
-  version. See [Roadmap](./ROADMAP.md) for the planned return with explicit, non-ADC credentials.
+`Message.parts` became a `Part` union (`TextPart | InlineMediaPart | FileUriPart`),
+adding support for inline base64 media and provider-hosted file references. The
+`@gullabs/google` package gained a `GoogleFileStore` (upload/poll/delete) and a
+`GoogleCacheStore` for explicit context caching, plus grounding-metadata capture and a
+guard that rejects combining Google Search grounding with structured output.
+`ModelDescriptor` grew capability metadata (`sampling`, `caching`, `grounding`) and a
+per-model JSON Schema config validator that the engine now runs before dispatch, so
+invalid config is rejected at the door instead of silently passed through.
 
-### Security
+### Per-call auth migration, timeout hardening, and Flex-tier fixes
 
-**`@gullabs/core`**
+**Breaking:** the pluggable `AuthProvider` port and `envAuth()` helper were removed —
+the library no longer reads credentials from `process.env` or any ambient source.
+Every `generate()` / `runStructured()` call must now pass `{ auth: { apiKey } }`
+explicitly. Vertex AI auth was dropped in the same change (see `ROADMAP.md` for its
+planned return with explicit, non-ADC credentials).
 
-- `redactSecrets(text)` — new exported utility that scrubs Google API keys (`AIza…` prefix),
-  HTTP Bearer tokens, and common sensitive URL query-parameter values (`key=`, `api_key=`,
-  `access_token=`, `token=`, `signature=`, `sig=`, `X-Goog-*`) from strings. Best-effort; not
-  full DLP. Pure function with no dependencies.
-- `buildRecord` now applies `redactSecrets` to `errorMessage` before persisting the audit record.
-  The live `LlmError` thrown to the caller is **not** modified — only the persisted copy is
-  redacted. This prevents API keys in signed-URL error messages from being written to the sink.
+Alongside the auth migration: a `redactSecrets` utility now scrubs API keys and tokens
+from error messages before they're persisted to the audit sink (the error thrown to the
+caller is left unredacted); `retryMiddleware`'s `timeoutMs` became a true overall
+wall-clock ceiling across all retry attempts rather than a per-attempt budget; a Gemini
+3.x cache `minTokens` value was corrected from 4096 to Google's actual 2048 floor; and
+the Flex service-tier path picked up client-side timeout enforcement to compensate for
+a known `@google/genai` SDK bug affecting Flex-tier timeouts.
 
-### Changed
+### Forward-only structured output and the quota package
 
-**`@gullabs/core`**
+**Breaking:** structured output moved to a forward-only model. `LlmRequest.output` now
+takes a plain `{ jsonSchema: JsonValue }` instead of a Zod schema; the engine forwards
+the schema to the provider as a generation hint, JSON-parses the response, and returns
+`LlmResult.output: unknown` plus `outputParsed: boolean`. The library no longer performs
+output validation itself — callers own validation, retry, and acceptance policy.
+`InferOutput`, generic output typing, `output.schema`, `parse_error`, and
+`zodToGeminiSchema` were removed as a result. Custom `PricingSource` implementations must
+now also provide `hasModel()` and `listModels()`, so strict pricing checks use the same
+exact/prefix model-resolution rules as runtime pricing — hosts using their own
+`PricingSource` instead of the built-in `geminiPricingSource()` need to add these.
 
-- `retryMiddleware`: when `req.config.timeoutMs` is set it is now enforced as a **true
-  overall wall-clock ceiling** across all retry attempts and back-off sleep periods. Previously
-  `timeoutMs` was a per-attempt budget only. Specifically:
-  - A new attempt is refused (throws `LlmError('timeout', retryable: false)`) when the remaining
-    budget is ≤ 0 before the attempt would start.
-  - The remaining budget is passed as the per-attempt `config.timeoutMs` so the engine's
-    `AbortSignal` deadline shrinks on every attempt.
-  - Back-off sleep is clamped to the remaining budget so the sleep never overshoots the ceiling.
-  - When `timeoutMs` is **not** set, behavior is unchanged (fully backward-compatible).
-- `retryMiddleware` opts object gains an optional `now?: () => number` injectable clock for
-  deterministic unit testing of deadline logic.
-- `GenConfig.timeoutMs` JSDoc updated to document the overall-ceiling semantics when the retry
-  middleware is installed.
+The same release added `idempotencyKey` and `externalId` to `LlmRequest` for ledger
+correlation, made `attempt_id` the Drizzle primary key (dropping the redundant UUID
+`id` column), and made Gemini Flex calls fall back to standard tier automatically under
+capacity pressure — with the tier actually served reported back as `servedServiceTier`
+so cost accounting and retries stay consistent.
 
-### Fixed
-
-**`@gullabs/core`**
-
-- `geminiModelDescriptors`: Gemini 3.x models (`gemini-3.5-flash`, `gemini-3.1-flash-lite`,
-  `gemini-3.1-pro-preview`, `gemini-3-flash-preview`) had `caching.minTokens: 4096`. Corrected to
-  `2048` — Google's explicit-cache minimum is 2048 tokens for ALL models; there is no documented
-  4096 floor specific to 3.x.
-
-**`@gullabs/google`**
-
-- Flex-tier `AbortSignal` enforcement: the adapter now arms a client-side `AbortSignal` at the
-  effective timeout to guard against `@google/genai` SDK bug #1277 where `httpOptions.timeout` may
-  be a no-op for `generateContent`. Flex calls without an explicit `timeoutMs` use
-  `FLEX_DEFAULT_TIMEOUT_MS` (1 500 000 ms / 25 min) as the signal deadline.
-- Vertex Flex header workaround: on the Vertex AI path with `serviceTier: 'flex'`, the adapter
-  injects `X-Vertex-AI-LLM-Request-Type: shared` and `X-Vertex-AI-LLM-Shared-Request-Type: flex`
-  headers. This mitigates `@google/genai` SDK bug #1468 where `serviceTier` in the body is silently
-  ignored on Vertex (Flex calls were billed at standard rate).
-
----
-
-## [Unreleased] / 0.1.0 — 2026-06-29
-
-### Breaking
-
-**`@gullabs/core`**
-
-- `Message.parts` is now `Part[]` where `Part = TextPart | InlineMediaPart | FileUriPart`. Any
-  code that typed `parts` as `TextPart[]` must be updated. Existing messages with only text parts
-  are structurally compatible; the `kind: 'text'` field was already required by `TextPart`.
-
-### Added
-
-**`@gullabs/core`**
-
-- `InlineMediaPart` (`kind: 'inline-media'`) — inline base64 binary media with `mimeType` and
-  optional `mediaResolution` hint (`'low' | 'medium' | 'high'`).
-- `FileUriPart` (`kind: 'file-uri'`) — provider-hosted file reference with `uri`, `mimeType`,
-  and optional `mediaResolution` hint.
-- `Part` union type (`TextPart | InlineMediaPart | FileUriPart`).
-- `isTextPart`, `isInlineMediaPart`, `isFileUriPart` type-guard functions.
-- `ModelDescriptor.capabilities.sampling` — `'tunable'` | `'fixed'`.
-- `ModelDescriptor.capabilities.caching` — `{ explicit: boolean; minTokens: number }`.
-- `ModelDescriptor.capabilities.grounding` — boolean.
-- `ModelDescriptor.configJsonSchema` — plain JSON Schema object for UX form generation.
-- `ModelDescriptor.validateConfig` — Standard Schema v1 validator; engine runs before dispatch.
-- `makeGeminiConfigSchema(opts)` — factory for per-family Gemini config JSON Schema.
-- `makeGeminiConfigValidator(opts)` — factory for per-family Gemini config Standard Schema v1
-  validator; `sampling: 'fixed'` rejects `temperature`, `topP`, `topK` with per-field paths.
-- Config validation step in `runAttempt` — validates a projection of the resolved config
-  (excluding `timeoutMs`, `providerOptions`) before auth and rate-limiter acquire.
-- `Cost.usd` — derived convenience field; `= microUsd / 1_000_000`. Display-only; not persisted.
-- Gemini model descriptors extended to 7 entries: gemini-2.5-pro, gemini-2.5-flash,
-  gemini-2.5-flash-lite, gemini-3.5-flash, gemini-3.1-flash-lite, gemini-3.1-pro-preview,
-  gemini-3-flash-preview.
-
-**`@gullabs/google`**
-
-- `GoogleFileStore` — `upload(source, mimeType, opts?)` uploads bytes (`Uint8Array` | `Blob`)
-  and polls until `ACTIVE` (default interval 3 s, default timeout 120 s). `delete(handle)` and
-  `deleteAll(handles)` are fail-open.
-- `GoogleFileHandle` — `{ name, uri, mimeType, expiresAt? }` returned by `upload`.
-- `GoogleCacheStore` — `getOrCreate(key, factory)`, `create(input)`,
-  `refreshIfExpiringSoon(handle, opts?)`, `delete(handle)`. Process-scoped; not shared across
-  restarts. Optional `coalesce: true` serialises concurrent creates for the same key.
-- `GoogleCacheHandle` — `{ cacheName, expiresAt, model }` returned by cache operations.
-- `CacheKey` — `{ model, stableKey }` used by `getOrCreate`.
-- Multimodal part mapping in adapter: `inline-media` → Gemini `inlineData`, `file-uri` → Gemini
-  `fileData`, `mediaResolution` → `PartMediaResolutionLevel` enum.
-- Grounding metadata capture: `candidate.groundingMetadata` captured into
-  `result.providerMetadata['groundingMetadata']`; `promptFeedback` captured alongside it.
-- Grounding + schema conflict guard: adapter throws `LlmError('bad_request')` when
-  `googleSearch` tool and `output.jsonSchema` are both set.
-- `FLEX_DEFAULT_TIMEOUT_MS` (1 500 000) and `TRANSPORT_TIMEOUT_BUFFER_MS` (5 000) exported from
-  `@gullabs/google`.
-- Automatic `httpOptions.timeout` on every request: `FLEX_DEFAULT_TIMEOUT_MS` for Flex calls
-  without `timeoutMs`; `timeoutMs + TRANSPORT_TIMEOUT_BUFFER_MS` when `timeoutMs` is set.
-  Caller-supplied `providerOptions.google.httpOptions` wins over any computed value.
-
----
-
-## [Unreleased] / 0.0.0 — 2026-06-27
-
-Initial v1 implementation. Scope: four goals, no more — see `SPEC.md`.
-
-### Added
-
-**`@gullabs/core`**
-
-- `createClient` engine: 12-step pipeline (config resolution → adapter → normalize → validate → cost → record → result)
-- `defineCallSite` — typed, reusable prompt template with `{{var}}` interpolation (anti-injection: values are not re-scanned)
-- `geminiPricingSource` — `PricingSource` implementation backed by the built-in Gemini pricing snapshot (`gemini-2026-06-28`)
-- `computeCost` — pure cost function; GROSS token convention enforced; `sum(details) === microUsd` guaranteed by construction
-- Gemini pricing snapshot: 2.5 Pro (tiered >200k), 2.5 Flash, 2.5 Flash-Lite, 3.0 Flash, 3.0 Flash-Lite
-- `buildRecord` — assembles `LlmCallRecord` from engine state; frozen cost, `pricingVersion`, and `reasoningText` included
-- `normalizeUsage` — enforces GROSS convention; clamps cached > input with a warning instead of throwing
-- `LlmError` with `kind`, `retryable`, `httpStatus`, `retryAfterMs`, `provider`, `cause`
-- `classifyHttpStatus` / `classifyError` — HTTP status and raw SDK error → `LlmError` classification
-- Port interfaces: `ProviderAdapter`, `UsageSink`, `PricingSource`, `AuthProvider`, `Clock`, `IdGenerator`, `Logger`, `Telemetry`
-- Full TypeScript types: `LlmRequest`, `LlmResult`, `Usage`, `Cost`, `LlmCallRecord`, `GenConfig`, `ReasoningIntent`, and more
-
-**`@gullabs/google`**
-
-- `geminiAdapter` — `ProviderAdapter` over `@google/genai` (API-key + Vertex auth via `buildGoogleClient`)
-- Gemini Flex service tier (`serviceTier: 'flex'` default)
-- Thinking capture: `thoughtsTokenCount` → `thinkingTokens` in usage; thought parts → `reasoningText`
-- `reasoning.effort` → `thinkingBudget` (gemini-2.5) or `thinkingLevel` (gemini-3.x); throws `LlmError('bad_request')` when the mapping cannot be applied
-- Structured output: JSON Schema → `responseSchema` + `responseMimeType: 'application/json'` via `JSON Schema forwarding`
-- Error classification: `401/403` → `invalid_auth`, `429` → `rate_limited` (+ `retryAfterMs`), `5xx` → `server`, safety → `content_filter`
-
-**`@gullabs/drizzle`**
-
-- `llmCalls` — reference Drizzle `pgTable` schema for `LlmCallRecord`; typed columns + `jsonb` forward-compat lanes
-- `drizzleUsageSink` — `UsageSink` implementation; idempotent on `attemptId` via `INSERT ... ON CONFLICT DO NOTHING`
-
-**`@gullabs/testing`**
-
-- `FakeClock` — deterministic `Clock` with `advance` / `set`
-- `FakeIds` — sequential `IdGenerator` (`call_1`, `attempt_1`, …)
-- `RecordingSink` — in-memory `UsageSink`; `failOnRecord` option for fail-open tests
-- `makeFakeGemini` / `fakeGeminiResponse` / `fakeGeminiBlocked` — scriptable fake Gemini client (no `@google/genai` import)
-- `FakeAdapter` — scriptable `ProviderAdapter` at the port level (bypasses SDK entirely)
-- `SignalAwareFakeAdapter` — cooperative abort-signal adapter for timeout/cancellation tests
-- `fakeAuth` — `AuthProvider` that resolves to a fixed `AuthMaterial`
-
-**Tooling & repo**
-
-- pnpm workspace monorepo; ESM + CJS + `.d.ts` output via `tsup`
-- Strict TypeScript: `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`
-- vitest test suite: cost math, error classification, config resolution, usage normalization, adapter contract tests, engine integration, surface-stress / fuzz tests
-- `examples/basic.ts` — fully runnable network-free example (`pnpm example`)
-- Apache-2.0 license
-
-[Unreleased]: https://github.com/gullabs/any-llm/compare/HEAD...HEAD
+A new companion package, `@gullabs/quota`, was introduced for provider-level quota
+control (RPM/RPD enforcement) outside of core, with a `QuotaDecision` model that
+distinguishes temporary `defer` outcomes from permanent `deny` outcomes.

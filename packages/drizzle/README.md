@@ -2,6 +2,12 @@
 
 Reference Postgres schema and `UsageSink` implementation for any-llm using Drizzle ORM. Provides the `llm_calls` table definition and a ready-to-use sink that persists `LlmCallRecord` objects to your database.
 
+## Install
+
+```bash
+pnpm add @gullabs/drizzle @gullabs/core drizzle-orm
+```
+
 **Peer dependency:** `drizzle-orm >=0.36.0`
 
 ## Key exports
@@ -46,3 +52,9 @@ The `llm_calls` table mirrors `LlmCallRecord` from `@gullabs/core`: typed column
 ## Sink fail-open guarantee
 
 The engine swallows all sink errors — a broken database write never fails the LLM call. Errors are logged via the engine's `Logger` at level `error` with event name `llm.call.sink.failed`.
+
+## Learn more
+
+- [Monorepo root README](../../README.md) — full architecture, auth model, and package overview
+- [`docs/ledger.md`](../../docs/ledger.md) — canonical `llm_calls` guidance, sidecar-table pattern, and query examples
+- [`@gullabs/core` README](../core/README.md) — `LlmCallRecord`, `UsageSink`, and the engine's logging/observability seams

@@ -137,12 +137,19 @@ When both `effort` and `budgetTokens` are set for a `'budget'` model, `budgetTok
 
 ### Structured Output Path
 
-The adapter sets `responseMimeType: 'application/json'` whenever `req.outputJsonSchema` is present.
-`JSON Schema forwarding` converts the JSON Schema to a Gemini `responseSchema` object. When the
-conversion returns `undefined` (a Zod construct that has no Gemini equivalent), the adapter
-proceeds with `responseMimeType` alone without warning. The engine
-performs the actual Zod `.safeParse` validation regardless of whether the adapter-level schema
-was sent.
+`LlmRequest.output` is `{ jsonSchema: JsonValue }` — already a plain JSON Schema value, not a Zod
+schema. When the resolved model's `capabilities.nativeStructuredOutput` is not explicitly `false`,
+the adapter sets `responseMimeType: 'application/json'` and forwards `req.outputJsonSchema`
+straight through as the Gemini `responseSchema` (a cast, not a conversion — there is no
+schema-conversion step).
+
+On the response side, the adapter `JSON.parse`s the model's text output into
+`AdapterResult.rawStructured` when structured output was requested and parsing succeeds. The
+engine surfaces this unchanged as `LlmResult.output: unknown` plus `outputParsed: boolean`, and
+performs **zero shape validation** — it never checks the parsed value against `output.jsonSchema`
+or any other schema. Validation, retry, and acceptance policy are entirely caller-owned; see
+[`docs/structured-output-validation.md`](./docs/structured-output-validation.md) for the
+recommended `validateStructuredResult` + Standard Schema v1 pattern.
 
 ### Multimodal Parts
 
@@ -165,7 +172,7 @@ is captured alongside `promptFeedback` into `result.providerMetadata`.
 The `@google/genai` SDK's default HTTP transport timeout is ~60 s, too short for long Flex calls.
 The adapter sets `config.httpOptions.timeout`:
 
-- `serviceTier === 'flex'`, no `timeoutMs` → `FLEX_DEFAULT_TIMEOUT_MS` (900 000 ms).
+- `serviceTier === 'flex'`, no `timeoutMs` → `FLEX_DEFAULT_TIMEOUT_MS` (1 500 000 ms / 25 minutes).
 - `timeoutMs` is set → `timeoutMs + TRANSPORT_TIMEOUT_BUFFER_MS` (5 000 ms). The buffer ensures
   the engine's `AbortSignal` fires first so the error classifies as `kind: 'timeout'`.
 - Caller-supplied `providerOptions.google.httpOptions` wins over any computed value.
@@ -227,9 +234,9 @@ captures `candidate.groundingMetadata` into `result.providerMetadata`. Grounding
 output (`output.jsonSchema`) are mutually exclusive; the adapter enforces this with a `bad_request`
 error before the SDK call.
 
-**Flex transport timeout.** The adapter sets `config.httpOptions.timeout` automatically: 1 500 s for
-Flex calls without `timeoutMs`, and `timeoutMs + 5 000 ms` when `timeoutMs` is set. Both exported
-as `FLEX_DEFAULT_TIMEOUT_MS` and `TRANSPORT_TIMEOUT_BUFFER_MS`.
+**Flex transport timeout.** The adapter sets `config.httpOptions.timeout` automatically:
+1 500 000 ms (25 minutes) for Flex calls without `timeoutMs`, and `timeoutMs + 5 000 ms` when
+`timeoutMs` is set. Both exported as `FLEX_DEFAULT_TIMEOUT_MS` and `TRANSPORT_TIMEOUT_BUFFER_MS`.
 
 **`Cost.usd` convenience field.** `= microUsd / 1_000_000`. Display-only; micro-USD remains
 canonical and is the only value persisted.

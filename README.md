@@ -127,13 +127,13 @@ The design is **Ports & Adapters (hexagonal)**: the core engine depends only on 
 
 ## Packages
 
-| Package                                  | Description                                                                                                                                                                                                                                                        |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [`@gullabs/any-llm`](./packages/any-llm) | Default batteries-included package: re-exports core + Gemini adapter and installs `@google/genai` for one-package setup.                                                                                                                                           |
-| [`@gullabs/core`](./packages/core)       | Types, ports, engine (`createClient`, `generate`, `runStructured`), cost computation, record builder. No provider dependencies.                                                                                                                                    |
-| [`@gullabs/google`](./packages/google)   | Google adapter over `@google/genai`. Maps Gemini Flex tier, thinking config, multimodal parts, structured output, Gemma 4 routing, and error classification. Optional `GoogleFileStore` and `GoogleCacheStore` helpers for Gemini Files API and Context Cache API. |
-| [`@gullabs/drizzle`](./packages/drizzle) | Reference Postgres schema (`llm_calls` table) and `drizzleUsageSink` — a `UsageSink` port implementation for Drizzle ORM.                                                                                                                                          |
-| [`@gullabs/testing`](./packages/testing) | Test fakes: `FakeClock`, `FakeIds`, `RecordingSink`, `FakeAdapter`, `makeFakeGemini`, `fakeGeminiResponse`. No network in tests.                                                                                                                                   |
+| Package                                  | Description                                                                                                                                                                                                                                                                                                                                                         |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`@gullabs/any-llm`](./packages/any-llm) | Default batteries-included package: re-exports core + Gemini adapter and installs `@google/genai` for one-package setup.                                                                                                                                                                                                                                            |
+| [`@gullabs/core`](./packages/core)       | Types, ports, engine (`createClient`, `generate`, `runStructured`), cost computation, record builder. No provider dependencies.                                                                                                                                                                                                                                     |
+| [`@gullabs/google`](./packages/google)   | Google adapter over `@google/genai`. Maps Gemini Flex tier, thinking config, multimodal parts, structured output, Gemma 4 routing, and error classification. Ships `isGeminiCapacityError` (Flex capacity-error detection) and `normalizeGroundingCitations`. Optional `GoogleFileStore` and `GoogleCacheStore` helpers for Gemini Files API and Context Cache API. |
+| [`@gullabs/drizzle`](./packages/drizzle) | Reference Postgres schema (`llm_calls` table) and `drizzleUsageSink` — a `UsageSink` port implementation for Drizzle ORM.                                                                                                                                                                                                                                           |
+| [`@gullabs/testing`](./packages/testing) | Test fakes: `FakeClock`, `FakeIds`, `RecordingSink`, `FakeAdapter`, `makeFakeGemini`, `fakeGeminiResponse`. No network in tests.                                                                                                                                                                                                                                    |
 
 ## Multimodal parts
 
@@ -141,41 +141,47 @@ The design is **Ports & Adapters (hexagonal)**: the core engine depends only on 
 
 ```ts
 // Inline image (base64, no data: prefix)
-const result = await client.generate({
-  model: 'gemini-2.5-flash',
-  messages: [
-    {
-      role: 'user',
-      parts: [
-        { kind: 'text', text: 'What is in this image?' },
-        {
-          kind: 'inline-media',
-          mimeType: 'image/png',
-          data: Buffer.from(pngBytes).toString('base64'),
-          mediaResolution: 'high', // optional; adapter maps to PartMediaResolutionLevel
-        },
-      ],
-    },
-  ],
-})
+const result = await client.generate(
+  {
+    model: 'gemini-2.5-flash',
+    messages: [
+      {
+        role: 'user',
+        parts: [
+          { kind: 'text', text: 'What is in this image?' },
+          {
+            kind: 'inline-media',
+            mimeType: 'image/png',
+            data: Buffer.from(pngBytes).toString('base64'),
+            mediaResolution: 'high', // optional; adapter maps to PartMediaResolutionLevel
+          },
+        ],
+      },
+    ],
+  },
+  { auth: { apiKey: process.env.GEMINI_API_KEY! } },
+)
 
 // File already uploaded to Gemini Files API
-const result2 = await client.generate({
-  model: 'gemini-2.5-flash',
-  messages: [
-    {
-      role: 'user',
-      parts: [
-        { kind: 'text', text: 'Summarise this video.' },
-        {
-          kind: 'file-uri',
-          uri: 'https://generativelanguage.googleapis.com/v1beta/files/abc123',
-          mimeType: 'video/mp4',
-        },
-      ],
-    },
-  ],
-})
+const result2 = await client.generate(
+  {
+    model: 'gemini-2.5-flash',
+    messages: [
+      {
+        role: 'user',
+        parts: [
+          { kind: 'text', text: 'Summarise this video.' },
+          {
+            kind: 'file-uri',
+            uri: 'https://generativelanguage.googleapis.com/v1beta/files/abc123',
+            mimeType: 'video/mp4',
+          },
+        ],
+      },
+    ],
+  },
+  { auth: { apiKey: process.env.GEMINI_API_KEY! } },
+)
 ```
 
 Gemma 4 models use the same message shape. Built-in routing covers two
@@ -243,18 +249,21 @@ const handle = await store.upload(pdfBytes, 'application/pdf', {
 })
 
 // handle.uri → FileUriPart.uri
-const result = await client.generate({
-  model: 'gemini-2.5-pro',
-  messages: [
-    {
-      role: 'user',
-      parts: [
-        { kind: 'text', text: 'Extract the key figures from this document.' },
-        { kind: 'file-uri', uri: handle.uri, mimeType: 'application/pdf' },
-      ],
-    },
-  ],
-})
+const result = await client.generate(
+  {
+    model: 'gemini-2.5-pro',
+    messages: [
+      {
+        role: 'user',
+        parts: [
+          { kind: 'text', text: 'Extract the key figures from this document.' },
+          { kind: 'file-uri', uri: handle.uri, mimeType: 'application/pdf' },
+        ],
+      },
+    ],
+  },
+  { auth },
+)
 
 // Delete when done (fail-open — errors go to onDeleteError, not rethrown)
 await store.delete(handle)
@@ -281,15 +290,18 @@ const cacheHandle = await cacheStore.getOrCreate(
 )
 
 // Pass the cache name via providerOptions; the adapter forwards it verbatim
-const result = await client.generate({
-  model: 'gemini-2.5-pro',
-  messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Summarise section 3.' }] }],
-  config: {
-    providerOptions: {
-      google: { cachedContent: cacheHandle.cacheName },
+const result = await client.generate(
+  {
+    model: 'gemini-2.5-pro',
+    messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Summarise section 3.' }] }],
+    config: {
+      providerOptions: {
+        google: { cachedContent: cacheHandle.cacheName },
+      },
     },
   },
-})
+  { auth },
+)
 
 // Extend the TTL if it is expiring within 5 minutes (default threshold)
 const refreshed = await cacheStore.refreshIfExpiringSoon(cacheHandle)
@@ -297,34 +309,55 @@ const refreshed = await cacheStore.refreshIfExpiringSoon(cacheHandle)
 
 ## Flex long-timeout calls
 
-Flex-tier calls can run for up to 25 minutes. The adapter sets `httpOptions.timeout` to
-`FLEX_DEFAULT_TIMEOUT_MS` (1 500 000 ms) automatically for all Flex calls. To set an explicit
-per-call deadline on top of that:
+Flex-tier calls can run for up to 25 minutes. When a Flex call has no explicit `timeoutMs`, the
+adapter sets `httpOptions.timeout` to `FLEX_DEFAULT_TIMEOUT_MS` (1 500 000 ms) automatically. To
+set an explicit per-call deadline on top of that:
 
 ```ts
-const result = await client.generate({
-  model: 'gemini-2.5-pro',
-  messages: [
-    {
-      role: 'user',
-      parts: [{ kind: 'text', text: 'Write a very long essay.' }],
+const result = await client.generate(
+  {
+    model: 'gemini-2.5-pro',
+    messages: [
+      {
+        role: 'user',
+        parts: [{ kind: 'text', text: 'Write a very long essay.' }],
+      },
+    ],
+    config: {
+      serviceTier: 'flex',
+      timeoutMs: 600_000, // 10 min engine deadline; SDK transport timeout = 605 000 ms
     },
-  ],
-  config: {
-    serviceTier: 'flex',
-    timeoutMs: 600_000, // 10 min engine deadline; SDK transport timeout = 605 000 ms
   },
-})
+  { auth: { apiKey: process.env.GEMINI_API_KEY! } },
+)
 ```
 
 **Verified field syntax for Flex:** set `serviceTier: 'flex'` in `config` (not in
 `providerOptions.google`) and set `timeoutMs` in ms in `config` for the engine deadline. The
 adapter automatically sets `httpOptions.timeout` to `timeoutMs + 5 000 ms` as a transport-layer
 buffer. `priority` was evaluated and intentionally excluded until Google pricing and availability
-for that tier are verified. **Vertex AI caveat:** on Vertex, the `serviceTier` body field is
-silently ignored (SDK bug #1468); the adapter works around this by injecting
-`X-Vertex-AI-LLM-Request-Type` and `X-Vertex-AI-LLM-Shared-Request-Type` headers on the Vertex
-Flex path.
+for that tier are verified.
+
+If a Flex call fails with a shared-capacity error (as opposed to quota/billing exhaustion),
+`isGeminiCapacityError(error)` (exported from `@gullabs/google`) tells you whether it is safe to
+retry the same request on the `standard` tier:
+
+```ts
+import { isGeminiCapacityError } from '@gullabs/google'
+import { LlmError } from '@gullabs/core'
+
+try {
+  return await client.generate(request, { auth })
+} catch (e) {
+  if (e instanceof LlmError && isGeminiCapacityError(e)) {
+    return await client.generate(
+      { ...request, config: { ...request.config, serviceTier: 'standard' } },
+      { auth },
+    )
+  }
+  throw e
+}
+```
 
 ## Cost
 
@@ -332,7 +365,10 @@ Flex path.
 calculations and aggregation, use `microUsd` from the persisted record.
 
 ```ts
-const result = await client.generate({ model: 'gemini-2.5-flash', messages })
+const result = await client.generate(
+  { model: 'gemini-2.5-flash', messages },
+  { auth: { apiKey: process.env.GEMINI_API_KEY! } },
+)
 if (result.cost) {
   console.log(`$${result.cost.usd?.toFixed(6)}`) // display
   console.log(result.cost.microUsd) // canonical integer, stored in the sink
@@ -346,36 +382,42 @@ raw provider SDK; the engine does not validate, log, or audit them.
 
 ```ts
 // Example: inject a cached-content resource name for the Gemini adapter
-const result = await client.generate({
-  model: 'gemini-2.5-pro',
-  messages: [...],
-  config: {
-    providerOptions: {
-      google: { cachedContent: cacheHandle.cacheName },
+const result = await client.generate(
+  {
+    model: 'gemini-2.5-pro',
+    messages: [...],
+    config: {
+      providerOptions: {
+        google: { cachedContent: cacheHandle.cacheName },
+      },
     },
   },
-})
+  { auth: { apiKey: process.env.GEMINI_API_KEY! } },
+)
 ```
 
 Gemini SDK settings that are not first-class in `GenConfig` use the same lane:
 
 ```ts
-await client.generate({
-  model: 'gemini-2.5-flash',
-  messages: [...],
-  config: {
-    providerOptions: {
-      google: {
-        safetySettings: [
-          {
-            category: 'HARM_CATEGORY_HATE_SPEECH',
-            threshold: 'BLOCK_MEDIUM_AND_ABOVE',
-          },
-        ],
+await client.generate(
+  {
+    model: 'gemini-2.5-flash',
+    messages: [...],
+    config: {
+      providerOptions: {
+        google: {
+          safetySettings: [
+            {
+              category: 'HARM_CATEGORY_HATE_SPEECH',
+              threshold: 'BLOCK_MEDIUM_AND_ABOVE',
+            },
+          ],
+        },
       },
     },
   },
-})
+  { auth: { apiKey: process.env.GEMINI_API_KEY! } },
+)
 ```
 
 There is no guarantee that any key inside `providerOptions` will be honoured — it depends entirely
@@ -532,11 +574,30 @@ These are **designed seams** — the ports exist, the machinery is not built yet
 - **Tool use** — no function-calling machinery. The `Part` union's `kind` discriminant is reserved for future `tool-call` and `tool-result` variants.
 - **Vertex AI** — removed; depended on ambient ADC. See [Roadmap](./ROADMAP.md).
 
-## Reference
+## Documentation
+
+### Design & architecture
 
 - [`SPEC.md`](./SPEC.md) — v1 build contract (goals, invariants, type definitions, engine pipeline)
-- [`DECISIONS.md`](./DECISIONS.md) — autonomous decision log and parked questions
-- [`docs/ledger.md`](./docs/ledger.md) — canonical `llm_calls` guidance, sidecar-table pattern, and query examples
-- [`docs/grounded-structured.md`](./docs/grounded-structured.md) — the recommended two-call Gemini grounding -> structured-output recipe
+- [`docs/architecture.md`](./docs/architecture.md) — canonical engineering deep-dive
+- [`DESIGN.md`](./DESIGN.md) — supplementary design notes: deeper rationale and forward-compatibility decisions
+- [`DECISIONS.md`](./DECISIONS.md) — architecture decision log (ADRs) and parked questions
+
+### Using the library
+
 - [`docs/multi-runtime.md`](./docs/multi-runtime.md) — web route + Temporal worker integration pattern, auth, metadata, and retry ownership
+- [`docs/grounded-structured.md`](./docs/grounded-structured.md) — the recommended two-call Gemini grounding -> structured-output recipe
 - [`docs/structured-output-validation.md`](./docs/structured-output-validation.md) — validating `result.output` after `outputParsed` with a Standard-Schema-compatible helper
+- [`docs/ledger.md`](./docs/ledger.md) — canonical `llm_calls` guidance, sidecar-table pattern, and query examples
+
+### Contributing / operating
+
+- [`CONTRIBUTING.md`](./CONTRIBUTING.md) — dev setup, test/lint/build commands, and contribution principles
+- [`RELEASING.md`](./RELEASING.md) — Changesets-based versioning and npm publish workflow
+- [`SECURITY.md`](./SECURITY.md) — reporting security issues and the library's credential-handling posture
+- [`ROADMAP.md`](./ROADMAP.md) — deferred/designed seams (multiple providers, streaming, tool use, Vertex AI)
+- [`CHANGELOG.md`](./CHANGELOG.md) — per-package release history
+
+## License
+
+[Apache-2.0](./LICENSE)

@@ -2,6 +2,11 @@
 
 The default, batteries-included any-llm client package.
 
+"Batteries-included" means concretely this: `@gullabs/any-llm` bundles `@gullabs/core` (the
+engine), `@gullabs/google` (the Gemini adapter), and `@google/genai` (the Gemini SDK) as
+dependencies and re-exports their full public API, so a single `pnpm add` gets you a working
+client instead of three separate installs.
+
 ## Install
 
 ```bash
@@ -39,6 +44,7 @@ const summarize = defineCallSite({
   userTemplate: 'Summarize this:\n\n{{text}}',
 })
 
+// Auth is required per call — the library never reads environment variables itself.
 const result = await client.runStructured(
   summarize,
   { text: documentText },
@@ -46,4 +52,32 @@ const result = await client.runStructured(
 )
 ```
 
+## Key exports
+
+This package re-exports the full public API of `@gullabs/core` and `@gullabs/google` verbatim —
+`createClient`, `defineCallSite`, `geminiAdapter`, `geminiPricingSource`, `LlmError`, and every
+other named export from both packages. See their READMEs for details:
+
+| Export                  | What it is                                                 |
+| ----------------------- | ---------------------------------------------------------- |
+| `createClient(config)`  | Wires ports into a `{ generate, runStructured }` client    |
+| `defineCallSite(opts)`  | Defines a typed, reusable prompt template bound to a model |
+| `geminiAdapter(opts?)`  | The Gemini `ProviderAdapter`, from `@gullabs/google`       |
+| `geminiPricingSource()` | Built-in Gemini pricing snapshot                           |
+| `LlmError`              | Typed error class — always thrown on call failure          |
+| `ANY_LLM_VERSION`       | This package's version, sourced from `package.json`        |
+
 Use `@gullabs/core` and `@gullabs/google` directly only when you want modular dependency control.
+
+## AI-agent skill
+
+This package ships an [Agent Skill](https://code.claude.com/docs/en/skills) at
+[`skills/any-llm/SKILL.md`](./skills/any-llm/SKILL.md) for AI coding tools that support the
+convention (e.g. Claude Code). Point a compatible assistant at it to get accurate, up-to-date
+usage guidance for this library instead of relying on its training data.
+
+## Learn more
+
+- [Monorepo root README](../../README.md) — full architecture, auth model, and package overview
+- [`docs/structured-output-validation.md`](../../docs/structured-output-validation.md) — validating `result.output` after `outputParsed`
+- [`docs/multi-runtime.md`](../../docs/multi-runtime.md) — web route + Temporal worker integration pattern

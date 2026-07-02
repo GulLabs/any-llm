@@ -1,5 +1,9 @@
 # Host Adoption Feedback for `any-llm`
 
+> **Archived.** This is a historical planning/execution record from internal development, kept for
+> project history. It is not maintained documentation and may not reflect the current state of the
+> library — see the [root README](../../README.md) and [docs/](../) for current, maintained docs.
+
 Status: consolidated, source-checked product backlog for `@gullabs/any-llm`.
 
 This document merges and supersedes:

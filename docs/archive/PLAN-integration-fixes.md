@@ -1,5 +1,9 @@
 # Integration Fixes Plan — `@gullabs/any-llm` v1.x
 
+> **Archived.** This is a historical planning/execution record from internal development, kept for
+> project history. It is not maintained documentation and may not reflect the current state of the
+> library — see the [root README](../../README.md) and [docs/](../) for current, maintained docs.
+
 > **Status:** Codex signoff: APPROVE (finalized greenfield decisions, 2026-06-30) — F3 provider->core->retry served-tier contract verified against retry.ts/engine.ts; all owner decisions encoded; no open items. Execution handoff added and Claude signoff: APPROVE (2026-06-30).
 > Owner signoff: COMPLETE (2026-06-30)
 

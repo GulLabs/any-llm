@@ -99,9 +99,9 @@ function hostUsageSink(db: NodePgDatabase): UsageSink {
 }
 ```
 
-The engine wraps `UsageSink.record()` in `recordToSink` fail-open handling (`engine.ts:726-743`).
-So if this composed transaction fails, both canonical and sidecar writes roll back together and the LLM
-call still succeeds.
+The engine wraps `UsageSink.record()` in fail-open handling — see `recordToSink` in
+`packages/core/src/engine.ts`. So if this composed transaction fails, both canonical and sidecar
+writes roll back together and the LLM call still succeeds.
 
 If a host needs richer typed joins and retention-oriented indexes, use a richer schema:
 

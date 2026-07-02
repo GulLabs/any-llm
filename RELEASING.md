@@ -1,12 +1,12 @@
 # Releasing
 
-This monorepo uses [Changesets](https://github.com/changesets/changesets) for version management and publishing to npm with provenance attestation.
+This monorepo uses [Changesets](https://github.com/changesets/changesets) for version management and publishing to npm. npm provenance attestation is currently disabled (see note below) because it requires a public source repo; it will be re-enabled once this repo goes public.
 
 ## How it works
 
 1. **Add a changeset** while you work — describe _what changed_ and _which packages_ are affected and at what semver bump level (major / minor / patch).
 2. **Merge to `main`** — the `Release` GitHub Actions workflow detects pending changesets and opens a "Version Packages" PR that bumps versions and updates CHANGELOG files.
-3. **Merge the "Version Packages" PR** — the same workflow publishes all bumped packages to npm with npm provenance enabled (`--provenance`), so consumers can verify the package was built from this repo on GitHub Actions.
+3. **Merge the "Version Packages" PR** — the same workflow publishes all bumped packages to npm using the `NPM_TOKEN` secret. Provenance attestation is not currently enabled (see note below).
 
 ## Day-to-day: adding a changeset
 
@@ -37,9 +37,14 @@ feature branch  →  PR + changeset file merged to main
                         ↓
               GitHub Actions: Release workflow
                         ↓
-         changesets/action publishes to npm with provenance
+         changesets/action publishes to npm (provenance disabled — see note below)
          GitHub Release tags are created automatically
 ```
+
+**Note on provenance:** npm rejects provenance attestation (`E422`) for packages built from a
+private source repo. The release workflow (`.github/workflows/release.yml`) currently omits
+`id-token: write` and `NPM_CONFIG_PROVENANCE`, publishing with the `NPM_TOKEN` secret only.
+Re-enable both once this repo goes public.
 
 ## Packages published
 
@@ -75,7 +80,7 @@ pnpm -r build
 pnpm version-packages
 
 # Publish (requires npm login)
-NPM_CONFIG_PROVENANCE=true changeset publish
+changeset publish
 ```
 
 ## Snapshot / pre-releases

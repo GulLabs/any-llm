@@ -4,16 +4,22 @@ Provider quota primitives for `any-llm`. This package keeps quota policy, durabl
 distributed state out of `@gullabs/core` while still speaking the core `Middleware` and
 `RateLimiter` seams directly.
 
+## Install
+
+```bash
+pnpm add @gullabs/quota @gullabs/core
+```
+
 ## Key exports
 
-| Export | What it is |
-| --- | --- |
-| `quotaPolicyForGemini(opts)` | Builds a provider quota policy for Gemini/Google model IDs |
-| `checkProviderQuota(opts)` | Returns a typed `QuotaDecision` (`allow` / `defer` / `deny`) |
-| `enforceProviderQuota(opts)` | Turns a `QuotaDecision` into quota events and typed `LlmError`s |
-| `providerQuotaMiddleware(opts)` | Core `Middleware` that blocks before `next()` |
-| `providerQuotaRateLimiter(opts)` | Core `RateLimiter` wrapper for non-middleware hosts |
-| `upstashQuotaStore(opts)` | Distributed `QuotaStore` backed by the Upstash REST pipeline |
+| Export                           | What it is                                                      |
+| -------------------------------- | --------------------------------------------------------------- |
+| `quotaPolicyForGemini(opts)`     | Builds a provider quota policy for Gemini/Google model IDs      |
+| `checkProviderQuota(opts)`       | Returns a typed `QuotaDecision` (`allow` / `defer` / `deny`)    |
+| `enforceProviderQuota(opts)`     | Turns a `QuotaDecision` into quota events and typed `LlmError`s |
+| `providerQuotaMiddleware(opts)`  | Core `Middleware` that blocks before `next()`                   |
+| `providerQuotaRateLimiter(opts)` | Core `RateLimiter` wrapper for non-middleware hosts             |
+| `upstashQuotaStore(opts)`        | Distributed `QuotaStore` backed by the Upstash REST pipeline    |
 
 ## Quick example
 
@@ -72,6 +78,17 @@ core doc comment points back here for the quota-specific tradeoffs and limitatio
 - `deny`: quota policy permanently disables the model for this scope; today that means
   `reason: 'provider_disabled'` and `retryable: false`.
 
+### The `rpd: 0` convention (deliberate, not incidental)
+
+Setting `rpd: 0` on a model's `GeminiQuotaLimits` is a documented, intentional way to disable that
+model/scope entirely: `evaluateQuotaDecision` checks `resolved.rpd === 0` before consulting the
+`QuotaStore` at all and returns `{ kind: 'deny', reason: 'provider_disabled' }` immediately, with
+no store round-trip. Use it to hard-turn-off a model (e.g. one that's over budget or deprecated)
+without removing its `quotaPolicyForGemini` entry or touching `RateLimiter` wiring — every call
+gets a non-retryable `LlmError` instead of quietly falling through to `allow`. This is distinct
+from omitting `rpd` (which leaves the day-limit unenforced) or setting a positive `rpd` that the
+store exhausts (which yields a retryable `defer`, not a `deny`).
+
 ## Known limitations
 
 - `classifyError` in `@gullabs/core` maps every HTTP `429` to `kind: 'rate_limited'` uniformly.
@@ -82,3 +99,9 @@ core doc comment points back here for the quota-specific tradeoffs and limitatio
 - `RateLimiter.acquire` is keyed as `"${provider}:${model}"` and runs once per logical call before
   the adapter. The built-in Gemini flex-to-standard fallback happens later inside the adapter, so
   there is no tier key seam for a future policy to gate the standard-tier leg separately.
+
+## Learn more
+
+- [Monorepo root README](../../README.md) — full architecture, auth model, and package overview
+- [`@gullabs/core` README](../core/README.md) — `RateLimiter`, `Middleware`, and the `LlmError` contract
+- [`@gullabs/google` README](../google/README.md) — the Gemini adapter this package's default policy targets

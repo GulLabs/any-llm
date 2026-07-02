@@ -299,7 +299,10 @@ export interface LlmCallRecord {
   responseId?: string
   serviceTier?: string
   servedServiceTier?: string // service tier actually served by the provider
-  // status aligns with LlmErrorKind so postmortems don't collapse distinct failures:
+  // status is a coarse outcome category: 'timeout' | 'aborted' | 'content_filter' map
+  // 1:1 from LlmErrorKind, but 'invalid_auth' | 'rate_limited' | 'server' | 'bad_request'
+  // | 'unknown' all collapse to 'api_error' here — the exact failure kind is preserved
+  // separately in `errorKind` below, so postmortems don't lose it:
   status: 'ok' | 'api_error' | 'timeout' | 'aborted' | 'content_filter'
   finishReason?: FinishReason
   outputParsed?: boolean // whether JSON.parse succeeded for a structured-output request
@@ -338,7 +341,8 @@ Core imports no ORM; a host with a different store implements `UsageSink` direct
 
 ## Google adapter (`@gullabs/google`)
 
-- `geminiAdapter(): ProviderAdapter` over `@google/genai` (peerDep), API-key + Vertex-WIF auth.
+- `geminiAdapter(): ProviderAdapter` over `@google/genai` (peerDep), API-key auth only (`{ apiKey }`
+  passed per call; no Vertex support in v1 — see DESIGN.md).
 - Maps: `serviceTier:'flex'` → Gemini Flex only when the model descriptor supports it; `reasoning`
   → `thinkingConfig` (budget for 2.5, level for 3.x); throws `LlmError('bad_request')` when the mapping cannot be applied;
   `output.jsonSchema` → `responseSchema` (`responseMimeType:'application/json'`) only when native

@@ -2,6 +2,12 @@
 
 Gemini provider adapter for any-llm. A thin mapping layer over `@google/genai` that converts `ResolvedRequest` → Gemini SDK params and maps the response back to `AdapterResult`. Never persists, never computes cost, never loops — pure request/response.
 
+## Install
+
+```bash
+pnpm add @gullabs/google @gullabs/core @google/genai
+```
+
 **Peer dependency:** `@google/genai ^1 || ^2`
 
 ## Key exports
@@ -25,7 +31,7 @@ const client = createClient({
   pricing: geminiPricingSource(),
 })
 
-// Auth is required on every call — the library never reads environment variables.
+// Auth is required per call — the library never reads environment variables.
 const result = await client.generate(
   {
     model: 'gemini-2.5-flash',
@@ -62,5 +68,16 @@ and `gemma-4-26b-a4b-it`. Both route through this adapter and support:
   (rejected by the API with HTTP 400).
 - **Tunable sampling** — `temperature`, `topP`, `topK` are accepted.
 
+This follows the library-wide **reject, don't map** rule: unsupported or incorrect input throws a
+typed `bad_request` `LlmError` at validation time rather than being silently clamped or coerced
+into something the model happens to accept.
+
 Gemma 4 models do **not** support Gemini Flex service tier (`serviceTiers` is absent from their
 descriptors) and are unpriced (`cost.microUsd` will be `null`).
+
+## Learn more
+
+- [Monorepo root README](../../README.md) — full architecture, auth model, and package overview
+- [`docs/grounded-structured.md`](../../docs/grounded-structured.md) — the recommended two-call Gemini grounding → structured-output recipe
+- [`docs/multi-runtime.md`](../../docs/multi-runtime.md) — web route + Temporal worker integration pattern, auth, metadata, and retry ownership
+- [`@gullabs/core` README](../core/README.md) — engine, ports, and the `LlmError` contract

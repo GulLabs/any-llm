@@ -59,7 +59,8 @@ Important outputs from the first call:
 - `research.text` — grounded prose you can pass into synthesis;
 - `research.providerMetadata?.groundingMetadata` — Gemini grounding payload;
 - `research.providerMetadata?.promptFeedback` — prompt-level provider feedback;
-- `research.attemptId` — stable anchor if you want to connect a sidecar row.
+- `research.attemptId` — the correlation key for the ledger sidecar pattern: use it as the
+  foreign key if you keep a host-owned sidecar row for this attempt (see `docs/ledger.md`).
 
 ## Small application-local normalizer
 
@@ -95,6 +96,8 @@ clean, deduplicated `Citation[]` (`{ url, sourceName }`), preferring each chunk'
 back to the URL's hostname, and never throws on missing/malformed input.
 
 ```ts
+import { normalizeGroundingCitations } from '@gullabs/google'
+
 const citations = normalizeGroundingCitations(grounding.groundingMetadata)
 ```
 

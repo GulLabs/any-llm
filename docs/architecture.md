@@ -36,16 +36,16 @@ Concrete implementations live outside the engine, in separate packages or in hos
 
 ### Ports
 
-| Port              | Who implements                                        | Notes                                                                          |
-| ----------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `ProviderAdapter` | `@gullabs/google`, future provider packages           | Translates `ResolvedRequest` ↔ raw SDK. Never validates, costs, or persists.   |
-| `UsageSink`       | Host app, `@gullabs/drizzle`                          | Receives completed `LlmCallRecord`. Called fail-open.                          |
-| `PricingSource`   | `@gullabs/core` (built-in Gemini snapshot), or custom | Returns `Cost` for a model + usage; exposes `hasModel`/`listModels` for strict construction-time checks. Runtime pricing is fail-open. |
-| `RateLimiter`     | Host app, `@gullabs/quota`, or another companion package | Pre-send backpressure. `acquire` is fail-closed. Default is a no-op; wait time is recorded as `queueDelayMs`. |
-| `Telemetry`       | Host app (Sentry / PostHog / OTel hook)               | Optional; all callbacks are optional. Called fail-open.                        |
-| `Logger`          | Host app                                              | Structured logger (`info`, `warn`, `error`). Defaults to no-op.                |
-| `Clock`           | `@gullabs/testing` (`FakeClock`) or default           | `Date.now()` abstraction for deterministic latency in tests.                   |
-| `IdGenerator`     | `@gullabs/testing` (`FakeIds`) or default             | `crypto.randomUUID()` abstraction for deterministic records in tests.          |
+| Port              | Who implements                                           | Notes                                                                                                                                  |
+| ----------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `ProviderAdapter` | `@gullabs/google`, future provider packages              | Translates `ResolvedRequest` ↔ raw SDK. Never validates, costs, or persists.                                                           |
+| `UsageSink`       | Host app, `@gullabs/drizzle`                             | Receives completed `LlmCallRecord`. Called fail-open.                                                                                  |
+| `PricingSource`   | `@gullabs/core` (built-in Gemini snapshot), or custom    | Returns `Cost` for a model + usage; exposes `hasModel`/`listModels` for strict construction-time checks. Runtime pricing is fail-open. |
+| `RateLimiter`     | Host app, `@gullabs/quota`, or another companion package | Pre-send backpressure. `acquire` is fail-closed. Default is a no-op; wait time is recorded as `queueDelayMs`.                          |
+| `Telemetry`       | Host app (Sentry / PostHog / OTel hook)                  | Optional; all callbacks are optional. Called fail-open.                                                                                |
+| `Logger`          | Host app                                                 | Structured logger (`info`, `warn`, `error`). Defaults to no-op.                                                                        |
+| `Clock`           | `@gullabs/testing` (`FakeClock`) or default              | `Date.now()` abstraction for deterministic latency in tests.                                                                           |
+| `IdGenerator`     | `@gullabs/testing` (`FakeIds`) or default                | `crypto.randomUUID()` abstraction for deterministic records in tests.                                                                  |
 
 ### Component Diagram
 
@@ -90,24 +90,32 @@ interpolation and config-layer merging before handing off to the shared core.
 
 ### Phase 1 — Prologue (once per logical call)
 
-1. **Config resolution.** `generate`: merges `libDefaults → request.config`. `runStructured`:
+1. **Auth resolution.** `requireAuth(opts.auth)` validates the caller-supplied `AuthMaterial`
+   (`{ apiKey: string }`) once per logical call, before config resolution and before the
+   middleware chain runs. A missing, non-string, or empty `apiKey` throws
+   `LlmError('invalid_auth', retryable: false)` immediately. The resolved `AuthMaterial` is then
+   threaded through `AdapterCtx` unchanged on every retry attempt — it is **not** re-resolved per
+   attempt. There is no `AuthProvider` port and no environment/ambient credential lookup; the
+   caller supplies `{ apiKey }` on every `generate()` / `runStructured()` call.
+
+2. **Config resolution.** `generate`: merges `libDefaults → request.config`. `runStructured`:
    merges `libDefaults → callSite.config → opts.config`. Merge is deep for `reasoning` and
    `providerOptions` objects (per-key override without dropping siblings); last-write-wins for
    scalars and arrays. `serviceTier` defaults to `'flex'` when unset.
 
-2. **Template rendering** (`runStructured` only). `{{var}}` placeholders in `system` and
+3. **Template rendering** (`runStructured` only). `{{var}}` placeholders in `system` and
    `userTemplate` are replaced in a single, non-recursive pass. Values are substituted verbatim
    (no re-scanning) to prevent template injection. Missing variables are left as the literal
    `{{var}}` placeholder so the absence is visible.
 
-3. **callId assignment.** One UUID per logical call, stable across all retry attempts. Emitted
+4. **callId assignment.** One UUID per logical call, stable across all retry attempts. Emitted
    in `llm.call.start` log and forwarded to `telemetry.onStart`.
 
-4. **ModelDescriptor resolution.** The registry resolves the model string (exact-ID, then
+5. **ModelDescriptor resolution.** The registry resolves the model string (exact-ID, then
    longest-prefix). The resolved descriptor is attached to `ResolvedRequest` for the adapter's
    use (`reasoningApi` variant, capability flags).
 
-5. **Middleware chain construction.** `config.middleware` (outermost-first) is folded right-to-left
+6. **Middleware chain construction.** `config.middleware` (outermost-first) is folded right-to-left
    around `runAttempt` using `reduceRight`. The resulting `Handler` is a single function that
    captures the full chain.
 
@@ -123,7 +131,9 @@ sink — retries are visible as separate records sharing a `callId`.
 
 ### Phase 3 — Per-Attempt Handler (`runAttempt`)
 
-Each invocation generates a fresh `attemptId`. Steps:
+Each invocation generates a fresh `attemptId`. Auth was already resolved once, in the Phase 1
+prologue, and is not re-resolved here — `adapterCtx.auth` carries the same `AuthMaterial` on every
+attempt. Steps:
 
 1. **Config validation.** When `req.modelDescriptor.validateConfig` is set, the engine runs the
    Standard Schema v1 validator against a projection of the resolved config (`temperature`, `topP`,
@@ -135,47 +145,44 @@ Each invocation generates a fresh `attemptId`. Steps:
    against the derived provider (from registry, then slash convention). A custom `route` function
    can override entirely.
 
-3. **Auth.** `auth.credentials(provider)` returns `AuthMaterial` — `{ apiKey }` or
-   `{ vertex: { project, location } }`.
-
-4. **Cancellation scaffolding.** Two independent `Promise<never>` rejection promises are built:
+3. **Cancellation scaffolding.** Two independent `Promise<never>` rejection promises are built:
    one fires when the caller's `AbortSignal` fires, one fires after `timeoutMs`. The timeout
    promise rejects **before** calling `AbortController.abort()` on the combined signal — this
    ordering guarantees `kind: 'timeout'` wins the `Promise.race` even against a synchronously
    aborting adapter.
 
-5. **Rate-limiter acquire.** `rateLimiter.acquire("${provider}:${model}", signal)` is raced
+4. **Rate-limiter acquire.** `rateLimiter.acquire("${provider}:${model}", signal)` is raced
    against the cancellation promises. On rejection (caller abort, timeout, or limiter error),
    the call fails. On resolution, a `Release` function is returned; it is called on every exit
    path (success and error). Time spent waiting here is recorded as `queueDelayMs` and excluded
    from provider-dispatch `latencyMs`.
 
-6. **Adapter invocation.** `adapter.run(resolvedReq, adapterCtx)` is raced against the
+5. **Adapter invocation.** `adapter.run(resolvedReq, adapterCtx)` is raced against the
    cancellation promises. The adapter receives the merged abort signal (caller + timeout).
 
-7. **Usage normalization.** `normalizeUsage(adapterResult.usage)` enforces the GROSS token
+6. **Usage normalization.** `normalizeUsage(adapterResult.usage)` enforces the GROSS token
    convention: clamps `cachedInputTokens ≤ inputTokens` and `thinkingTokens ≤ outputTokens`;
    replaces non-finite numbers with `0`; emits `Warning` entries for each violation. This
    runs once; the same normalized `Usage` object is used for cost, the result, and the record.
 
-8. **Structured output parsing.** When `req.outputJsonSchema` is set, the adapter JSON-parses
+7. **Structured output parsing.** When `req.outputJsonSchema` is set, the adapter JSON-parses
    provider text into `rawStructured` when possible. The engine returns `output` and
    `outputParsed`; it never validates shape. Callers own validation, retry, and acceptance policy.
 
-9. **Cost computation.** `pricing.price(pricingKey, usage, serviceTier)` is called inside a
+8. **Cost computation.** `pricing.price(pricingKey, usage, serviceTier)` is called inside a
    try/catch. Failure appends an `'other'` warning and logs `llm.call.cost.failed`; the call
    succeeds without a `cost` field (fail-open).
 
-10. **Record assembly.** `buildRecord` assembles an `LlmCallRecord` from all collected fields.
-    This is a pure function with no I/O. Token hot fields (`inputTokens`, `outputTokens`, etc.)
-    are promoted to typed columns; open maps (`tokenDetails`, `rawUsage`, `providerMetadata`,
-    `warnings`, `generationConfig`) are stored as JSONB-compatible `JsonValue`.
+9. **Record assembly.** `buildRecord` assembles an `LlmCallRecord` from all collected fields.
+   This is a pure function with no I/O. Token hot fields (`inputTokens`, `outputTokens`, etc.)
+   are promoted to typed columns; open maps (`tokenDetails`, `rawUsage`, `providerMetadata`,
+   `warnings`, `generationConfig`) are stored as JSONB-compatible `JsonValue`.
 
-11. **Sink write.** `sink.record(record)` is called inside a try/catch. Failure logs
+10. **Sink write.** `sink.record(record)` is called inside a try/catch. Failure logs
     `llm.call.sink.failed` and is swallowed (fail-open). A record is written on both the success
     path and the error path (postmortem record with whatever usage was known).
 
-12. **Return `LlmResult`.** The result carries `usage`, `cost` (including derived `cost.usd`),
+11. **Return `LlmResult`.** The result carries `usage`, `cost` (including derived `cost.usd`),
     `text`, parsed `output` + `outputParsed` for structured-output calls, `reasoningText`,
     `latencyMs`, `queueDelayMs`, `warnings`, `providerMetadata`, and provider metadata fields.
 
