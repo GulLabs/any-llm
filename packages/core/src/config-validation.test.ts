@@ -353,6 +353,16 @@ describe('configJsonSchema shape', () => {
     expect(props['serviceTier']).toBeDefined()
     expect(props['reasoning']).toBeDefined()
   })
+
+  it('reasoning.budgetTokens has minimum: 0', () => {
+    const desc = geminiModelDescriptors.find((d) => d.id === 'gemini-2.5-pro')!
+    const schema = desc.configJsonSchema as Record<string, unknown>
+    const props = schema['properties'] as Record<string, unknown>
+    const reasoningSchema = props['reasoning'] as Record<string, unknown>
+    const reasoningProps = reasoningSchema['properties'] as Record<string, unknown>
+    const budgetTokensSchema = reasoningProps['budgetTokens'] as Record<string, unknown>
+    expect(budgetTokensSchema['minimum']).toBe(0)
+  })
 })
 
 // ---------------------------------------------------------------------------

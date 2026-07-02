@@ -135,6 +135,87 @@ describe('resolveReasoning', () => {
     }
   })
 
+  it('rejects negative budgetTokens for a budget-api model (gemini-2.5-pro)', () => {
+    for (const budgetTokens of [-1, -1024]) {
+      try {
+        resolveReasoning({
+          model: 'gemini-2.5-pro',
+          budgetTokens,
+          registry: defaultGeminiRegistry,
+        })
+        expect.fail('expected resolveReasoning to throw')
+      } catch (error) {
+        expect(error).toBeInstanceOf(LlmError)
+        expect((error as LlmError).kind).toBe('bad_request')
+        expect((error as LlmError).retryable).toBe(false)
+      }
+    }
+  })
+
+  it('rejects negative budgetTokens for a level-api model (gemini-3.1-pro-preview)', () => {
+    for (const budgetTokens of [-1, -1024]) {
+      try {
+        resolveReasoning({
+          model: 'gemini-3.1-pro-preview',
+          budgetTokens,
+          registry: defaultGeminiRegistry,
+        })
+        expect.fail('expected resolveReasoning to throw')
+      } catch (error) {
+        expect(error).toBeInstanceOf(LlmError)
+        expect((error as LlmError).kind).toBe('bad_request')
+        expect((error as LlmError).retryable).toBe(false)
+      }
+    }
+  })
+
+  it('rejects NaN budgetTokens', () => {
+    try {
+      resolveReasoning({
+        model: 'gemini-2.5-pro',
+        budgetTokens: NaN,
+        registry: defaultGeminiRegistry,
+      })
+      expect.fail('expected resolveReasoning to throw')
+    } catch (error) {
+      expect(error).toBeInstanceOf(LlmError)
+      expect((error as LlmError).kind).toBe('bad_request')
+      expect((error as LlmError).retryable).toBe(false)
+    }
+  })
+
+  it('rejects Infinity and -Infinity budgetTokens', () => {
+    for (const budgetTokens of [Infinity, -Infinity]) {
+      try {
+        resolveReasoning({
+          model: 'gemini-2.5-pro',
+          budgetTokens,
+          registry: defaultGeminiRegistry,
+        })
+        expect.fail('expected resolveReasoning to throw')
+      } catch (error) {
+        expect(error).toBeInstanceOf(LlmError)
+        expect((error as LlmError).kind).toBe('bad_request')
+        expect((error as LlmError).retryable).toBe(false)
+      }
+    }
+  })
+
+  it('rejects non-integer budgetTokens', () => {
+    try {
+      resolveReasoning({
+        model: 'gemini-2.5-pro',
+        budgetTokens: 500.5,
+        registry: defaultGeminiRegistry,
+      })
+      expect.fail('expected resolveReasoning to throw')
+    } catch (error) {
+      expect(error).toBeInstanceOf(LlmError)
+      expect((error as LlmError).kind).toBe('bad_request')
+      expect((error as LlmError).retryable).toBe(false)
+    }
+  })
+
   it('throws when the model has no reasoningApi', () => {
     const registry = createModelRegistry([
       {

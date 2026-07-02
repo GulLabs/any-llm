@@ -212,7 +212,7 @@ export function makeGeminiConfigSchema(opts: {
               ? [...opts.reasoningEfforts]
               : [...ALL_REASONING_EFFORTS],
           },
-          budgetTokens: { type: 'integer' },
+          budgetTokens: { type: 'integer', minimum: 0 },
           includeThoughts: { type: 'boolean' },
         },
       },

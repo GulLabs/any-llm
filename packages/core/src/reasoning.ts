@@ -40,6 +40,13 @@ export function resolveReasoning(
 ): ResolvedReasoning | undefined {
   if (input.budgetTokens === undefined) return undefined
 
+  if (!Number.isInteger(input.budgetTokens) || input.budgetTokens < 0) {
+    throw new LlmError(
+      `Model "${input.model}": budgetTokens must be a non-negative integer, got ${input.budgetTokens}.`,
+      { kind: 'bad_request', retryable: false },
+    )
+  }
+
   const descriptor = input.registry.resolve(input.model)
   const reasoningApi = descriptor?.capabilities?.reasoningApi
   if (reasoningApi === undefined) {

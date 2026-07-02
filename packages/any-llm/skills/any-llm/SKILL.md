@@ -74,7 +74,7 @@ const result = await client.generate(
 
 console.log(result.text) // raw text
 console.log(result.usage) // { inputTokens, outputTokens, cachedInputTokens?, thinkingTokens?, details, raw }
-console.log(result.cost?.microUsd) // integer micro-USD, or undefined if unpriced
+console.log(result.cost?.microUsd) // integer micro-USD, or null if unpriced
 ```
 
 `Message.parts` is `TextPart | InlineMediaPart | FileUriPart` — multimodal input mixes

@@ -23,9 +23,15 @@ function hostnameFrom(url: URL): string {
 
 /**
  * Shape a single grounding chunk into a `Citation`, or `undefined` if the
- * chunk is malformed (missing/invalid `web.uri`).
+ * chunk is malformed (missing/invalid `web.uri`, or a `web.uri` that isn't
+ * a well-formed http(s) URL with a hostname).
  *
- * Real SDK shape (`@google/genai` `GroundingChunk.web`): `{ uri, title, domain }`.
+ * Real SDK shape (`@google/genai` `GroundingChunk.web`): `{ uri, title, domain }`,
+ * which in practice is always an http(s) URL. This helper only ever produces
+ * http(s) citations — any other scheme (`javascript:`, `mailto:`, `data:`,
+ * `file:`, etc.) is treated as a malformed chunk and skipped, since callers
+ * may render `Citation.url` as a clickable link.
+ *
  * `title`, when present, is the human-readable page title and is preferred
  * over the hostname as `sourceName`; the hostname (parsed from `uri`) is the
  * robust fallback when `title` is absent.
@@ -45,6 +51,9 @@ function toCitation(chunk: unknown): Citation | undefined {
   } catch {
     return undefined
   }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined
+  if (parsed.hostname === '') return undefined
 
   const title = (web as Record<string, unknown>)['title']
   const sourceName =

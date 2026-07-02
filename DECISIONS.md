@@ -682,7 +682,7 @@ When targeting Vertex AI (as opposed to the Gemini Developer API), the `serviceT
 field in the generation config body is silently ignored. Flex calls on Vertex are billed at the
 standard tier rate without any indication that the tier selection was not honoured.
 
-_Mitigation:_ On the Vertex flex path, the adapter injects two HTTP headers:
+_Mitigation:_ On the Vertex flex path, the adapter injected two HTTP headers:
 
 - `X-Vertex-AI-LLM-Request-Type: shared`
 - `X-Vertex-AI-LLM-Shared-Request-Type: flex`
@@ -700,8 +700,9 @@ adapter (`packages/google/src/adapter.ts`, `packages/google/src/client.ts`).
 
 - Flex calls will time out correctly via `AbortSignal` even if the SDK's transport timeout is
   silently dropped.
-- Vertex Flex calls are billed at the Flex rate when the headers are injected correctly. Hosts
-  that bypass the adapter and call Vertex directly must inject these headers themselves.
+- Vertex Flex calls were billed at the Flex rate when the headers were injected correctly
+  (historical — Vertex support has since been removed, see the Note above). Hosts that bypass
+  the adapter and call Vertex directly must inject these headers themselves.
 - If Google fixes either bug, the mitigations remain harmless (belt-and-suspenders).
 
 ---

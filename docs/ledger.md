@@ -87,10 +87,19 @@ function hostUsageSink(db: NodePgDatabase): UsageSink {
   return {
     async record(r: LlmCallRecord): Promise<void> {
       await db.transaction(async (tx) => {
-        await tx.insert(llmCalls).values(mapRecord(r)).onConflictDoNothing({ target: llmCalls.attemptId })
-        const ctx = r.metadata as { matterId?: string; auditRunId?: string }
-        if (ctx?.matterId) {
-          await tx.insert(llmCallContext).values({ attemptId: r.attemptId, matterId: ctx.matterId, ... })
+        await tx
+          .insert(llmCalls)
+          .values(mapRecord(r))
+          .onConflictDoNothing({ target: llmCalls.attemptId })
+        const ctx = r.metadata as { tenantId?: string; reportId?: string }
+        if (ctx?.tenantId) {
+          await tx
+            .insert(llmCallContext)
+            .values({
+              attemptId: r.attemptId,
+              tenantId: ctx.tenantId,
+              reportId: ctx.reportId,
+            })
             .onConflictDoNothing({ target: llmCallContext.attemptId })
         }
       })

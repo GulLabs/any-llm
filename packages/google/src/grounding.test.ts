@@ -84,4 +84,51 @@ describe('normalizeGroundingCitations', () => {
 
     expect(citations).toEqual([{ url: 'https://good.example.com/', sourceName: 'Good' }])
   })
+
+  it('skips a javascript: URI (unsafe scheme), producing no citation', () => {
+    const groundingMetadata = {
+      groundingChunks: [{ web: { uri: 'javascript:alert(1)', title: 'Evil' } }],
+    }
+
+    const citations = normalizeGroundingCitations(groundingMetadata)
+
+    expect(citations).toEqual([])
+  })
+
+  it('skips a mailto: URI (non-http(s) scheme), producing no citation', () => {
+    const groundingMetadata = {
+      groundingChunks: [{ web: { uri: 'mailto:x@y.com' } }],
+    }
+
+    const citations = normalizeGroundingCitations(groundingMetadata)
+
+    expect(citations).toEqual([])
+  })
+
+  it('still normalizes a normal https:// URI correctly (regression guard)', () => {
+    const groundingMetadata = {
+      groundingChunks: [
+        { web: { uri: 'https://example.com/page', title: 'Example Page' } },
+      ],
+    }
+
+    const citations = normalizeGroundingCitations(groundingMetadata)
+
+    expect(citations).toEqual([
+      { url: 'https://example.com/page', sourceName: 'Example Page' },
+    ])
+  })
+
+  it('skips a chunk with an unsafe scheme while keeping a valid https chunk from the same array', () => {
+    const groundingMetadata = {
+      groundingChunks: [
+        { web: { uri: 'javascript:alert(1)', title: 'Evil' } },
+        { web: { uri: 'https://good.example.com/', title: 'Good' } },
+      ],
+    }
+
+    const citations = normalizeGroundingCitations(groundingMetadata)
+
+    expect(citations).toEqual([{ url: 'https://good.example.com/', sourceName: 'Good' }])
+  })
 })
