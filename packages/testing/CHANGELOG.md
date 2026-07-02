@@ -1,5 +1,12 @@
 # @gullabs/testing
 
+## 0.2.3
+
+### Patch Changes
+
+- Updated dependencies [78b7636]
+  - @gullabs/core@0.4.3
+
 ## 0.2.2
 
 ### Patch Changes
