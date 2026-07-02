@@ -1,5 +1,13 @@
 # @gullabs/any-llm
 
+## 0.4.1
+
+### Patch Changes
+
+- Updated dependencies [dab0792]
+  - @gullabs/core@0.4.1
+  - @gullabs/google@0.5.0
+
 ## 0.4.0
 
 ### Minor Changes
