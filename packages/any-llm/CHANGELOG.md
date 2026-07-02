@@ -1,5 +1,26 @@
 # @gullabs/any-llm
 
+## 0.5.0
+
+### Minor Changes
+
+- c1aa7ad: Open-source documentation pass: rewrote the root README and all package READMEs for
+  accuracy and consistency, fixed stale content in DESIGN.md/SPEC.md/docs/architecture.md
+  left over from the forward-only structured-output migration, restructured the root
+  CHANGELOG.md to point at each package's own changelog, archived internal planning docs
+  into `docs/archive/`, and scrubbed a private host name from a `@gullabs/core` source
+  comment (no behavior change).
+
+  `@gullabs/any-llm` also ships a new Agent Skill at `skills/any-llm/SKILL.md` teaching AI
+  coding assistants (e.g. Claude Code) how to use this library correctly — per-call auth,
+  the forward-only structured-output contract, error handling, and common mistakes.
+
+### Patch Changes
+
+- Updated dependencies [c1aa7ad]
+  - @gullabs/core@0.4.2
+  - @gullabs/google@0.5.1
+
 ## 0.4.1
 
 ### Patch Changes
