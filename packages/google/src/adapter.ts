@@ -453,12 +453,16 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       // ------------------------------------------------------------------
       // 6. AbortSignal passthrough + FIX A-2: client-side flex ceiling
       //
-      // FIX A-2 belt-and-suspenders: @google/genai issue #1277 — on some SDK
-      // versions httpOptions.timeout is a no-op for generateContent.  On the
-      // flex-default path (flex tier, no explicit timeoutMs) the engine arms NO
-      // AbortSignal; relying solely on httpOptions.timeout risks a silent hang.
-      // We arm our own AbortController here and combine it with any incoming
-      // signal so WE enforce the ceiling regardless of the SDK bug.
+      // FIX A-2 belt-and-suspenders: @google/genai issue #1277 — on SDK
+      // versions before 2.0.0, httpOptions.timeout is a no-op for
+      // generateContent. Upstream landed a related Undici dispatcher fix in
+      // 2.0.0 (commit 850f680), but we keep this mitigation as
+      // belt-and-suspenders since it is now merely double-covered, not made
+      // incorrect. On the flex-default path (flex tier, no explicit
+      // timeoutMs) the engine arms NO AbortSignal; relying solely on
+      // httpOptions.timeout risks a silent hang. We arm our own
+      // AbortController here and combine it with any incoming signal so WE
+      // enforce the ceiling regardless of the SDK bug.
       //
       // Flex and standard default paths need this extra timer when timeoutMs is
       // absent. When timeoutMs IS set the engine already arms a hard AbortSignal

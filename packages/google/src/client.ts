@@ -239,7 +239,10 @@ export interface GeminiGenerateConfig {
    *
    * Real field: GenerateContentConfig.httpOptions.timeout (milliseconds).
    * Real field: GenerateContentConfig.httpOptions.headers (Record<string,string>).
-   *   Used by FIX A-1 to inject Vertex flex routing headers.
+   *   (No current use of custom headers here: Vertex AI auth — and the
+   *   Vertex flex-routing header injection this field once supported — was
+   *   removed from this library; see ADR-019 in DECISIONS.md. Only
+   *   API-key auth is supported below.)
    */
   httpOptions?: { timeout?: number; headers?: Record<string, string> }
 }
