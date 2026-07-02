@@ -1,15 +1,44 @@
 import { readFile } from 'node:fs/promises'
 import { describe, expect, it, vi } from 'vitest'
-import { LlmError } from '@gullabs/core'
+import {
+  LlmError,
+  type EngineCtx,
+  type Handler,
+  type ResolvedRequest,
+} from '@gullabs/core'
 import {
   checkProviderQuota,
   enforceProviderQuota,
+  providerQuotaMiddleware,
   quotaPolicyForGemini,
   type QuotaEvent,
   type QuotaStore,
   type QuotaStoreCheckInput,
   type QuotaStoreCheckResult,
 } from './index.js'
+
+const NOOP_LOGGER = {
+  info() {},
+  warn() {},
+  error() {},
+  debug() {},
+}
+
+function makeCtx(nowMs: number): EngineCtx {
+  return {
+    callId: 'c1',
+    clock: { now: () => nowMs },
+    logger: NOOP_LOGGER,
+  }
+}
+
+function makeReq(model: string): ResolvedRequest {
+  return {
+    model,
+    messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
+    config: { serviceTier: 'flex' },
+  }
+}
 
 function makeStore(result: QuotaStoreCheckResult): QuotaStore {
   return {
@@ -155,5 +184,210 @@ describe('@gullabs/quota', () => {
     expect(source).toContain('function messageForDeny')
     expect(source.match(/const exhaustive: never = reason/g)).toHaveLength(1)
     expect(source).toContain('satisfies Record<QuotaDenyReason')
+  })
+
+  it('enforceProviderQuota keeps an exhaustive switch guard on decision.kind', async () => {
+    const source = await readFile(new URL('./index.ts', import.meta.url), 'utf8')
+
+    expect(source).toContain('function enforceProviderQuota')
+    expect(source.match(/const exhaustive: never = decision/g)).toHaveLength(1)
+  })
+
+  it('checkProviderQuota returns allow for a request within configured limits', async () => {
+    const store = makeStore({
+      rpm: { allowed: true },
+      rpd: { allowed: true },
+    })
+
+    const decision = await checkProviderQuota({
+      provider: 'google',
+      model: 'gemini-2.5-flash',
+      policy: quotaPolicyForGemini({
+        models: {
+          'gemini-2.5-flash': { rpm: 60, rpd: 2_000 },
+        },
+      }),
+      store,
+      nowMs: Date.UTC(2026, 5, 30, 12, 0, 0),
+    })
+
+    expect(decision).toEqual({ kind: 'allow' })
+  })
+
+  it('enforceProviderQuota resolves and emits an allow event within configured limits', async () => {
+    const events: QuotaEvent[] = []
+    const store = makeStore({
+      rpm: { allowed: true },
+      rpd: { allowed: true },
+    })
+
+    await expect(
+      enforceProviderQuota({
+        provider: 'google',
+        model: 'gemini-2.5-flash',
+        policy: quotaPolicyForGemini({
+          models: {
+            'gemini-2.5-flash': { rpm: 60, rpd: 2_000 },
+          },
+        }),
+        store,
+        onEvent: (event) => events.push(event),
+        nowMs: Date.UTC(2026, 5, 30, 12, 0, 0),
+      }),
+    ).resolves.toBeUndefined()
+
+    expect(events).toEqual([
+      {
+        type: 'allow',
+        provider: 'google',
+        model: 'gemini-2.5-flash',
+        scope: 'google:gemini-2.5-flash',
+        decision: { kind: 'allow' },
+      },
+    ])
+  })
+
+  it('rejects a caller-supplied rpd of NaN synchronously', async () => {
+    const store = makeStore({})
+
+    const error = await checkProviderQuota({
+      provider: 'google',
+      model: 'gemini-2.5-flash',
+      policy: quotaPolicyForGemini({
+        models: {
+          'gemini-2.5-flash': { rpd: Number.NaN },
+        },
+      }),
+      store,
+      nowMs: Date.UTC(2026, 5, 30, 12, 0, 0),
+    }).catch((err: unknown) => err)
+
+    expect(error).toBeInstanceOf(LlmError)
+    expect(error).toMatchObject({
+      kind: 'bad_request',
+      retryable: false,
+    })
+    expect((error as LlmError).message).toMatch(/rpd/)
+
+    expect(store.checkAndConsume).not.toHaveBeenCalled()
+  })
+
+  it('rejects a caller-supplied negative rpm', async () => {
+    const store = makeStore({})
+
+    const error = await enforceProviderQuota({
+      provider: 'google',
+      model: 'gemini-2.5-flash',
+      policy: quotaPolicyForGemini({
+        models: {
+          'gemini-2.5-flash': { rpm: -5 },
+        },
+      }),
+      store,
+      nowMs: Date.UTC(2026, 5, 30, 12, 0, 0),
+    }).catch((err: unknown) => err)
+
+    expect(error).toBeInstanceOf(LlmError)
+    expect(error).toMatchObject({
+      kind: 'bad_request',
+      retryable: false,
+    })
+    expect((error as LlmError).message).toMatch(/rpm/)
+
+    expect(store.checkAndConsume).not.toHaveBeenCalled()
+  })
+
+  it('still allows rpd=0 (provider_disabled) without throwing on validation', async () => {
+    const decision = await checkProviderQuota({
+      provider: 'google',
+      model: 'gemini-2.5-pro',
+      policy: quotaPolicyForGemini({
+        models: {
+          'gemini-2.5-pro': { rpd: 0 },
+        },
+      }),
+      store: makeStore({}),
+      nowMs: Date.UTC(2026, 5, 30, 12, 0, 0),
+    })
+
+    expect(decision).toEqual({
+      kind: 'deny',
+      scope: 'google:gemini-2.5-pro',
+      reason: 'provider_disabled',
+    })
+  })
+
+  it('propagates a backend store failure as a rejected promise and emits backend_error', async () => {
+    const backendError = new Error('upstash unreachable')
+    const store: QuotaStore = {
+      checkAndConsume: vi.fn(async () => {
+        throw backendError
+      }),
+    }
+    const events: QuotaEvent[] = []
+
+    const error = await enforceProviderQuota({
+      provider: 'google',
+      model: 'gemini-2.5-flash',
+      policy: quotaPolicyForGemini({
+        models: {
+          'gemini-2.5-flash': { rpm: 60, rpd: 2_000 },
+        },
+      }),
+      store,
+      onEvent: (event) => events.push(event),
+      nowMs: Date.UTC(2026, 5, 30, 12, 0, 0),
+    }).catch((err: unknown) => err)
+
+    expect(error).toBe(backendError)
+    expect(events).toEqual([
+      {
+        type: 'backend_error',
+        provider: 'google',
+        model: 'gemini-2.5-flash',
+        scope: 'google:gemini-2.5-flash',
+        error: backendError,
+      },
+    ])
+  })
+
+  it('providerQuotaMiddleware propagates a bad_request LlmError for a misconfigured rpm, unmodified, before touching the store', async () => {
+    const store: QuotaStore = {
+      checkAndConsume: vi.fn(async () => {
+        throw new Error('store should not be called for a misconfigured quota rule')
+      }),
+    }
+    const next: Handler = vi.fn(async () => {
+      throw new Error('next should not be called when quota config validation fails')
+    })
+
+    const middleware = providerQuotaMiddleware({
+      provider: 'google',
+      policy: quotaPolicyForGemini({
+        models: {
+          'gemini-2.5-flash': { rpm: -5 },
+        },
+      }),
+      store,
+      now: () => Date.UTC(2026, 5, 30, 12, 0, 0),
+    })
+
+    const error = await middleware
+      .intercept(
+        makeReq('gemini-2.5-flash'),
+        makeCtx(Date.UTC(2026, 5, 30, 12, 0, 0)),
+        next,
+      )
+      .catch((err: unknown) => err)
+
+    expect(error).toBeInstanceOf(LlmError)
+    expect(error).toMatchObject({
+      kind: 'bad_request',
+      retryable: false,
+    })
+    expect((error as LlmError).message).toMatch(/rpm/)
+
+    expect(store.checkAndConsume).not.toHaveBeenCalled()
+    expect(next).not.toHaveBeenCalled()
   })
 })

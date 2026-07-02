@@ -10,14 +10,15 @@ ledger shape unless you have a concrete reason to stop consuming the shared sink
 
 ## What each field is for
 
-| Field | Owner | Use it for |
-| --- | --- | --- |
-| `callId` | library | Group all attempts belonging to one logical call. |
-| `attemptId` | library or caller via `idempotencyKey` | Primary key for the attempt row and the foreign-key target for sidecars. |
-| `attemptNumber` | library | Distinguish first attempt vs in-process retries. |
-| `callSiteId` | caller | Prompt-family grouping and observability. |
-| `externalId` | caller | One convenient correlation id for host-ledger queries. |
-| `metadata` | caller | Small, stable, non-secret host anchors persisted verbatim. |
+| Field           | Owner                                  | Use it for                                                                                                                            |
+| --------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `callId`        | library                                | Group all attempts belonging to one logical call.                                                                                     |
+| `attemptId`     | library or caller via `idempotencyKey` | Primary key for the attempt row and the foreign-key target for sidecars.                                                              |
+| `attemptNumber` | library                                | Distinguish first attempt vs in-process retries.                                                                                      |
+| `callSiteId`    | caller                                 | Prompt-family grouping and observability.                                                                                             |
+| `externalId`    | caller                                 | One convenient correlation id for host-ledger queries.                                                                                |
+| `queueDelayMs`  | library                                | Time spent waiting in the configured rate limiter before provider dispatch; use alongside `latencyMs` when attributing spend/latency. |
+| `metadata`      | caller                                 | Small, stable, non-secret host anchors persisted verbatim.                                                                            |
 
 Rules that matter:
 
@@ -98,7 +99,7 @@ function hostUsageSink(db: NodePgDatabase): UsageSink {
 }
 ```
 
-The engine wraps `UsageSink.record()` in `recordToSink` fail-open handling (`engine.ts:713-730`).
+The engine wraps `UsageSink.record()` in `recordToSink` fail-open handling (`engine.ts:726-743`).
 So if this composed transaction fails, both canonical and sidecar writes roll back together and the LLM
 call still succeeds.
 
@@ -196,14 +197,15 @@ Host-domain join (index-backed):
 
 ```sql
 select
-  c.report_id,
+  c.matter_id,
   l.attempt_id,
   l.model,
   l.status,
-  l.cost_micro_usd
+  l.cost_micro_usd,
+  l.queue_delay_ms
 from llm_call_context c
 join llm_calls l on l.attempt_id = c.attempt_id
-where c.report_id = $1
+where c.matter_id = $1
 order by l.created_at asc;
 ```
 

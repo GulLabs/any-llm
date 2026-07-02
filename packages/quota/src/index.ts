@@ -143,7 +143,9 @@ interface ResolvedQuotaRule {
 
 const NOOP_RELEASE: Release = () => {}
 
-export function quotaPolicyForGemini(opts: GeminiQuotaPolicyOptions): ProviderQuotaPolicy {
+export function quotaPolicyForGemini(
+  opts: GeminiQuotaPolicyOptions,
+): ProviderQuotaPolicy {
   const provider = opts.provider ?? 'google'
 
   return {
@@ -169,13 +171,17 @@ export function quotaPolicyForGemini(opts: GeminiQuotaPolicyOptions): ProviderQu
   }
 }
 
-export async function checkProviderQuota(opts: CheckProviderQuotaOptions): Promise<QuotaDecision> {
+export async function checkProviderQuota(
+  opts: CheckProviderQuotaOptions,
+): Promise<QuotaDecision> {
   const nowMs = opts.nowMs ?? Date.now()
   const resolved = resolveQuotaRule(opts.policy, opts.provider, opts.model)
   return evaluateQuotaDecision(resolved, opts.store, nowMs, opts.signal)
 }
 
-export async function enforceProviderQuota(opts: EnforceProviderQuotaOptions): Promise<void> {
+export async function enforceProviderQuota(
+  opts: EnforceProviderQuotaOptions,
+): Promise<void> {
   const nowMs = opts.nowMs ?? Date.now()
   const resolved = resolveQuotaRule(opts.policy, opts.provider, opts.model)
 
@@ -201,11 +207,14 @@ export async function enforceProviderQuota(opts: EnforceProviderQuotaOptions): P
           scope: resolved.scope,
           decision,
         })
-        throw new LlmError(messageForDefer(decision.reason, decision.scope, decision.retryAfterMs), {
-          kind: 'rate_limited',
-          retryable: true,
-          retryAfterMs: decision.retryAfterMs,
-        })
+        throw new LlmError(
+          messageForDefer(decision.reason, decision.scope, decision.retryAfterMs),
+          {
+            kind: 'rate_limited',
+            retryable: true,
+            retryAfterMs: decision.retryAfterMs,
+          },
+        )
 
       case 'deny':
         emitEvent(opts.onEvent, {
@@ -220,9 +229,20 @@ export async function enforceProviderQuota(opts: EnforceProviderQuotaOptions): P
             kind: 'rate_limited',
             retryable: false,
           })
+          // LlmError declares `retryAfterMs` as a class field, so with
+          // useDefineForClassFields (implied by tsconfig's ES2022 target) every
+          // instance gets an own `retryAfterMs` property initialized to
+          // `undefined` — even though it's never passed in `options` here. This
+          // delete keeps `'retryAfterMs' in error` false for non-retryable
+          // deny errors, matching the `defer` case where it's genuinely absent.
           delete (error as { retryAfterMs?: number }).retryAfterMs
           throw error
         }
+
+      default: {
+        const exhaustive: never = decision
+        return exhaustive
+      }
     }
   } catch (error) {
     if (error instanceof LlmError && error.kind === 'rate_limited') {
@@ -240,7 +260,9 @@ export async function enforceProviderQuota(opts: EnforceProviderQuotaOptions): P
   }
 }
 
-export function providerQuotaMiddleware(opts: ProviderQuotaMiddlewareOptions): Middleware {
+export function providerQuotaMiddleware(
+  opts: ProviderQuotaMiddlewareOptions,
+): Middleware {
   return {
     id: opts.id ?? `provider-quota:${opts.provider}`,
     async intercept(req, ctx, next) {
@@ -266,7 +288,9 @@ export function providerQuotaMiddleware(opts: ProviderQuotaMiddlewareOptions): M
   }
 }
 
-export function providerQuotaRateLimiter(opts: ProviderQuotaRateLimiterOptions): RateLimiter {
+export function providerQuotaRateLimiter(
+  opts: ProviderQuotaRateLimiterOptions,
+): RateLimiter {
   return {
     async acquire(key: string, signal?: AbortSignal): Promise<Release> {
       const { provider, model } = parseRateLimiterKey(key)
@@ -300,19 +324,28 @@ export function upstashQuotaStore(opts: UpstashQuotaStoreOptions): QuotaStore {
   return {
     async checkAndConsume(input: QuotaStoreCheckInput): Promise<QuotaStoreCheckResult> {
       const commands: UpstashPipelineCommand[] = []
-      const windows: Array<{ kind: 'rpm' | 'rpd'; limit: number; retryAfterMs: number }> = []
+      const windows: Array<{ kind: 'rpm' | 'rpd'; limit: number; retryAfterMs: number }> =
+        []
 
       if (input.rpm !== undefined && input.rpm > 0) {
         const retryAfterMs = timeUntilNextMinute(input.nowMs)
         commands.push(['INCR', bucketKey(prefix, input.scope, 'rpm', input.nowMs)])
-        commands.push(['PEXPIRE', bucketKey(prefix, input.scope, 'rpm', input.nowMs), retryAfterMs])
+        commands.push([
+          'PEXPIRE',
+          bucketKey(prefix, input.scope, 'rpm', input.nowMs),
+          retryAfterMs,
+        ])
         windows.push({ kind: 'rpm', limit: input.rpm, retryAfterMs })
       }
 
       if (input.rpd !== undefined && input.rpd > 0) {
         const retryAfterMs = timeUntilNextUtcDay(input.nowMs)
         commands.push(['INCR', bucketKey(prefix, input.scope, 'rpd', input.nowMs)])
-        commands.push(['PEXPIRE', bucketKey(prefix, input.scope, 'rpd', input.nowMs), retryAfterMs])
+        commands.push([
+          'PEXPIRE',
+          bucketKey(prefix, input.scope, 'rpd', input.nowMs),
+          retryAfterMs,
+        ])
         windows.push({ kind: 'rpd', limit: input.rpd, retryAfterMs })
       }
 
@@ -361,10 +394,16 @@ function resolveQuotaRule(
   }
 
   if (rule?.rpm !== undefined) {
-    resolved.rpm = rule.rpm
+    const rpm = validateConfiguredLimit('rpm', rule.rpm)
+    if (rpm !== undefined) {
+      resolved.rpm = rpm
+    }
   }
   if (rule?.rpd !== undefined) {
-    resolved.rpd = rule.rpd
+    const rpd = validateConfiguredLimit('rpd', rule.rpd)
+    if (rpd !== undefined) {
+      resolved.rpd = rpd
+    }
   }
 
   return resolved
@@ -410,7 +449,11 @@ async function evaluateQuotaDecision(
 
   const storeDecision = await store.checkAndConsume(storeInput)
 
-  if (rpd !== undefined && storeDecision.rpd !== undefined && !storeDecision.rpd.allowed) {
+  if (
+    rpd !== undefined &&
+    storeDecision.rpd !== undefined &&
+    !storeDecision.rpd.allowed
+  ) {
     return {
       kind: 'defer',
       scope: resolved.scope,
@@ -422,7 +465,11 @@ async function evaluateQuotaDecision(
     }
   }
 
-  if (rpm !== undefined && storeDecision.rpm !== undefined && !storeDecision.rpm.allowed) {
+  if (
+    rpm !== undefined &&
+    storeDecision.rpm !== undefined &&
+    !storeDecision.rpm.allowed
+  ) {
     return {
       kind: 'defer',
       scope: resolved.scope,
@@ -437,7 +484,11 @@ async function evaluateQuotaDecision(
   return { kind: 'allow' }
 }
 
-function messageForDefer(reason: QuotaDeferReason, scope: string, retryAfterMs: number): string {
+function messageForDefer(
+  reason: QuotaDeferReason,
+  scope: string,
+  retryAfterMs: number,
+): string {
   switch (reason) {
     case 'rpm_exhausted':
       return `Provider quota exhausted for "${scope}": requests per minute exhausted. Retry after ${retryAfterMs}ms.`
@@ -482,7 +533,9 @@ function parseRateLimiterKey(key: string): { provider: string; model: string } {
 
 function buildUpstashInvoker(opts: UpstashQuotaStoreOptions): UpstashPipelineInvoker {
   if (opts.url === undefined || opts.token === undefined) {
-    throw new Error('upstashQuotaStore requires either opts.invoke or both opts.url and opts.token')
+    throw new Error(
+      'upstashQuotaStore requires either opts.invoke or both opts.url and opts.token',
+    )
   }
 
   const fetchImpl = opts.fetch ?? globalThis.fetch
@@ -543,7 +596,24 @@ function normalizeConfiguredLimit(limit: number | undefined): number | undefined
   return limit
 }
 
-function normalizeRetryAfter(retryAfterMs: number | undefined, fallbackMs: number): number {
+function validateConfiguredLimit(
+  name: 'rpm' | 'rpd',
+  value: number | undefined,
+): number | undefined {
+  if (value === undefined) return undefined
+  if (!Number.isInteger(value) || value < 0) {
+    throw new LlmError(
+      `Invalid provider quota rule: "${name}" must be a non-negative integer, got ${value}`,
+      { kind: 'bad_request', retryable: false },
+    )
+  }
+  return value
+}
+
+function normalizeRetryAfter(
+  retryAfterMs: number | undefined,
+  fallbackMs: number,
+): number {
   if (retryAfterMs !== undefined && retryAfterMs > 0) {
     return retryAfterMs
   }

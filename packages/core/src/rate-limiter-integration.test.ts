@@ -262,6 +262,55 @@ describe('engine — rateLimiter integration', () => {
     expect(sink.last()!.queueDelayMs).toBe(0)
   })
 
+  it('records latencyMs=0 (not queueDelayMs) when acquire rejects before dispatch', async () => {
+    // Regression test: a failure that happens while still queued on
+    // rateLimiter.acquire() — i.e. BEFORE adapter.run() is ever invoked —
+    // must not report latencyMs as a duplicate of queueDelayMs. Provider-
+    // dispatch never started, so latencyMs must be exactly 0.
+    const clock = new FakeClock(1_000)
+    const sink = new RecordingSink()
+    const adapter = new FakeAdapter('google', makeSuccessResult())
+    const rejectingLimiter: RateLimiter = {
+      async acquire(_key: string, _signal?: AbortSignal): Promise<Release> {
+        // Simulate time spent queued before the limiter refuses the call.
+        clock.advance(250)
+        throw new LlmError('rate limiter refused', {
+          kind: 'rate_limited',
+          retryable: true,
+        })
+      },
+    }
+
+    const client = createClient({
+      adapters: [adapter],
+      pricing: PRICING,
+      sink,
+      clock,
+      ids: new FakeIds(),
+      rateLimiter: rejectingLimiter,
+    })
+
+    const err = await client
+      .generate(
+        {
+          model: 'gemini-2.5-flash',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
+        },
+        { auth: TEST_AUTH },
+      )
+      .catch((e: unknown) => e)
+
+    expect(err).toBeInstanceOf(LlmError)
+    expect((err as LlmError).kind).toBe('rate_limited')
+    // Adapter must never have been called — failure happened before dispatch.
+    expect(adapter.calls).toHaveLength(0)
+
+    const record = sink.last()!
+    expect(record.queueDelayMs).toBeGreaterThan(0)
+    expect(record.queueDelayMs).toBe(250)
+    expect(record.latencyMs).toBe(0)
+  })
+
   it('(d) if acquire rejects, the call fails and the adapter is never invoked', async () => {
     const spy = makeSpyLimiter()
     spy.rejectWith = new LlmError('rate limiter refused', {

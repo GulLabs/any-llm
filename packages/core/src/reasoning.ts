@@ -60,7 +60,7 @@ export function resolveReasoning(
     return { effort: bucket }
   }
 
-  if (bucket === 'none') {
+  if (bucket === 'none' && input.budgetTokens === 0) {
     throw new LlmError(
       `Model "${input.model}" requires reasoning; budgetTokens: ${
         input.budgetTokens

@@ -44,11 +44,7 @@ Set `operationId` once for a workflow operation and reuse it on every correlated
 ## Shared wiring
 
 ```ts
-import {
-  createClient,
-  geminiPricingSource,
-  retryMiddleware,
-} from '@gullabs/any-llm'
+import { createClient, geminiPricingSource, retryMiddleware } from '@gullabs/any-llm'
 import { geminiAdapter } from '@gullabs/google'
 import { drizzleUsageSink, llmCalls } from '@gullabs/drizzle'
 
@@ -116,12 +112,15 @@ function makeWorkerClient(db: DbLike) {
   return createClient(baseClientConfig(db))
 }
 
-export async function runReportActivity(input: {
-  workflowId: string
-  reportId: string
-  prompt: string
-  attemptKey: string
-}, db: DbLike) {
+export async function runReportActivity(
+  input: {
+    workflowId: string
+    reportId: string
+    prompt: string
+    attemptKey: string
+  },
+  db: DbLike,
+) {
   const client = makeWorkerClient(db)
   const auth = { apiKey: await loadWorkerApiKey(input.reportId) }
 
@@ -144,6 +143,51 @@ export async function runReportActivity(input: {
   )
 }
 ```
+
+## Migrating off ambient/singleton auth
+
+Some hosts arrive at `any-llm` with an existing pattern: a client or credential is constructed once
+at process boot — often in a startup/instrumentation file — and stashed in a module-level variable
+or on `globalThis`. Downstream code then reads that singleton implicitly instead of receiving a
+credential as an argument. This is common when a host started with a single API key for a single
+tenant and never needed per-call scoping.
+
+```ts
+// startup.ts — runs once at process boot
+let ambientClient: SomeSdkClient | undefined
+
+export function registerAmbientClient() {
+  ambientClient = createSomeSdkClient({ apiKey: process.env.PROVIDER_API_KEY })
+}
+
+// deep in some unrelated module
+export async function summarize(prompt: string) {
+  if (!ambientClient) throw new Error('client not registered')
+  return ambientClient.generate(prompt)
+}
+```
+
+This pattern is incompatible with `any-llm`'s per-call auth contract. `auth` is passed explicitly as
+an argument to every `generate()`/`runStructured()` call and is never read from a module-level
+variable, `globalThis`, or process environment. That is a deliberate library invariant, not an
+oversight: passing `auth` per call is precisely what makes per-tenant and per-request credential
+resolution possible. A host holding onto a boot-time singleton cannot pass a real per-request or
+per-tenant credential into `any-llm`, because the singleton was only ever populated with the one
+value available at process start.
+
+Migrating off this pattern:
+
+- Delete the boot-time singleton registration entirely; nothing in `any-llm` needs it.
+- In web routes, resolve the credential per request — from the session, a tenant config lookup, or
+  request context — and pass it as the `auth` argument on each call, as shown in
+  `makeWebClient`/`handleRoute` above.
+- In worker or queue runtimes (Temporal activities and similar), pass the credential as an explicit
+  argument into the activity or job, sourced from the workflow's or job's own input, rather than
+  reading it from worker-level environment or config inside the activity body. See
+  `makeWorkerClient`/`runReportActivity` above.
+- This migration can happen incrementally, call site by call site. Each `generate()`/`runStructured()`
+  call already takes `auth` independently, so there is no big-bang cutover: hosts can move one route
+  or activity at a time while the rest of the codebase still reads from the old singleton.
 
 ## Retry ownership
 

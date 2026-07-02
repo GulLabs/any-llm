@@ -1264,7 +1264,15 @@ export function createClient(config: ClientConfig): Client {
         const err = classifyError(rawErr)
 
         // Build postmortem record with whatever we know.
-        const latencyMs = ctx.clock.now() - (dispatchStartMs ?? attemptStartMs)
+        // `dispatchStartMs` is only set immediately before `adapter.run()` is
+        // called (Step 7). When it is still undefined here, the failure
+        // happened before dispatch ever began — e.g. the rate limiter's
+        // `acquire()` rejected, or the call was aborted/timed out while still
+        // queued on `acquire()`. Provider-dispatch latency is zero in that
+        // case; falling back to `attemptStartMs` would double-count the wait
+        // already captured by `queueDelayMs` (see docs/ledger.md, SPEC.md).
+        const latencyMs =
+          dispatchStartMs !== undefined ? ctx.clock.now() - dispatchStartMs : 0
         const errorRecord = buildErrorRecord(
           ctx.callId,
           attemptId,

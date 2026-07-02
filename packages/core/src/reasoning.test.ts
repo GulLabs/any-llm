@@ -70,21 +70,43 @@ describe('resolveReasoning', () => {
     ).toEqual({ effort: 'high' })
   })
 
-  it('throws for any none-bucket budget on gemini-3.1-pro-preview', () => {
-    for (const budgetTokens of [0, 500]) {
-      try {
-        resolveReasoning({
-          model: 'gemini-3.1-pro-preview',
-          budgetTokens,
-          registry: defaultGeminiRegistry,
-        })
-        expect.fail('expected resolveReasoning to throw')
-      } catch (error) {
-        expect(error).toBeInstanceOf(LlmError)
-        expect((error as LlmError).kind).toBe('bad_request')
-        expect((error as LlmError).retryable).toBe(false)
-      }
+  it('throws for explicit zero budget on gemini-3.1-pro-preview', () => {
+    try {
+      resolveReasoning({
+        model: 'gemini-3.1-pro-preview',
+        budgetTokens: 0,
+        registry: defaultGeminiRegistry,
+      })
+      expect.fail('expected resolveReasoning to throw')
+    } catch (error) {
+      expect(error).toBeInstanceOf(LlmError)
+      expect((error as LlmError).kind).toBe('bad_request')
+      expect((error as LlmError).retryable).toBe(false)
     }
+  })
+
+  it('rounds up positive none-bucket budgets to low on gemini-3.1-pro-preview', () => {
+    expect(
+      resolveReasoning({
+        model: 'gemini-3.1-pro-preview',
+        budgetTokens: 500,
+        registry: defaultGeminiRegistry,
+      }),
+    ).toEqual({ effort: 'low' })
+    expect(
+      resolveReasoning({
+        model: 'gemini-3.1-pro-preview',
+        budgetTokens: 1023,
+        registry: defaultGeminiRegistry,
+      }),
+    ).toEqual({ effort: 'low' })
+    expect(
+      resolveReasoning({
+        model: 'gemini-3.1-pro-preview',
+        budgetTokens: 1024,
+        registry: defaultGeminiRegistry,
+      }),
+    ).toEqual({ effort: 'low' })
   })
 
   it('rounds up to admitted tiers for both Gemma 4 descriptors', () => {

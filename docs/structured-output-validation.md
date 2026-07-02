@@ -32,7 +32,9 @@ async function validateStructuredResult<T>(
   const parsed = await schema['~standard'].validate(result.output)
 
   if ('issues' in parsed) {
-    return { ok: false, reason: 'shape_invalid', issues: parsed.issues }
+    return parsed.issues !== undefined
+      ? { ok: false, reason: 'shape_invalid', issues: parsed.issues }
+      : { ok: false, reason: 'shape_invalid' }
   }
 
   return { ok: true, value: parsed.value }
@@ -92,11 +94,14 @@ in `docs/ADOPTION-FEEDBACK.md`.
 ## Example usage
 
 ```ts
+// Pick the schema from something you already know — e.g. which `output.jsonSchema`
+// you requested — never by introspecting `result.output`, which is `unknown` until
+// a schema has validated it.
+const wantsCitations = false // set from your own request/response bookkeeping
+
 const validation = await validateStructuredResult(
   result,
-  result.output?.summary === undefined
-    ? citationShapeSchema
-    : summarySchema,
+  wantsCitations ? citationShapeSchema : summarySchema,
 )
 
 if (!validation.ok && validation.reason === 'not_parsed') {

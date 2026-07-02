@@ -43,3 +43,5 @@ export type {
   GeminiCachesClientLike,
 } from './cache-store.js'
 export { GoogleCacheStore } from './cache-store.js'
+export { normalizeGroundingCitations } from './grounding.js'
+export type { Citation } from './grounding.js'

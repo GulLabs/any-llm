@@ -152,4 +152,17 @@ describe('scriptedRateLimiter', () => {
 
     await expect(acquire).rejects.toThrow()
   })
+
+  it('rejects an already-aborted signal without advancing the clock', async () => {
+    const clock = new FakeClock(1_000)
+    const limiter = scriptedRateLimiter({ delayMs: 250, clock })
+    const controller = new AbortController()
+    controller.abort(new Error('cancelled'))
+
+    await expect(limiter.acquire('key', controller.signal)).rejects.toThrow()
+
+    // The clock must stay put — an already-aborted signal short-circuits
+    // before the scripted delay is ever applied.
+    expect(clock.now()).toBe(1_000)
+  })
 })

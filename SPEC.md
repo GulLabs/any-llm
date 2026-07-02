@@ -103,7 +103,9 @@ export interface LlmResult {
   modelVersion?: string
   finishReason?: FinishReason
   responseId?: string
+  servedServiceTier?: string // service tier actually served by the provider
   latencyMs: number
+  queueDelayMs?: number // time spent waiting in RateLimiter.acquire before provider dispatch
   warnings: Warning[] // never silently drop a setting
   providerMetadata?: JsonValue // raw provider metadata (grounding/safety/etc.)
 }
@@ -182,6 +184,7 @@ export interface AdapterCtx {
 }
 export interface AdapterResult {
   rawStructured?: unknown // engine JSON.parses this into LlmResult.output (unknown); never validated
+  servedServiceTier?: string // service tier actually served by the provider
   text?: string
   reasoningText?: string // thought summary if includeThoughts requested
   usage: Usage
@@ -189,8 +192,6 @@ export interface AdapterResult {
   modelVersion?: string
   finishReason?: FinishReason
   responseId?: string
-  queueDelayMs?: number // time spent waiting in RateLimiter.acquire before provider dispatch
-  latencyMs: number // provider-dispatch latency; excludes queueDelayMs
   warnings: Warning[]
   providerMetadata?: JsonValue
 }
@@ -289,15 +290,19 @@ export interface LlmCallRecord {
   recordSchemaVersion: 1
   callId: string
   attemptId: string
+  attemptNumber: number // 1-based ordinal within the logical call (1 = first attempt, 2 = first retry, …)
   callSiteId?: string
+  externalId?: string // caller-owned correlation id for host ledgers
   provider: string
   model: string
   modelVersion?: string
   responseId?: string
   serviceTier?: string
+  servedServiceTier?: string // service tier actually served by the provider
   // status aligns with LlmErrorKind so postmortems don't collapse distinct failures:
   status: 'ok' | 'api_error' | 'timeout' | 'aborted' | 'content_filter'
   finishReason?: FinishReason
+  outputParsed?: boolean // whether JSON.parse succeeded for a structured-output request
   latencyMs: number
   queueDelayMs?: number
   // usage (typed hot fields)
