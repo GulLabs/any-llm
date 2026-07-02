@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { inMemoryRateLimiter } from './rate-limiter.js'
 import type { RateLimiter } from './ports.js'
 
@@ -112,6 +112,123 @@ describe('inMemoryRateLimiter (core)', () => {
     await expect(p).rejects.toThrow('user cancelled')
 
     release1()
+  })
+
+  it('abort signal with a non-Error reason synthesizes an AbortError for an already-aborted acquire', async () => {
+    const limiter = inMemoryRateLimiter({ maxConcurrency: 1 })
+    const release = await limiter.acquire('key')
+
+    const controller = new AbortController()
+    controller.abort('some string reason')
+
+    let caught: unknown
+    try {
+      await limiter.acquire('key', controller.signal)
+    } catch (err) {
+      caught = err
+    }
+
+    expect(caught).toBeInstanceOf(Error)
+    expect((caught as Error).name).toBe('AbortError')
+
+    release()
+  })
+
+  it('abort signal with an undefined reason synthesizes an AbortError for an already-aborted acquire', async () => {
+    const limiter = inMemoryRateLimiter({ maxConcurrency: 1 })
+    const release = await limiter.acquire('key')
+
+    const controller = new AbortController()
+    // Simulate a signal that is aborted with no reason set.
+    Object.defineProperty(controller.signal, 'reason', { value: undefined })
+    controller.abort()
+
+    let caught: unknown
+    try {
+      await limiter.acquire('key', controller.signal)
+    } catch (err) {
+      caught = err
+    }
+
+    expect(caught).toBeInstanceOf(Error)
+    expect((caught as Error).name).toBe('AbortError')
+
+    release()
+  })
+
+  it('abort signal with a non-Error reason synthesizes an AbortError for a queued waiter', async () => {
+    const limiter = inMemoryRateLimiter({ maxConcurrency: 1 })
+    const release1 = await limiter.acquire('key')
+
+    const controller = new AbortController()
+    const p = limiter.acquire('key', controller.signal)
+
+    controller.abort('queued cancel reason')
+
+    let caught: unknown
+    try {
+      await p
+    } catch (err) {
+      caught = err
+    }
+
+    expect(caught).toBeInstanceOf(Error)
+    expect((caught as Error).name).toBe('AbortError')
+
+    release1()
+  })
+
+  it('removes an aborted waiter from the queue without double-resolving, and frees a slot for the next legitimate waiter', async () => {
+    const limiter = inMemoryRateLimiter({ maxConcurrency: 1 })
+    const release1 = await limiter.acquire('key')
+
+    const controller = new AbortController()
+    let abortedSettled = false
+    let abortedResolvedAgain = false
+    const abortedPromise = limiter.acquire('key', controller.signal).then(
+      () => {
+        abortedResolvedAgain = true
+      },
+      () => {
+        abortedSettled = true
+      },
+    )
+
+    let thirdResolved = false
+    const p3 = limiter.acquire('key').then((r) => {
+      thirdResolved = true
+      return r
+    })
+
+    controller.abort(new Error('abandon queued waiter'))
+    await abortedPromise
+    expect(abortedSettled).toBe(true)
+
+    // Release the only held slot — this must free the third (legitimate)
+    // waiter, not the aborted (already-removed) one.
+    release1()
+    const release3 = await p3
+    expect(thirdResolved).toBe(true)
+    expect(abortedResolvedAgain).toBe(false)
+
+    release3()
+  })
+
+  it('clears the abort listener when a queued waiter resolves normally (not aborted)', async () => {
+    const limiter = inMemoryRateLimiter({ maxConcurrency: 1 })
+    const release1 = await limiter.acquire('key')
+
+    const controller = new AbortController()
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener')
+
+    const p2 = limiter.acquire('key', controller.signal)
+
+    release1()
+    const release2 = await p2
+
+    expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function))
+
+    release2()
   })
 
   it('satisfies the RateLimiter interface structurally', () => {

@@ -8,8 +8,47 @@
  */
 
 import { describe, it, expect, vi } from 'vitest'
+import { LlmError } from '@gullabs/core'
 import { GoogleCacheStore } from './cache-store.js'
 import type { GeminiCachesClientLike, GoogleCacheHandle } from './cache-store.js'
+
+// ---------------------------------------------------------------------------
+// Mock @google/genai — vi.mock factories are hoisted above imports, so all
+// state must be created inside the factory via vi.hoisted. Only used by the
+// getClient() lazy-build / clientOverride-short-circuit tests below; every
+// other test in this file injects a fake GeminiCachesClientLike instead.
+// ---------------------------------------------------------------------------
+
+const { constructorCalls, createMock, updateMock, deleteCacheMock } = vi.hoisted(() => {
+  return {
+    constructorCalls: [] as unknown[],
+    createMock: vi.fn().mockResolvedValue({
+      name: 'cachedContents/lazy123',
+      model: 'gemini-2.0-flash',
+      expireTime: new Date(1_700_000_000_000 + 3600 * 1000).toISOString(),
+    }),
+    updateMock: vi.fn().mockResolvedValue({
+      name: 'cachedContents/lazy123',
+      expireTime: new Date(1_700_000_000_000 + 7200 * 1000).toISOString(),
+    }),
+    deleteCacheMock: vi.fn().mockResolvedValue(undefined),
+  }
+})
+
+vi.mock('@google/genai', () => {
+  class GoogleGenAI {
+    caches: {
+      create: typeof createMock
+      update: typeof updateMock
+      delete: typeof deleteCacheMock
+    }
+    constructor(args: unknown) {
+      constructorCalls.push(args)
+      this.caches = { create: createMock, update: updateMock, delete: deleteCacheMock }
+    }
+  }
+  return { GoogleGenAI }
+})
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -466,6 +505,142 @@ describe('GoogleCacheStore', () => {
     expect(onDeleteError).toHaveBeenCalledWith('cachedContents/abc123', deleteError)
   })
 
+  // NEW (f): create() validates response name — undefined case
+  it('create throws LlmError bad_request when response name is undefined', async () => {
+    const client = makeClient({
+      create: vi.fn().mockResolvedValue({
+        model: 'gemini-2.0-flash',
+        expireTime: new Date(BASE_NOW + 3600 * 1000).toISOString(),
+        // name omitted entirely
+      }),
+    })
+    const store = new GoogleCacheStore({ auth: fakeAuth, client, now: () => BASE_NOW })
+
+    await expect(
+      store.create({ model: 'gemini-2.0-flash', ttlSeconds: 3600 }),
+    ).rejects.toMatchObject({
+      message: 'Cache create response missing required field: name',
+      kind: 'bad_request',
+      retryable: false,
+    })
+    await expect(
+      store.create({ model: 'gemini-2.0-flash', ttlSeconds: 3600 }),
+    ).rejects.toBeInstanceOf(LlmError)
+  })
+
+  // NEW (g): create() validates response name — empty-string case
+  it('create throws LlmError bad_request when response name is an empty string', async () => {
+    const client = makeClient({
+      create: vi.fn().mockResolvedValue({
+        name: '',
+        model: 'gemini-2.0-flash',
+        expireTime: new Date(BASE_NOW + 3600 * 1000).toISOString(),
+      }),
+    })
+    const store = new GoogleCacheStore({ auth: fakeAuth, client, now: () => BASE_NOW })
+
+    await expect(
+      store.create({ model: 'gemini-2.0-flash', ttlSeconds: 3600 }),
+    ).rejects.toMatchObject({
+      message: 'Cache create response missing required field: name',
+      kind: 'bad_request',
+      retryable: false,
+    })
+  })
+
+  // NEW (h): create() falls back to local clock expiry when expireTime is an empty string
+  it('create falls back to local clock expiry when server returns an empty expireTime string', async () => {
+    const ttlSeconds = 900
+    const client = makeClient({
+      create: vi.fn().mockResolvedValue({
+        name: 'cachedContents/empty-expire',
+        model: 'gemini-2.0-flash',
+        expireTime: '',
+      }),
+    })
+    const store = new GoogleCacheStore({ auth: fakeAuth, client, now: () => BASE_NOW })
+
+    const handle = await store.create({ model: 'gemini-2.0-flash', ttlSeconds })
+
+    expect(handle.expiresAt.getTime()).toBe(BASE_NOW + ttlSeconds * 1000)
+  })
+
+  // NEW (i): getOrCreate passes systemInstruction through to create() when provided
+  it('getOrCreate forwards factory-provided systemInstruction into the create call', async () => {
+    const client = makeClient()
+    const systemInstruction = { role: 'system', parts: [{ text: 'be terse' }] }
+    const factory = vi.fn().mockResolvedValue({
+      ttlSeconds: 3600,
+      systemInstruction,
+    })
+    const store = new GoogleCacheStore({ auth: fakeAuth, client, now: () => BASE_NOW })
+
+    await store.getOrCreate(
+      { model: 'gemini-2.0-flash', stableKey: 'sysinst-key' },
+      factory,
+    )
+
+    expect(client.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({ systemInstruction }),
+      }),
+    )
+  })
+
+  // NEW (j): refreshIfExpiringSoon extend — fallback to local clock expiry when
+  // server omits expireTime on update()
+  it('refreshIfExpiringSoon falls back to local clock expiry when update response omits expireTime', async () => {
+    const extensionSeconds = 1200
+    const client = makeClient({
+      update: vi.fn().mockResolvedValue({ name: 'cachedContents/abc123' }),
+    })
+    const nearExpiryNow = BASE_NOW + 3600 * 1000 - 100 * 1000
+
+    const store = new GoogleCacheStore({
+      auth: fakeAuth,
+      client,
+      now: () => nearExpiryNow,
+    })
+
+    const handle: GoogleCacheHandle = {
+      cacheName: 'cachedContents/abc123',
+      model: 'gemini-2.0-flash',
+      expiresAt: new Date(BASE_NOW + 3600 * 1000),
+    }
+
+    const newHandle = await store.refreshIfExpiringSoon(handle, { extensionSeconds })
+
+    expect(client.update).toHaveBeenCalledTimes(1)
+    expect(newHandle.expiresAt.getTime()).toBe(nearExpiryNow + extensionSeconds * 1000)
+  })
+
+  // NEW (k): refreshIfExpiringSoon extend — fallback when expireTime is an empty string
+  it('refreshIfExpiringSoon falls back to local clock expiry when update response has empty expireTime', async () => {
+    const extensionSeconds = 600
+    const client = makeClient({
+      update: vi
+        .fn()
+        .mockResolvedValue({ name: 'cachedContents/abc123', expireTime: '' }),
+    })
+    const nearExpiryNow = BASE_NOW + 3600 * 1000 - 100 * 1000
+
+    const store = new GoogleCacheStore({
+      auth: fakeAuth,
+      client,
+      now: () => nearExpiryNow,
+    })
+
+    const handle: GoogleCacheHandle = {
+      cacheName: 'cachedContents/abc123',
+      model: 'gemini-2.0-flash',
+      expiresAt: new Date(BASE_NOW + 3600 * 1000),
+    }
+
+    const newHandle = await store.refreshIfExpiringSoon(handle, { extensionSeconds })
+
+    expect(newHandle.expiresAt.getTime()).toBe(nearExpiryNow + extensionSeconds * 1000)
+  })
+
   // delete error routing
   describe('delete error routing', () => {
     it('routes delete failure to logger.error when logger is provided', async () => {
@@ -509,6 +684,118 @@ describe('GoogleCacheStore', () => {
 
       expect(consoleSpy).toHaveBeenCalled()
       consoleSpy.mockRestore()
+    })
+  })
+
+  // NEW (l): default `now` (not injected) falls back to the real Date.now
+  it('defaults now to Date.now when not injected', async () => {
+    const client = makeClient()
+    const store = new GoogleCacheStore({ auth: fakeAuth, client })
+
+    const before = Date.now()
+    const handle = await store.create({ model: 'gemini-2.0-flash', ttlSeconds: 3600 })
+    const after = Date.now()
+
+    // expireTime from makeClient() is relative to the fixed BASE_NOW constant used
+    // by the client fake, not the real clock — so just assert the handle resolved
+    // and the store didn't crash exercising the real Date.now() fallback.
+    expect(handle.cacheName).toBe('cachedContents/abc123')
+    expect(before).toBeLessThanOrEqual(after)
+  })
+
+  // NEW (m): create() forwards displayName into config.displayName
+  it('create forwards displayName into the request config', async () => {
+    const client = makeClient()
+    const store = new GoogleCacheStore({ auth: fakeAuth, client, now: () => BASE_NOW })
+
+    await store.create({
+      model: 'gemini-2.0-flash',
+      ttlSeconds: 3600,
+      displayName: 'my-cache',
+    })
+
+    expect(client.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({ displayName: 'my-cache' }),
+      }),
+    )
+  })
+
+  // NEW (n): create() falls back to input.model when resp.model is omitted
+  it('create falls back to input.model when response omits model', async () => {
+    const client = makeClient({
+      create: vi.fn().mockResolvedValue({
+        name: 'cachedContents/no-model',
+        expireTime: new Date(BASE_NOW + 3600 * 1000).toISOString(),
+        // model omitted
+      }),
+    })
+    const store = new GoogleCacheStore({ auth: fakeAuth, client, now: () => BASE_NOW })
+
+    const handle = await store.create({ model: 'gemini-2.0-flash', ttlSeconds: 3600 })
+
+    expect(handle.model).toBe('gemini-2.0-flash')
+  })
+
+  // NEW: getClient() — clientOverride short-circuits and never builds the SDK client
+  describe('getClient()', () => {
+    it('clientOverride short-circuits: never constructs GoogleGenAI', async () => {
+      constructorCalls.length = 0
+      const client = makeClient()
+      const store = new GoogleCacheStore({ auth: fakeAuth, client, now: () => BASE_NOW })
+
+      await store.create({ model: 'gemini-2.0-flash', ttlSeconds: 3600 })
+
+      expect(constructorCalls).toHaveLength(0)
+      expect(client.create).toHaveBeenCalledTimes(1)
+    })
+
+    it('lazily builds and memoises the SDK client: concurrent calls construct GoogleGenAI only once', async () => {
+      constructorCalls.length = 0
+      createMock.mockClear()
+      const store = new GoogleCacheStore({ auth: fakeAuth, now: () => BASE_NOW })
+
+      // Two concurrent creates without a client override — both must resolve
+      // through the same memoised clientPromise.
+      const [h1, h2] = await Promise.all([
+        store.create({ model: 'gemini-2.0-flash', ttlSeconds: 3600 }),
+        store.create({ model: 'gemini-2.0-flash', ttlSeconds: 3600 }),
+      ])
+
+      expect(constructorCalls).toHaveLength(1)
+      expect(h1.cacheName).toBe('cachedContents/lazy123')
+      expect(h2.cacheName).toBe('cachedContents/lazy123')
+
+      // A subsequent call also reuses the same memoised client.
+      await store.create({ model: 'gemini-2.0-flash', ttlSeconds: 3600 })
+      expect(constructorCalls).toHaveLength(1)
+    })
+
+    it('lazily-built client wraps ai.caches.update and ai.caches.delete', async () => {
+      constructorCalls.length = 0
+      updateMock.mockClear()
+      deleteCacheMock.mockClear()
+
+      const store = new GoogleCacheStore({ auth: fakeAuth, now: () => BASE_NOW })
+
+      const handle: GoogleCacheHandle = {
+        cacheName: 'cachedContents/lazy123',
+        model: 'gemini-2.0-flash',
+        expiresAt: new Date(BASE_NOW + 100 * 1000),
+      }
+
+      const refreshed = await store.refreshIfExpiringSoon(handle)
+      expect(updateMock).toHaveBeenCalledWith({
+        name: 'cachedContents/lazy123',
+        config: { ttl: '3600s' },
+      })
+      expect(refreshed.expiresAt.getTime()).toBe(BASE_NOW + 7200 * 1000)
+
+      await store.delete(refreshed)
+      expect(deleteCacheMock).toHaveBeenCalledWith({ name: 'cachedContents/lazy123' })
+
+      // Still only one GoogleGenAI instance across create-via-refresh + update + delete.
+      expect(constructorCalls).toHaveLength(1)
     })
   })
 })

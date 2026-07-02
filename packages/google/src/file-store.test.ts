@@ -13,6 +13,38 @@ import { GoogleFileStore } from './file-store.js'
 import type { GeminiFilesClientLike, GoogleFileHandle } from './file-store.js'
 
 // ---------------------------------------------------------------------------
+// Mock @google/genai — vi.mock factories are hoisted above imports, so all
+// state must be created inside the factory via vi.hoisted. Only used by the
+// getClient() lazy-build / clientOverride-short-circuit tests below; every
+// other test in this file injects a fake GeminiFilesClientLike instead.
+// ---------------------------------------------------------------------------
+
+const { constructorCalls, uploadMock, getMock, deleteMock } = vi.hoisted(() => {
+  return {
+    constructorCalls: [] as unknown[],
+    uploadMock: vi.fn().mockResolvedValue({
+      name: 'files/lazy123',
+      uri: 'https://example.com/files/lazy123',
+      mimeType: 'image/png',
+      state: 'ACTIVE',
+    }),
+    getMock: vi.fn(),
+    deleteMock: vi.fn().mockResolvedValue(undefined),
+  }
+})
+
+vi.mock('@google/genai', () => {
+  class GoogleGenAI {
+    files: { upload: typeof uploadMock; get: typeof getMock; delete: typeof deleteMock }
+    constructor(args: unknown) {
+      constructorCalls.push(args)
+      this.files = { upload: uploadMock, get: getMock, delete: deleteMock }
+    }
+  }
+  return { GoogleGenAI }
+})
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -419,6 +451,80 @@ describe('GoogleFileStore', () => {
     expect(client.get).toHaveBeenCalledTimes(1)
   })
 
+  // NEW: default sleep (not injected) uses the real setTimeout-based realSleep
+  it('defaults sleep to the real timer-based implementation when not injected', async () => {
+    const getResponses = [
+      {
+        state: 'PROCESSING',
+        name: 'files/abc123',
+        uri: 'https://example.com/files/abc123',
+        mimeType: 'image/png',
+      },
+      {
+        state: 'ACTIVE',
+        name: 'files/abc123',
+        uri: 'https://example.com/files/abc123',
+        mimeType: 'image/png',
+      },
+    ]
+    let getCallIdx = 0
+    const client = makeClient({
+      upload: vi.fn().mockResolvedValue({
+        name: 'files/abc123',
+        uri: 'https://example.com/files/abc123',
+        mimeType: 'image/png',
+        state: 'PROCESSING',
+      }),
+      get: vi.fn().mockImplementation(() => Promise.resolve(getResponses[getCallIdx++])),
+    })
+
+    // No `sleep` override — exercises the real setTimeout-based default.
+    // intervalMs: 0 keeps the real timer delay negligible for the test.
+    const store = new GoogleFileStore({ auth: fakeAuth, client, poll: { intervalMs: 0 } })
+    const handle = await store.upload(new Uint8Array([1]), 'image/png')
+
+    expect(handle.name).toBe('files/abc123')
+    expect(client.get).toHaveBeenCalledTimes(2)
+  }, 10_000)
+
+  // NEW: opts.displayName is forwarded into the upload config
+  it('forwards opts.displayName into the upload call config', async () => {
+    const client = makeClient()
+    const store = new GoogleFileStore({ auth: fakeAuth, client, sleep: fastSleep })
+
+    await store.upload(new Uint8Array([1]), 'image/png', { displayName: 'my-file' })
+
+    expect(client.upload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({ displayName: 'my-file' }),
+      }),
+    )
+  })
+
+  // NEW: makeHandle falls back to the initial upload's name/uri/mimeType when a
+  // poll response omits them (the API only guarantees these on the first response)
+  it('falls back to the original upload name/uri/mimeType when a poll response omits them', async () => {
+    const client = makeClient({
+      upload: vi.fn().mockResolvedValue({
+        name: 'files/abc123',
+        uri: 'https://example.com/files/abc123',
+        mimeType: 'image/png',
+        state: 'PROCESSING',
+      }),
+      get: vi.fn().mockResolvedValue({
+        state: 'ACTIVE',
+        // name, uri, mimeType omitted from the poll response
+      }),
+    })
+
+    const store = new GoogleFileStore({ auth: fakeAuth, client, sleep: fastSleep })
+    const handle = await store.upload(new Uint8Array([1]), 'image/png')
+
+    expect(handle.name).toBe('files/abc123')
+    expect(handle.uri).toBe('https://example.com/files/abc123')
+    expect(handle.mimeType).toBe('image/png')
+  })
+
   // 7. deleteAll continues past individual failures
   it('deleteAll continues past individual failures and calls onDeleteError for each', async () => {
     const onDeleteError = vi.fn()
@@ -444,6 +550,175 @@ describe('GoogleFileStore', () => {
     expect(onDeleteError).toHaveBeenCalledWith('files/a', deleteError)
     expect(onDeleteError).toHaveBeenCalledWith('files/b', deleteError)
     expect(onDeleteError).toHaveBeenCalledWith('files/c', deleteError)
+  })
+
+  // NEW: upload validation — missing/empty name and uri variants
+  it('throws LlmError bad_request when upload response name is undefined', async () => {
+    const client = makeClient({
+      upload: vi.fn().mockResolvedValue({
+        uri: 'https://example.com/files/abc123',
+        mimeType: 'image/png',
+        state: 'ACTIVE',
+      }),
+    })
+    const store = new GoogleFileStore({ auth: fakeAuth, client, sleep: fastSleep })
+    await expect(store.upload(new Uint8Array([1]), 'image/png')).rejects.toMatchObject({
+      message: 'File upload response missing required fields (name or uri)',
+      kind: 'bad_request',
+      retryable: false,
+    })
+    await expect(store.upload(new Uint8Array([1]), 'image/png')).rejects.toBeInstanceOf(
+      LlmError,
+    )
+  })
+
+  it('throws LlmError bad_request when upload response name is an empty string', async () => {
+    const client = makeClient({
+      upload: vi.fn().mockResolvedValue({
+        name: '',
+        uri: 'https://example.com/files/abc123',
+        mimeType: 'image/png',
+        state: 'ACTIVE',
+      }),
+    })
+    const store = new GoogleFileStore({ auth: fakeAuth, client, sleep: fastSleep })
+    await expect(store.upload(new Uint8Array([1]), 'image/png')).rejects.toMatchObject({
+      message: 'File upload response missing required fields (name or uri)',
+      kind: 'bad_request',
+      retryable: false,
+    })
+  })
+
+  it('throws LlmError bad_request when upload response uri is undefined', async () => {
+    const client = makeClient({
+      upload: vi.fn().mockResolvedValue({
+        name: 'files/abc123',
+        mimeType: 'image/png',
+        state: 'ACTIVE',
+      }),
+    })
+    const store = new GoogleFileStore({ auth: fakeAuth, client, sleep: fastSleep })
+    await expect(store.upload(new Uint8Array([1]), 'image/png')).rejects.toMatchObject({
+      message: 'File upload response missing required fields (name or uri)',
+      kind: 'bad_request',
+      retryable: false,
+    })
+  })
+
+  it('throws LlmError bad_request when upload response uri is an empty string', async () => {
+    const client = makeClient({
+      upload: vi.fn().mockResolvedValue({
+        name: 'files/abc123',
+        uri: '',
+        mimeType: 'image/png',
+        state: 'ACTIVE',
+      }),
+    })
+    const store = new GoogleFileStore({ auth: fakeAuth, client, sleep: fastSleep })
+    await expect(store.upload(new Uint8Array([1]), 'image/png')).rejects.toMatchObject({
+      message: 'File upload response missing required fields (name or uri)',
+      kind: 'bad_request',
+      retryable: false,
+    })
+  })
+
+  // NEW: getClient() — clientOverride short-circuits and never builds the SDK client
+  describe('getClient()', () => {
+    it('clientOverride short-circuits: never constructs GoogleGenAI', async () => {
+      constructorCalls.length = 0
+      const client = makeClient()
+      const store = new GoogleFileStore({ auth: fakeAuth, client, sleep: fastSleep })
+      const handle: GoogleFileHandle = {
+        name: 'files/abc123',
+        uri: 'u',
+        mimeType: 'image/png',
+      }
+
+      await store.upload(new Uint8Array([1]), 'image/png')
+      await store.delete(handle)
+
+      expect(constructorCalls).toHaveLength(0)
+      expect(client.upload).toHaveBeenCalledTimes(1)
+      expect(client.delete).toHaveBeenCalledTimes(1)
+    })
+
+    it('lazily builds and memoises the SDK client: concurrent calls construct GoogleGenAI only once', async () => {
+      constructorCalls.length = 0
+      uploadMock.mockClear()
+      const store = new GoogleFileStore({ auth: fakeAuth, sleep: fastSleep })
+
+      // Two concurrent uploads without a client override — both must resolve
+      // through the same memoised clientPromise.
+      const [h1, h2] = await Promise.all([
+        store.upload(new Uint8Array([1]), 'image/png'),
+        store.upload(new Uint8Array([2]), 'image/png'),
+      ])
+
+      expect(constructorCalls).toHaveLength(1)
+      expect(h1.name).toBe('files/lazy123')
+      expect(h2.name).toBe('files/lazy123')
+
+      // A subsequent call also reuses the same memoised client.
+      await store.upload(new Uint8Array([3]), 'image/png')
+      expect(constructorCalls).toHaveLength(1)
+    })
+
+    it('lazily-built client converts a Uint8Array with empty mimeType to a Blob without a type', async () => {
+      constructorCalls.length = 0
+      uploadMock.mockClear()
+      const store = new GoogleFileStore({ auth: fakeAuth, sleep: fastSleep })
+
+      await store.upload(new Uint8Array([1, 2, 3]), '')
+
+      expect(uploadMock).toHaveBeenCalledTimes(1)
+      const callArg = uploadMock.mock.calls[0]![0] as { file: Blob }
+      expect(callArg.file).toBeInstanceOf(Blob)
+      expect(callArg.file.type).toBe('')
+    })
+
+    it('lazily-built client passes a Blob source through untouched (no re-wrapping)', async () => {
+      constructorCalls.length = 0
+      uploadMock.mockClear()
+      const store = new GoogleFileStore({ auth: fakeAuth, sleep: fastSleep })
+
+      const sourceBlob = new Blob(['hello'], { type: 'text/plain' })
+      await store.upload(sourceBlob, 'text/plain')
+
+      expect(uploadMock).toHaveBeenCalledTimes(1)
+      const callArg = uploadMock.mock.calls[0]![0] as { file: Blob }
+      expect(callArg.file).toBe(sourceBlob)
+    })
+
+    it('lazily-built client wraps ai.files.get and ai.files.delete', async () => {
+      constructorCalls.length = 0
+      getMock.mockReset()
+      getMock.mockResolvedValue({
+        name: 'files/lazy123',
+        uri: 'https://example.com/files/lazy123',
+        mimeType: 'image/png',
+        state: 'ACTIVE',
+      })
+      uploadMock.mockClear()
+      uploadMock.mockResolvedValueOnce({
+        name: 'files/lazy123',
+        uri: 'https://example.com/files/lazy123',
+        mimeType: 'image/png',
+        state: 'PROCESSING',
+      })
+      deleteMock.mockClear()
+
+      const store = new GoogleFileStore({ auth: fakeAuth, sleep: fastSleep })
+
+      const handle = await store.upload(new Uint8Array([1]), 'image/png')
+      expect(getMock).toHaveBeenCalledWith({ name: 'files/lazy123' })
+      expect(handle.name).toBe('files/lazy123')
+
+      await store.delete(handle)
+      expect(deleteMock).toHaveBeenCalledWith({ name: 'files/lazy123' })
+
+      // Still only one GoogleGenAI instance across upload + get polling + delete.
+      expect(constructorCalls).toHaveLength(1)
+    })
   })
 
   // delete error routing
