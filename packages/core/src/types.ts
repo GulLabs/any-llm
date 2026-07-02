@@ -17,12 +17,7 @@
  * blobs that must survive without schema migration.
  */
 export type JsonValue =
-  | null
-  | boolean
-  | number
-  | string
-  | JsonValue[]
-  | { [k: string]: JsonValue }
+  null | boolean | number | string | JsonValue[] | { [k: string]: JsonValue }
 
 // ---------------------------------------------------------------------------
 // Request

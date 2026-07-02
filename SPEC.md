@@ -54,12 +54,7 @@ Node ≥20. Provider SDKs are **peerDependencies** (a host that only uses Gemini
 
 ```ts
 export type JsonValue =
-  | null
-  | boolean
-  | number
-  | string
-  | JsonValue[]
-  | { [k: string]: JsonValue }
+  null | boolean | number | string | JsonValue[] | { [k: string]: JsonValue }
 
 // ---- request ----
 export interface LlmRequest {

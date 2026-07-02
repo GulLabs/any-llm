@@ -88,10 +88,14 @@ async function buildFilesClient(auth: AuthMaterial): Promise<GeminiFilesClientLi
   return {
     async upload(params) {
       // Real SDK accepts string | Blob; convert Uint8Array → Blob.
+      // Uint8Array.from() copies into a fresh, plain ArrayBuffer-backed
+      // array — BlobPart requires Uint8Array<ArrayBuffer>, which excludes
+      // the SharedArrayBuffer-backed views that Uint8Array<ArrayBufferLike>
+      // (the type of params.file) may structurally include.
       const fileArg: Blob =
         params.file instanceof Uint8Array
           ? new Blob(
-              [params.file],
+              [Uint8Array.from(params.file)],
               params.config?.mimeType !== undefined && params.config.mimeType.length > 0
                 ? { type: params.config.mimeType }
                 : {},

@@ -35,8 +35,7 @@ export type FakeAdapterEntry = AdapterResult | Error | Record<string, unknown>
  * error that happens to carry a `usage` key (e.g. `{ status: 429, usage: null }`).
  */
 type QueueEntry =
-  | { kind: 'result'; result: AdapterResult }
-  | { kind: 'throw'; error: unknown }
+  { kind: 'result'; result: AdapterResult } | { kind: 'throw'; error: unknown }
 
 /**
  * Normalise a public {@link FakeAdapterEntry} into an internal {@link QueueEntry}.

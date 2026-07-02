@@ -6,11 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import {
-  createClient,
-  geminiPricingSource,
-  type StandardSchemaV1,
-} from './index.js'
+import { createClient, geminiPricingSource, type StandardSchemaV1 } from './index.js'
 import type { AdapterResult, Usage } from './index.js'
 import { FakeAdapter, FakeClock, FakeIds, RecordingSink } from '@gullabs/testing'
 
@@ -68,7 +64,11 @@ const summarySchema: StandardSchemaV1<{ summary?: string }, { summary: string }>
     version: 1,
     vendor: 'test/summary',
     validate(value) {
-      if (value !== null && typeof value === 'object' && typeof (value as { summary?: unknown }).summary === 'string') {
+      if (
+        value !== null &&
+        typeof value === 'object' &&
+        typeof (value as { summary?: unknown }).summary === 'string'
+      ) {
         return { value: { summary: (value as { summary: string }).summary } }
       }
       return { issues: [{ message: 'summary must be a string' }] }
@@ -101,7 +101,9 @@ const summaryAndCitationsSchema: StandardSchemaV1<
           },
         }
       }
-      return { issues: [{ message: 'summary must be a string and citations must be an array' }] }
+      return {
+        issues: [{ message: 'summary must be a string and citations must be an array' }],
+      }
     },
     types: {
       input: { citations: [] as unknown[] },
@@ -114,7 +116,12 @@ describe('caller-owned structured-output validation helper', () => {
   it('returns shape_invalid when output parses but fails schema validation', async () => {
     const sink = new RecordingSink()
     const client = createClient({
-      adapters: [new FakeAdapter('google', makeSuccessResult({ rawStructured: { unexpected: 'shape' } }))],
+      adapters: [
+        new FakeAdapter(
+          'google',
+          makeSuccessResult({ rawStructured: { unexpected: 'shape' } }),
+        ),
+      ],
       pricing: PRICING,
       sink,
       clock: new FakeClock(),
@@ -168,7 +175,9 @@ describe('caller-owned structured-output validation helper', () => {
     const result = await client.generate(
       {
         model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'No JSON available' }] }],
+        messages: [
+          { role: 'user', parts: [{ kind: 'text', text: 'No JSON available' }] },
+        ],
         output: {
           jsonSchema: {
             type: 'object',
@@ -186,7 +195,10 @@ describe('caller-owned structured-output validation helper', () => {
     expect(validateCalled).toBe(false)
 
     // Uses a second hand-rolled schema as part of the adoption test shape.
-    const citationValidation = await validateStructuredResult(result, summaryAndCitationsSchema)
+    const citationValidation = await validateStructuredResult(
+      result,
+      summaryAndCitationsSchema,
+    )
     if (citationValidation.ok) expect.fail('expected validation to fail')
     expect(citationValidation.reason).toBe('not_parsed')
     expect(citationValidation).toEqual({ ok: false, reason: 'not_parsed' })

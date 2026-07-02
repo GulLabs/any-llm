@@ -1293,10 +1293,7 @@ describe('engine — pricingFamily routing', () => {
     const sink = new RecordingSink()
     const client = createClient({
       adapters: [
-        new FakeAdapter(
-          'google',
-          makeSuccessResult({ model: 'gemma-4-31b-it' }),
-        ),
+        new FakeAdapter('google', makeSuccessResult({ model: 'gemma-4-31b-it' })),
       ],
       pricing: PRICING,
       sink,

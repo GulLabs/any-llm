@@ -174,9 +174,7 @@ export interface GeminiFileDataContentPart {
  * structural subset of the real `@google/genai` `Part` type for the fields we use.
  */
 export type GeminiContentPart =
-  | GeminiTextContentPart
-  | GeminiInlineDataContentPart
-  | GeminiFileDataContentPart
+  GeminiTextContentPart | GeminiInlineDataContentPart | GeminiFileDataContentPart
 
 /** A content object (message) we construct. */
 export interface GeminiContent {

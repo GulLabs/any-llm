@@ -304,8 +304,8 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
             reasoning.budgetTokens !== undefined
               ? reasoning.budgetTokens
               : reasoning.effort !== undefined
-              ? EFFORT_BUDGET[reasoning.effort]
-              : undefined
+                ? EFFORT_BUDGET[reasoning.effort]
+                : undefined
 
           config.thinkingConfig = {
             ...(budget !== undefined ? { thinkingBudget: budget } : {}),
@@ -491,8 +491,8 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
             ? tier === 'flex'
               ? FLEX_DEFAULT_TIMEOUT_MS
               : tier === 'standard'
-              ? STANDARD_DEFAULT_TIMEOUT_MS
-              : undefined
+                ? STANDARD_DEFAULT_TIMEOUT_MS
+                : undefined
             : undefined
 
         if (defaultTimeoutMs !== undefined) {
@@ -545,10 +545,10 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
         genConfig.timeoutMs !== undefined
           ? genConfig.timeoutMs + TRANSPORT_TIMEOUT_BUFFER_MS
           : config.serviceTier === 'flex'
-          ? FLEX_DEFAULT_TIMEOUT_MS
-          : config.serviceTier === 'standard'
-          ? STANDARD_DEFAULT_TIMEOUT_MS
-          : undefined
+            ? FLEX_DEFAULT_TIMEOUT_MS
+            : config.serviceTier === 'standard'
+              ? STANDARD_DEFAULT_TIMEOUT_MS
+              : undefined
 
       // Merge: our computed timeout is the base; caller wins on top.
       const mergedHttpOptions: Record<string, unknown> = {

@@ -1860,8 +1860,7 @@ describe('grounding — providerMetadata merge', () => {
 
     expect(sink.records).toHaveLength(1)
     const recordMeta = sink.last()?.providerMetadata as
-      | Record<string, unknown>
-      | undefined
+      Record<string, unknown> | undefined
     expect(recordMeta?.['groundingMetadata']).toEqual(fakeGrounding)
   })
 })

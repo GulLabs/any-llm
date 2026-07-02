@@ -282,9 +282,7 @@ const cacheHandle = await cacheStore.getOrCreate(
   { model: 'gemini-2.5-pro', stableKey: 'system-docs-v3' },
   async () => ({
     ttlSeconds: 3600,
-    contents: [
-      /* large content to cache */
-    ],
+    contents: [/* large content to cache */],
     systemInstruction: 'You are a helpful assistant with access to the following docs.',
   }),
 )

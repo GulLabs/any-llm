@@ -91,8 +91,7 @@ class RawThrowAdapter implements ProviderAdapter {
   readonly id: string
   readonly calls: ResolvedRequest[] = []
   private readonly _action:
-    | { kind: 'ok'; result: AdapterResult }
-    | { kind: 'throw'; value: unknown }
+    { kind: 'ok'; result: AdapterResult } | { kind: 'throw'; value: unknown }
 
   constructor(
     id: string,

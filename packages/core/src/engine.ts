@@ -306,7 +306,7 @@ const EMPTY_USAGE: Usage = {
  */
 function interpolate(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{(\w+)\}\}/g, (match, key: string) => {
-    return Object.prototype.hasOwnProperty.call(vars, key) ? vars[key] ?? match : match
+    return Object.prototype.hasOwnProperty.call(vars, key) ? (vars[key] ?? match) : match
   })
 }
 
@@ -581,12 +581,12 @@ function buildCancellationRace(
     signalParts.length === 0
       ? undefined
       : signalParts.length === 1
-      ? signalParts[0]
-      : (() => {
-          const merged = mergeSignals(signalParts)
-          mergedSignalCleanup = merged.cleanup
-          return merged.signal
-        })()
+        ? signalParts[0]
+        : (() => {
+            const merged = mergeSignals(signalParts)
+            mergedSignalCleanup = merged.cleanup
+            return merged.signal
+          })()
 
   // Idempotent cleanup — safe to call on both success and error paths.
   function cleanup(): void {
@@ -1008,8 +1008,8 @@ export function createClient(config: ClientConfig): Client {
         request.idempotencyKey === undefined
           ? ids.attemptId()
           : attemptNumber === 1
-          ? request.idempotencyKey
-          : `${request.idempotencyKey}:${attemptNumber}`
+            ? request.idempotencyKey
+            : `${request.idempotencyKey}:${attemptNumber}`
       lastAttemptId = attemptId
       lastAttemptNumber = attemptNumber
 
