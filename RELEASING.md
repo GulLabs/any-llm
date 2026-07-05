@@ -2,6 +2,12 @@
 
 This monorepo uses [Changesets](https://github.com/changesets/changesets) for version management and publishing to npm. Publishing is normally done by GitHub Actions, not by running `npm publish` from a developer machine.
 
+## Private repo provenance rule
+
+npm provenance is disabled while this GitHub repository is private. npm rejects provenance bundles from private GitHub Actions source repositories with `E422 Unsupported GitHub Actions source repository visibility: "private"`.
+
+The release workflow must omit both `id-token: write` and `NPM_CONFIG_PROVENANCE` until the repo is public. Re-enable them only in the same change that makes the source repository public.
+
 ## How it works
 
 1. **Add a changeset** while you work — describe _what changed_ and _which packages_ are affected and at what semver bump level (major / minor / patch).
@@ -42,7 +48,7 @@ feature branch  →  PR + changeset file merged to main
                         ↓
               GitHub Actions: Release workflow
                         ↓
-         changesets/action publishes to npm
+         changesets/action publishes to npm (provenance disabled while repo is private)
          GitHub Release tags are created automatically
 ```
 
@@ -56,6 +62,7 @@ feature branch  →  PR with code + package.json/CHANGELOG version bumps merged 
               GitHub Actions: Release workflow
                         ↓
          changesets/action publishes the already-versioned unpublished packages
+         (provenance disabled while repo is private)
 ```
 
 Use only one path per release:
