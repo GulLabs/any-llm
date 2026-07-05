@@ -13,6 +13,7 @@ import {
   createClient,
   geminiPricingSource,
   createModelRegistry,
+  gemmaModelDescriptors,
   LlmError,
   retryMiddleware,
 } from './index.js'
@@ -27,6 +28,7 @@ import type {
   CallStartEvent,
   CallSuccessEvent,
   ModelRegistry,
+  ProviderOptions,
 } from './index.js'
 import {
   FakeAdapter,
@@ -35,6 +37,7 @@ import {
   RecordingSink,
   SignalAwareFakeAdapter,
 } from '@gullabs/testing'
+import { makeTestDescriptor } from './test-model-descriptor.js'
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -207,8 +210,8 @@ describe('engine — success path', () => {
     expect(rec.metadata).toEqual({ tenantId: 'acme', runId: 'run-1' })
   })
 
-  it('serviceTier defaults to flex in record', async () => {
-    const { client, sink } = makeClient()
+  it('omits serviceTier from record and adapter request when request config omits it', async () => {
+    const { client, sink, adapter } = makeClient()
 
     await client.generate(
       {
@@ -218,7 +221,8 @@ describe('engine — success path', () => {
       { auth: TEST_AUTH },
     )
 
-    expect(sink.last()!.serviceTier).toBe('flex')
+    expect(adapter.calls[0]!.config.serviceTier).toBeUndefined()
+    expect(sink.last()!.serviceTier).toBeUndefined()
   })
 })
 
@@ -638,26 +642,33 @@ describe('engine — config resolution', () => {
     expect(calls[0]?.temperature).toBe(0.9)
   })
 
-  it('serviceTier defaults to flex even with no config supplied', async () => {
-    const sink = new RecordingSink()
+  it('merged config is validated before dispatch and rejects flexFallback without explicit flex tier', async () => {
+    const adapter = new FakeAdapter('google', makeSuccessResult())
     const client = createClient({
-      adapters: [new FakeAdapter('google', makeSuccessResult())],
-
+      adapters: [adapter],
       pricing: PRICING,
-      sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
+      defaults: { flexFallback: false },
     })
 
-    await client.generate(
-      {
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      },
-      { auth: TEST_AUTH },
-    )
+    await expect(
+      client.runStructured(
+        {
+          id: 'callsite-1',
+          model: 'gemini-2.5-pro',
+          userTemplate: 'Hi',
+          config: { serviceTier: 'flex' },
+        },
+        {},
+        {
+          auth: TEST_AUTH,
+          config: { serviceTier: 'standard' },
+        },
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request', retryable: false })
 
-    expect(sink.last()!.serviceTier).toBe('flex')
+    expect(adapter.calls).toHaveLength(0)
   })
 
   it('per-call serviceTier override wins', async () => {
@@ -682,6 +693,34 @@ describe('engine — config resolution', () => {
     )
 
     expect(sink.last()!.serviceTier).toBe('standard')
+  })
+
+  it('Gemma requests stay tierless when no serviceTier is provided', async () => {
+    const gemma = gemmaModelDescriptors.find((d) => d.id === 'gemma-4-31b-it')!
+    const adapter = new FakeAdapter(
+      'google',
+      makeSuccessResult({ model: 'gemma-4-31b-it' }),
+    )
+    const sink = new RecordingSink()
+    const client = createClient({
+      adapters: [adapter],
+      pricing: PRICING,
+      sink,
+      clock: new FakeClock(),
+      ids: new FakeIds(),
+    })
+
+    await client.generate(
+      {
+        model: 'gemma-4-31b-it',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
+
+    expect(adapter.calls[0]!.modelDescriptor).toEqual(gemma)
+    expect(adapter.calls[0]!.config.serviceTier).toBeUndefined()
+    expect(sink.last()!.serviceTier).toBeUndefined()
   })
 
   it('interpolation is non-recursive: var value containing {{x}} is not expanded', async () => {
@@ -1095,11 +1134,11 @@ describe('engine — timeout determinism (Finding 2)', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 13. providerOptions deep-merge (Finding 3)
+// 13. providerOptions strict merge
 // ---------------------------------------------------------------------------
 
-describe('engine — providerOptions deep-merge (Finding 3)', () => {
-  it('sibling keys survive per-call override; array values are replaced wholesale', async () => {
+describe('engine — providerOptions strict merge', () => {
+  it('deep-merges only allowlisted providerOptions.google keys before adapter dispatch', async () => {
     const capturedConfigs: Array<Parameters<typeof capturingAdapter.run>[0]> = []
     const capturingAdapter = new FakeAdapter('google', makeSuccessResult())
     const origRun = capturingAdapter.run.bind(capturingAdapter)
@@ -1116,19 +1155,24 @@ describe('engine — providerOptions deep-merge (Finding 3)', () => {
       ids: new FakeIds(),
       defaults: {
         providerOptions: {
-          google: { a: { x: 1, y: 2 }, keep: true },
+          google: {
+            httpOptions: { timeout: 1_000 },
+            safetySettings: [{ category: 'harm', threshold: 'block_only_high' }],
+          },
         },
       },
     })
 
-    // Per-call override touches google.a.x only.
     await client.generate(
       {
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         config: {
           providerOptions: {
-            google: { a: { x: 99 }, arr: [10, 20] },
+            google: {
+              httpOptions: { timeout: 2_000 },
+              cachedContent: 'cached/abc123',
+            },
           },
         },
       },
@@ -1138,58 +1182,31 @@ describe('engine — providerOptions deep-merge (Finding 3)', () => {
     const merged = capturedConfigs[0]?.config.providerOptions
     expect(merged).toBeDefined()
 
-    // x is overridden.
     const google = merged!['google'] as Record<string, unknown>
-    const aBlock = google['a'] as Record<string, unknown>
-    expect(aBlock['x']).toBe(99)
-
-    // y (sibling of x) survives the per-call override.
-    expect(aBlock['y']).toBe(2)
-
-    // keep (sibling of a) survives.
-    expect(google['keep']).toBe(true)
-
-    // arr is a new key from the per-call override.
-    expect(google['arr']).toEqual([10, 20])
+    expect(google['httpOptions']).toEqual({ timeout: 2_000 })
+    expect(google['cachedContent']).toBe('cached/abc123')
+    expect(google['safetySettings']).toEqual([
+      { category: 'harm', threshold: 'block_only_high' },
+    ])
   })
 
-  it('array value in providerOptions is replaced wholesale (not merged)', async () => {
-    const capturedConfigs: Array<Parameters<typeof capturingAdapter.run>[0]> = []
-    const capturingAdapter = new FakeAdapter('google', makeSuccessResult())
-    const origRun = capturingAdapter.run.bind(capturingAdapter)
-    vi.spyOn(capturingAdapter, 'run').mockImplementation(async (req, ctx) => {
-      capturedConfigs.push(req)
-      return origRun(req, ctx)
-    })
+  it('rejects unknown providerOptions.google keys before adapter dispatch', async () => {
+    const { client, adapter } = makeClient()
 
-    const client = createClient({
-      adapters: [capturingAdapter],
-
-      pricing: PRICING,
-      clock: new FakeClock(),
-      ids: new FakeIds(),
-      defaults: {
-        providerOptions: { google: { tags: ['a', 'b', 'c'] } },
-      },
-    })
-
-    await client.generate(
-      {
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-        config: {
-          providerOptions: { google: { tags: ['x'] } },
+    await expect(
+      client.generate(
+        {
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+          config: {
+            providerOptions: { google: { tags: ['x'] } } as unknown as ProviderOptions,
+          },
         },
-      },
-      { auth: TEST_AUTH },
-    )
+        { auth: TEST_AUTH },
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request', retryable: false })
 
-    const google = capturedConfigs[0]?.config.providerOptions?.['google'] as Record<
-      string,
-      unknown
-    >
-    // Array is last-write-wins, not merged.
-    expect(google['tags']).toEqual(['x'])
+    expect(adapter.calls).toHaveLength(0)
   })
 })
 
@@ -1202,12 +1219,12 @@ describe('engine — pricingFamily routing', () => {
     // Use a model string that has no pricing entry of its own, but whose
     // descriptor has pricingFamily pointing to 'gemini-2.5-pro' which IS priced.
     const customRegistry = createModelRegistry([
-      {
+      makeTestDescriptor({
         id: 'my-custom-model',
         provider: 'google',
         pricingFamily: 'gemini-2.5-pro',
         capabilities: { reasoning: false },
-      },
+      }),
     ])
     const sink = new RecordingSink()
     const client = createClient({
@@ -1248,11 +1265,11 @@ describe('engine — pricingFamily routing', () => {
 
   it('strictPricing constructs when every registered descriptor resolves to pricing', () => {
     const customRegistry = createModelRegistry([
-      {
+      makeTestDescriptor({
         id: 'my-priced-model',
         provider: 'google',
         pricingFamily: 'gemini-2.5-pro',
-      },
+      }),
     ])
 
     expect(() =>
@@ -1269,11 +1286,11 @@ describe('engine — pricingFamily routing', () => {
     const registryWithoutEnumeration: ModelRegistry = {
       resolve(model) {
         if (model === 'my-priced-model') {
-          return {
+          return makeTestDescriptor({
             id: 'my-priced-model',
             provider: 'google',
             pricingFamily: 'gemini-2.5-pro',
-          }
+          })
         }
         return undefined
       },

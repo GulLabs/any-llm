@@ -14,7 +14,7 @@ import { randomUUID } from 'node:crypto'
 import { LlmError, classifyError } from './errors.js'
 import { buildRecord, normalizeUsage } from './record.js'
 import { redactSecrets } from './redact.js'
-import type { ModelRegistry } from './registry.js'
+import type { ModelDescriptor, ModelRegistry } from './registry.js'
 import { defaultGeminiRegistry } from './registry.js'
 import type {
   ProviderAdapter,
@@ -47,6 +47,7 @@ import type {
   Cost,
 } from './types.js'
 import type { CallSite } from './callsite.js'
+import type { StandardSchemaV1 } from './standard-schema.js'
 
 // ---------------------------------------------------------------------------
 // Public config types
@@ -608,7 +609,68 @@ function buildCancellationRace(
 // ---------------------------------------------------------------------------
 
 /** Resolved config type used throughout the pipeline. */
-type ResolvedConfig = Required<Pick<GenConfig, 'serviceTier'>> & GenConfig
+type ResolvedConfig = GenConfig
+
+function formatConfigIssuePath(path: StandardSchemaV1.Issue['path']): string {
+  if (path === undefined || path.length === 0) {
+    return 'config'
+  }
+
+  let rendered = 'config'
+  for (const segment of path) {
+    const key = typeof segment === 'object' ? segment.key : segment
+    if (typeof key === 'number') {
+      rendered += `[${key}]`
+    } else if (typeof key === 'string') {
+      rendered += rendered === 'config' ? `.${key}` : `.${key}`
+    } else {
+      rendered += `[${String(key)}]`
+    }
+  }
+  return rendered
+}
+
+function buildConfigValidationMessage(
+  model: string,
+  issues: ReadonlyArray<StandardSchemaV1.Issue>,
+): string {
+  return issues
+    .map(
+      (issue) =>
+        `Model "${model}" ${formatConfigIssuePath(issue.path)}: ${issue.message}`,
+    )
+    .join('; ')
+}
+
+async function validateResolvedConfig(
+  model: string,
+  descriptor: ModelDescriptor | undefined,
+  config: GenConfig,
+): Promise<ResolvedConfig> {
+  if (config.flexFallback !== undefined && config.serviceTier !== 'flex') {
+    throw new LlmError(
+      `Model "${model}" config.flexFallback: flexFallback requires config.serviceTier to be explicitly "flex"; remove flexFallback or set serviceTier to "flex".`,
+      { kind: 'bad_request', retryable: false },
+    )
+  }
+
+  if (descriptor?.validateConfig === undefined) {
+    return config
+  }
+
+  const syncOrAsync = descriptor.validateConfig['~standard'].validate(config)
+  const validationResult =
+    syncOrAsync instanceof Promise ? await syncOrAsync : syncOrAsync
+
+  if (validationResult.issues !== undefined) {
+    throw new LlmError(buildConfigValidationMessage(model, validationResult.issues), {
+      kind: 'bad_request',
+      retryable: false,
+    })
+  }
+
+  return validationResult.value as ResolvedConfig
+}
 
 /**
  * Assembles the {@link LlmCallRecord} for the success path (Step 10).
@@ -646,7 +708,9 @@ function buildSuccessRecord(
     ...(adapterResult.responseId !== undefined
       ? { responseId: adapterResult.responseId }
       : {}),
-    serviceTier: resolvedConfig.serviceTier,
+    ...(resolvedConfig.serviceTier !== undefined
+      ? { serviceTier: resolvedConfig.serviceTier }
+      : {}),
     ...(adapterResult.servedServiceTier !== undefined
       ? { servedServiceTier: adapterResult.servedServiceTier }
       : {}),
@@ -920,6 +984,7 @@ export function createClient(config: ClientConfig): Client {
   async function runPipeline(
     request: LlmRequest,
     resolvedConfig: ResolvedConfig,
+    descriptor: ModelDescriptor | undefined,
     callSiteId: string | undefined,
     callerSignal: AbortSignal | undefined,
     callAuth: AuthMaterial,
@@ -964,7 +1029,6 @@ export function createClient(config: ClientConfig): Client {
     // Build the pre-resolved request for the middleware chain.
     // The per-attempt signal is NOT included here — each attempt builds its
     // own combined (caller + timeout) signal inside runAttempt.
-    const descriptor = registry.resolve(request.model)
     const preResolvedReq: ResolvedRequest = {
       model: request.model,
       messages: request.messages,
@@ -1029,47 +1093,19 @@ export function createClient(config: ClientConfig): Client {
       let dispatchStartMs: number | undefined
       // Cancellation cleanup — idempotent; safe to call on both paths.
       let cleanup: () => void = () => {}
+      let effectiveReq: ResolvedRequest = req
 
       try {
-        // Step 4b: Per-model config validation — runs BEFORE auth/rate-limiter/adapter.
-        // Validates a projection of resolvedConfig that excludes execution-spine
-        // fields (timeoutMs, providerOptions), keeping only the generation knobs
-        // that belong to the model's schema.
-        if (req.modelDescriptor?.validateConfig !== undefined) {
-          const {
-            temperature,
-            topP,
-            topK,
-            maxOutputTokens,
-            stopSequences,
-            reasoning,
-            serviceTier,
-          } = req.config
-          const projection: Record<string, unknown> = { serviceTier }
-          if (temperature !== undefined) projection['temperature'] = temperature
-          if (topP !== undefined) projection['topP'] = topP
-          if (topK !== undefined) projection['topK'] = topK
-          if (maxOutputTokens !== undefined)
-            projection['maxOutputTokens'] = maxOutputTokens
-          if (stopSequences !== undefined) projection['stopSequences'] = stopSequences
-          if (reasoning !== undefined) projection['reasoning'] = reasoning
-
-          const syncOrAsync =
-            req.modelDescriptor.validateConfig['~standard'].validate(projection)
-          const validationResult =
-            syncOrAsync instanceof Promise ? await syncOrAsync : syncOrAsync
-
-          if (validationResult.issues !== undefined) {
-            const message = validationResult.issues.map((i) => i.message).join('; ')
-            throw new LlmError(`Model config validation failed: ${message}`, {
-              kind: 'bad_request',
-              retryable: false,
-            })
-          }
-        }
+        const validatedConfig = await validateResolvedConfig(
+          req.model,
+          req.modelDescriptor,
+          req.config,
+        )
+        effectiveReq =
+          validatedConfig === req.config ? req : { ...req, config: validatedConfig }
 
         // Step 5: Resolve adapter (may throw LlmError 'bad_request')
-        const adapter = routeFn(req.model, adapters)
+        const adapter = routeFn(effectiveReq.model, adapters)
         provider = adapter.id
 
         // ── Per-attempt cancellation setup ──────────────────────────────────
@@ -1086,7 +1122,7 @@ export function createClient(config: ClientConfig): Client {
         // buildCancellationRace.  Do not reorder.
         const cancellation = buildCancellationRace(
           ctx.signal,
-          req.attemptTimeoutMs ?? req.config.timeoutMs,
+          effectiveReq.attemptTimeoutMs ?? effectiveReq.config.timeoutMs,
         )
         cleanup = cancellation.cleanup
         const { raceParts, combinedSignal } = cancellation
@@ -1095,7 +1131,7 @@ export function createClient(config: ClientConfig): Client {
         // queueDelayMs separately from provider-dispatch latencyMs below.
         const acquireStartMs = ctx.clock.now()
         const acquirePromise = rateLimiter.acquire(
-          `${provider}:${req.model}`,
+          `${provider}:${effectiveReq.model}`,
           combinedSignal,
         )
         try {
@@ -1117,7 +1153,9 @@ export function createClient(config: ClientConfig): Client {
         // Step 6c: Build adapter-specific request (with the combined signal)
         // and the AdapterCtx.
         const adapterReq: ResolvedRequest =
-          combinedSignal !== undefined ? { ...req, signal: combinedSignal } : req
+          combinedSignal !== undefined
+            ? { ...effectiveReq, signal: combinedSignal }
+            : effectiveReq
 
         const adapterCtx: AdapterCtx = {
           auth: callAuth,
@@ -1166,7 +1204,7 @@ export function createClient(config: ClientConfig): Client {
           cost = pricing.price(
             pricingKey,
             normalizedResult.usage,
-            adapterResult.servedServiceTier ?? req.config.serviceTier,
+            adapterResult.servedServiceTier ?? effectiveReq.config.serviceTier,
           )
           if (cost.microUsd === null) {
             costWarnings.push({
@@ -1199,9 +1237,9 @@ export function createClient(config: ClientConfig): Client {
           attemptId,
           callSiteId,
           provider,
-          req.model,
+          effectiveReq.model,
           request.metadata,
-          resolvedConfig,
+          effectiveReq.config,
           adapterResult,
           normalizedResult.usage,
           cost,
@@ -1278,9 +1316,9 @@ export function createClient(config: ClientConfig): Client {
           attemptId,
           callSiteId,
           provider,
-          req.model,
+          effectiveReq.model,
           request.metadata,
-          resolvedConfig,
+          effectiveReq.config,
           normalizedResult?.usage ?? EMPTY_USAGE,
           latencyMs,
           queueDelayMs,
@@ -1404,15 +1442,17 @@ export function createClient(config: ClientConfig): Client {
       const runtimeOpts = opts as GenerateOptions | undefined
       const callAuth = requireAuth(runtimeOpts?.auth)
       // Config resolution: libDefaults → request.config
+      const descriptor = registry.resolve(request.model)
       const merged = deepMergeConfig(libDefaults, request.config)
-      const serviceTier = merged.serviceTier ?? 'flex'
-      const resolvedConfig: ResolvedConfig = {
-        ...merged,
-        serviceTier,
-      }
+      const resolvedConfig = await validateResolvedConfig(
+        request.model,
+        descriptor,
+        merged,
+      )
       return runPipeline(
         request,
         resolvedConfig,
+        descriptor,
         request.callSiteId,
         runtimeOpts?.signal,
         callAuth,
@@ -1441,12 +1481,13 @@ export function createClient(config: ClientConfig): Client {
       const callAuth = requireAuth(runtimeOpts?.auth)
 
       // Config resolution: libDefaults → callSite.config → opts.config
+      const descriptor = registry.resolve(callSite.model)
       const merged = deepMergeConfig(libDefaults, callSite.config, runtimeOpts?.config)
-      const serviceTier = merged.serviceTier ?? 'flex'
-      const resolvedConfig: ResolvedConfig = {
-        ...merged,
-        serviceTier,
-      }
+      const resolvedConfig = await validateResolvedConfig(
+        callSite.model,
+        descriptor,
+        merged,
+      )
 
       // Render templates (non-recursive interpolation; missing vars → placeholder).
       const userText =
@@ -1472,6 +1513,7 @@ export function createClient(config: ClientConfig): Client {
       return runPipeline(
         request,
         resolvedConfig,
+        descriptor,
         callSite.id,
         runtimeOpts?.signal,
         callAuth,

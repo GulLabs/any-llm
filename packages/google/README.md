@@ -44,12 +44,32 @@ const result = await client.generate(
 ## What it maps
 
 - `serviceTier: 'flex'` → Gemini Flex service tier when the model descriptor supports it
+- omitted `serviceTier` → provider-default request behavior
 - `reasoning.includeThoughts` → `thinkingConfig.includeThoughts`; thought parts become `reasoningText`
-- `reasoning.effort` → `thinkingBudget` (gemini-2.5) or `thinkingLevel` (gemini-3.x) with a warning when lossy
+- `reasoning.effort` → `thinkingBudget` (Gemini 2.5) or `thinkingLevel` (Gemini 3 / Gemma 4)
+- `reasoning.budgetTokens` → admitted only on Gemini 2.5 budget-api models; strict descriptors reject it on level-api models
 - `output.jsonSchema` → `responseMimeType: 'application/json'` + verbatim `responseSchema` when native structured output is enabled; the engine returns parsed output and `outputParsed` without validating shape
-- `providerOptions.google.*` → forwarded verbatim to the SDK config, including Gemini `safetySettings`
+- `providerOptions.google.*` → typed provider-extension lane for admitted keys such as `cachedContent`, `safetySettings`, and exact tool declarations
 - Usage: `promptTokenCount`→`inputTokens`, `candidatesTokenCount`+`thoughtsTokenCount`→`outputTokens` (GROSS)
 - Errors: `401/403`→`invalid_auth`, `429`→`rate_limited`, `5xx`→`server`, timeouts, safety blocks
+
+## Strict model-config expectations
+
+This adapter expects config that has already been parsed through the selected
+descriptor boundary:
+
+- `descriptor.configSchema` is the runtime source of truth.
+- `descriptor.configJsonSchema` is the derived form/UI schema.
+- `providerOptions.google` is not a caller-wins override lane for
+  `serviceTier`, sampling, reasoning, or response schema.
+- `priority` stays rejected even though Google documents it, because the
+  library has not yet shipped the matching schema, pricing, served-tier
+  recording, and tests.
+
+For structured output with built-in tools, follow the exact public
+`generateContent` evidence: the current docs only admit that combination for
+`gemini-3.1-pro-preview` and `gemini-3.5-flash`. Other models should fail early
+instead of relying on adapter repair or provider-side surprises.
 
 ## Gemma 4
 
@@ -72,8 +92,9 @@ This follows the library-wide **reject, don't map** rule: unsupported or incorre
 typed `bad_request` `LlmError` at validation time rather than being silently clamped or coerced
 into something the model happens to accept.
 
-Gemma 4 models do **not** support Gemini Flex service tier (`serviceTiers` is absent from their
-descriptors) and are unpriced (`cost.microUsd` will be `null`).
+Gemma 4 models are intentionally unpriced (`cost.microUsd` will be `null`), and
+the strict contract does not admit any `serviceTier` for them until the public
+docs and live evidence line up on that field.
 
 ## Learn more
 

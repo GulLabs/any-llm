@@ -101,7 +101,8 @@ interpolation and config-layer merging before handing off to the shared core.
 2. **Config resolution.** `generate`: merges `libDefaults → request.config`. `runStructured`:
    merges `libDefaults → callSite.config → opts.config`. Merge is deep for `reasoning` and
    `providerOptions` objects (per-key override without dropping siblings); last-write-wins for
-   scalars and arrays. `serviceTier` defaults to `'flex'` when unset.
+   scalars and arrays. The merged config is parsed through the selected model descriptor's exact
+   Zod schema. Omitted `serviceTier` stays omitted and uses provider-default request behavior.
 
 3. **Template rendering** (`runStructured` only). `{{var}}` placeholders in `system` and
    `userTemplate` are replaced in a single, non-recursive pass. Values are substituted verbatim
@@ -135,10 +136,9 @@ Each invocation generates a fresh `attemptId`. Auth was already resolved once, i
 prologue, and is not re-resolved here — `adapterCtx.auth` carries the same `AuthMaterial` on every
 attempt. Steps:
 
-1. **Config validation.** When `req.modelDescriptor.validateConfig` is set, the engine runs the
-   Standard Schema v1 validator against a projection of the resolved config (`temperature`, `topP`,
-   `topK`, `maxOutputTokens`, `stopSequences`, `reasoning`, `serviceTier`). Failure throws
-   `LlmError('bad_request', retryable: false)` before any network I/O.
+1. **Config validation.** The engine runs `req.modelDescriptor.validateConfig` against the full
+   resolved model config. Failure throws `LlmError('bad_request', retryable: false)` before any
+   network I/O.
 
 2. **Route.** `routeFn(model, adapters)` selects the `ProviderAdapter`. With a single adapter,
    it is used unconditionally. With multiple adapters, the default router reads `adapter.id`
@@ -286,22 +286,22 @@ payload is sent with the request — the provider dereferences the URI server-si
 
 ## 7. Registry as Config Schema Layer
 
-`ModelDescriptor` carries two optional schema fields in addition to capability flags:
+`ModelDescriptor` carries three required schema artifacts in addition to capability flags:
 
-- **`configJsonSchema`** — a plain JSON Schema object (typed as `JsonValue`). Clients can
+- **`configSchema`** — the exact runtime schema for the full per-model config contract.
+- **`configJsonSchema`** — a plain JSON Schema object (typed as `JsonValue`) derived from
+  `configSchema`. Clients can
   retrieve this to build form fields for a model's generation config without hard-coding per-model
   knowledge. No schema library required to consume it.
-- **`validateConfig`** — a Standard Schema v1 validator. The engine runs this before auth and
-  rate-limiter acquire, against a **projection** of the resolved config: `temperature`, `topP`,
-  `topK`, `maxOutputTokens`, `stopSequences`, `reasoning`, `serviceTier`. Execution-spine fields
-  (`timeoutMs`, `providerOptions`) are excluded from the projection.
+- **`validateConfig`** — a Standard Schema v1 validator over that same `configSchema`. The engine
+  runs it before auth and rate-limiter acquire against the full resolved config, including
+  provider-extension lanes such as `providerOptions`.
 
 When the validator returns issues, the engine throws `LlmError('bad_request', retryable: false)`
 with all issue messages joined. The error fires before any network I/O.
 
-For Gemini models, `makeGeminiConfigSchema` and `makeGeminiConfigValidator` factory functions
-produce per-family schemas parameterized by `{ sampling: 'tunable' | 'fixed' }`. Gemini 3.x
-models have `sampling: 'fixed'`; passing `temperature`, `topP`, or `topK` to them fails
+Built-in Gemini and Gemma descriptors publish strict, model-specific schemas. Gemini 3.x models
+omit tunable sampling knobs entirely; passing `temperature`, `topP`, or `topK` to them fails
 validation with per-field paths before the request leaves the process.
 
 ---
@@ -337,8 +337,8 @@ not survive restarts.
   update call throws.
 - `delete(handle)` — removes from the local map and deletes from the provider. Fail-open.
 - `GoogleCacheHandle.cacheName` is passed to the adapter as
-  `providerOptions.google.cachedContent`; the adapter forwards it verbatim via the
-  `providerOptions.google` merge.
+  `providerOptions.google.cachedContent`; the adapter forwards it through the strict
+  provider-options allowlist as `cachedContent`.
 
 ---
 
@@ -493,11 +493,12 @@ config: {
 }
 ```
 
-The `providerOptions.google` object is merged into `GenerateContentConfig` last, after all
-typed-field mapping. After the merge the adapter checks whether any entry in `config.tools`
-contains a `googleSearch` or `googleSearchRetrieval` key. If so and `req.outputJsonSchema` is also
-set, the adapter throws `LlmError('bad_request', retryable: false)` — grounding and structured
-output are mutually exclusive at the Gemini API level.
+`providerOptions.google` is a strict allowlist, not a general SDK passthrough. Only
+`cachedContent`, `httpOptions`, `safetySettings`, and exact `tools` declarations are admitted, and
+reserved typed fields such as `serviceTier`, `thinkingConfig`, `responseMimeType`, and sampling
+knobs are rejected. If a `tools` entry requests `googleSearch` while `req.outputJsonSchema` is
+also set on a non-allowlisted model, the adapter throws
+`LlmError('bad_request', retryable: false)` before dispatch.
 
 When grounding is active, `candidate.groundingMetadata` from the response is captured into
 `result.providerMetadata['groundingMetadata']` as `JsonValue`. `promptFeedback`, when present, is
@@ -509,12 +510,12 @@ captured alongside it under `result.providerMetadata['promptFeedback']`. Both ar
 The `@google/genai` SDK defaults its HTTP transport timeout to ~60 seconds. The adapter sets
 `config.httpOptions.timeout` on every request:
 
-| Condition                                    | Transport timeout set                                  |
-| -------------------------------------------- | ------------------------------------------------------ |
-| `providerOptions.google.httpOptions` present | Caller value wins (spread over any computed value)     |
-| `timeoutMs` is set                           | `timeoutMs + 5 000 ms` (`TRANSPORT_TIMEOUT_BUFFER_MS`) |
-| `serviceTier === 'flex'`, no `timeoutMs`     | `FLEX_DEFAULT_TIMEOUT_MS` (1 500 000 ms)               |
-| `serviceTier === 'standard'`, no `timeoutMs` | `STANDARD_DEFAULT_TIMEOUT_MS` (300 000 ms)             |
+| Condition                                            | Transport timeout set                                  |
+| ---------------------------------------------------- | ------------------------------------------------------ |
+| `providerOptions.google.httpOptions.timeout` present | Caller value wins                                      |
+| `timeoutMs` is set                                   | `timeoutMs + 5 000 ms` (`TRANSPORT_TIMEOUT_BUFFER_MS`) |
+| `serviceTier === 'flex'`, no `timeoutMs`             | `FLEX_DEFAULT_TIMEOUT_MS` (1 500 000 ms)               |
+| `serviceTier === 'standard'`, no `timeoutMs`         | `STANDARD_DEFAULT_TIMEOUT_MS` (300 000 ms)             |
 
 The 5 000 ms buffer ensures the engine's `AbortSignal` fires before the SDK transport timer so
 the error is classified as `LlmError('timeout')` rather than a raw SDK error.

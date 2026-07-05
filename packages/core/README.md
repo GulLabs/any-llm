@@ -16,9 +16,9 @@ pnpm add @gullabs/core
 | Export                  | What it is                                                               |
 | ----------------------- | ------------------------------------------------------------------------ |
 | `createClient(config)`  | Wires ports into a `{ generate, runStructured }` client                  |
+| `defaultGeminiRegistry` | Built-in descriptor registry, including strict model-config metadata     |
 | `defineCallSite(opts)`  | Defines a typed, reusable prompt template bound to a model               |
 | `geminiPricingSource()` | Returns a `PricingSource` backed by the built-in Gemini pricing snapshot |
-| `resolveReasoning()`    | Resolves numeric reasoning budgets into provider effort/budget settings  |
 | `LlmError`              | Typed error class — always thrown on call failure                        |
 | `buildRecord(input)`    | Assembles an `LlmCallRecord` from engine state (used internally)         |
 
@@ -66,6 +66,39 @@ const result = await client.runStructured(
 // result.reasoningText — thought summary if includeThoughts was set
 // result.queueDelayMs — wait inside RateLimiter.acquire, separate from latencyMs
 ```
+
+## Model config boundary
+
+Built-in descriptors own the model-config contract:
+
+```ts
+import { defaultGeminiRegistry } from '@gullabs/core'
+
+const descriptor = defaultGeminiRegistry.resolve('gemini-3.5-flash')
+if (!descriptor) throw new Error('unknown model')
+
+// Derived JSON Schema for UI/forms.
+const formSchema = descriptor.configJsonSchema
+
+// Runtime parse for persisted or user-supplied config.
+const parsedConfig = descriptor.configSchema.parse({
+  reasoning: { effort: 'medium' },
+  serviceTier: 'flex',
+})
+```
+
+Use `descriptor.configJsonSchema` for form generation and
+`descriptor.configSchema` for persisted/request-time validation. Do not use
+`output.jsonSchema` as a substitute; that surface is only for output shaping.
+
+Model-specific reminders:
+
+- `reasoning.budgetTokens` belongs to Gemini 2.5 budget-api models.
+- Gemini 3 and Gemma built-ins should use `reasoning.effort`.
+- `gemini-3.1-pro-preview` does not admit `effort: 'none'`.
+- Omit `serviceTier` for provider-standard requests; set `flex` explicitly.
+- `priority` remains rejected by the library until the contract is fully
+  modeled and tested.
 
 `output.jsonSchema` is a provider hint, not an engine-enforced contract: it is forwarded to the
 provider and used only to gate JSON parsing. Always check `outputParsed` before trusting `output`,
@@ -133,8 +166,8 @@ sink.
 
 ### Redaction
 
-`redactSecrets` runs automatically on `errorMessage`, `generationConfig.providerOptions`, and
-`generationConfig.httpOptions.headers` before persistence. Standard knobs and `metadata` are not
+`redactSecrets` runs automatically on `errorMessage` and
+`generationConfig.providerOptions` before persistence. Standard knobs and `metadata` are not
 scanned — do **not** put secrets in `metadata`.
 
 ## Token convention

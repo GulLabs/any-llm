@@ -6,6 +6,33 @@ costs. The canonical overview of what these decisions produced is in
 
 ---
 
+## P0 Standing Decision: No Legacy Compatibility
+
+**Status:** Accepted until explicitly revised by the owner
+
+**Context:**
+This codebase is greenfield. Backward compatibility, legacy aliases, deprecated APIs, migration
+helpers, compatibility shims, and transitional fallback code paths add design debt without protecting
+real external users.
+
+**Decision:**
+Backward compatibility is not a design constraint. New work must choose the clean current contract
+and delete legacy, dead, transitional, and compatibility code. Do not preserve old behavior through
+shims, aliases, deprecated exports, compatibility modes, feature flags, or fallback branches unless
+the owner explicitly revises this rule.
+
+Migration documentation may explain the new contract and how to update call sites, but it must not
+introduce legacy APIs or compatibility layers.
+
+**Consequences:**
+
+- Compatibility-preserving plans are P0 blockers and must be revised.
+- Deprecated exports should be removed, not retained for a later breaking release.
+- Tests should assert absence of legacy and dead paths where practical.
+- Reviewers should prefer deletion over adapters or repair helpers.
+
+---
+
 ## ADR-001: Ports & Adapters (Hexagonal) Architecture
 
 **Status:** Accepted
@@ -173,13 +200,21 @@ A model string like `gemini-2.5-pro-001` must route to the `google` adapter, res
 `gemini-2.5-pro` pricing entry, and inform the adapter which `thinkingConfig` API variant to use
 (`thinkingBudget` for 2.5 series, `thinkingLevel` for 3.x series). Encoding this knowledge as
 string-prefix heuristics in the engine or adapter scatters it and produces bugs when new model
-strings arrive.
+strings arrive. The strict model-config work also needs one place to require exact schema artifacts
+for every built-in and custom descriptor.
 
 **Decision:**
-`ModelDescriptor` centralizes all per-model metadata: `provider`, `pricingFamily`, and capability
-flags (`reasoning`, `structuredOutput`, `reasoningApi`). The registry (`createModelRegistry`)
-resolves a model string with exact-ID match first, then longest-prefix match. The `defaultGeminiRegistry`
-pre-populates descriptors for all known Gemini models.
+`ModelDescriptor` centralizes all per-model metadata: `provider`, `pricingFamily`, capability
+flags, and strict schema artifacts. Every built-in descriptor must publish:
+
+- `configSchema` — the exact runtime schema for that model's config.
+- `configJsonSchema` — JSON Schema derived from `configSchema`.
+- `validateConfig` — the Standard Schema adapter over the same runtime schema.
+
+The registry (`createModelRegistry`) resolves a model string with exact-ID match first, then
+longest-prefix match. The `defaultGeminiRegistry` pre-populates descriptors for all known Gemini
+models. Custom registries remain supported, but they are strict extension points only: descriptors
+that omit required schema artifacts are invalid and should fail registry construction.
 
 The engine attaches the resolved `ModelDescriptor` to `ResolvedRequest`, so adapters can branch on
 `req.modelDescriptor?.capabilities?.reasoningApi` without re-deriving it from the model string.
@@ -193,6 +228,8 @@ provider mappings without a library release.
 - An unknown model is still routable when only one adapter is configured; it falls back to that
   adapter with a missing descriptor. With multiple adapters, an unknown model throws
   `LlmError('bad_request')` at call time rather than silently routing wrong.
+- Schema completeness is enforced at registry construction time instead of surfacing later as
+  runtime drift between UI forms, persisted config, and adapter behavior.
 - The registry is immutable after construction. Hosts that need to add models at runtime must pass
   a pre-built custom registry to `createClient`.
 
@@ -276,7 +313,9 @@ port is a no-op in that context.
 
 **Context:**
 Provider APIs return structured JSON output as raw strings or parsed objects. The library should
-forward provider-native JSON Schema hints without choosing the caller's validation library.
+forward provider-native JSON Schema hints without choosing the caller's validation library. This
+needs to stay separate from model config validation, which now has a runtime schema boundary of its
+own.
 
 **Decision:**
 v1 uses a forward-only JSON Schema hint. `LlmRequest.output.jsonSchema` is typed as `JsonValue`;
@@ -286,7 +325,10 @@ validates shape.
 
 **Consequences:**
 
-- The library has no runtime dependency on Zod or any other validation library.
+- The no-Zod-runtime claim applies to structured output validation only. The library still does not
+  validate `result.output` against Zod or any other schema library at runtime.
+- Model config is a different boundary: built-in descriptors use runtime Zod schemas for config,
+  and callers should not confuse `output.jsonSchema` with `descriptor.configJsonSchema`.
 - Callers own validation, retry, and acceptance policy for `output`.
 - Malformed or empty structured output is a successful provider call with `outputParsed:false`.
 
@@ -301,25 +343,25 @@ Different Gemini model families have different acceptable generation parameters.
 fix sampling; passing `temperature`, `topP`, or `topK` to them causes a provider-side error
 (`bad_request`). The error is confusing to surface at the SDK level. Meanwhile, host UIs and config
 editors need a machine-readable description of which knobs a model accepts, so they can build form
-fields without hard-coding per-model knowledge in application code.
+fields without hard-coding per-model knowledge in application code. The old contract drifted in
+three directions at once: broad hand-written JSON Schema, narrower hand-written validator logic,
+and a provider-options escape hatch that could overwrite already-validated fields.
 
 **Decision:**
-Each `ModelDescriptor` carries two optional schema fields:
+Each built-in `ModelDescriptor` carries three required schema artifacts:
 
-- `configJsonSchema` — a plain JSON Schema object (typed as `JsonValue` so no schema library is
-  required to consume it). Used for UX form generation.
-- `validateConfig` — a hand-written Standard Schema v1 validator the engine runs before dispatch.
+- `configSchema` — the exact runtime Zod schema for that model's config.
+- `configJsonSchema` — a plain JSON Schema object derived from `configSchema` and safe to serialize
+  for UI/form generation.
+- `validateConfig` — the Standard Schema v1 adapter over the same runtime schema.
 
-The engine validates a **projection** of the resolved config: generation knobs only
-(`temperature`, `topP`, `topK`, `maxOutputTokens`, `stopSequences`, `reasoning`, `serviceTier`).
-Execution-spine fields (`timeoutMs`, `providerOptions`) are excluded from the projection so
-validation failures are about what the model can do, not how the engine calls it. A projection
-with issues throws `LlmError('bad_request', retryable: false)` before auth or rate-limiter acquire.
+`configSchema` is the source of truth. The engine parses the full resolved config against the
+descriptor-owned schema before dispatch, not a narrow projection of generation knobs. Execution
+fields that remain part of the public config contract, such as `timeoutMs` or the admitted
+provider-specific extension lane, belong in the exact per-model schema instead of bypassing it.
 
-`makeGeminiConfigSchema` and `makeGeminiConfigValidator` are factory functions parameterized by
-`{ sampling: 'tunable' | 'fixed' }`. `'fixed'` produces a validator that rejects `temperature`,
-`topP`, and `topK` with per-field issue paths; all issues are collected before returning so callers
-see every violation at once.
+Built-in JSON Schema is derived, not hand-authored. Hand-written family factories and projection-
+only validators are deleted rather than preserved as compatibility helpers.
 
 **Rejected alternatives:**
 
@@ -329,17 +371,19 @@ see every violation at once.
 - _One generic superset type_ — a single config type that accepts all parameters for all models
   cannot express per-model constraints; the only enforcement would be at the provider, which
   produces an opaque error after auth and network roundtrip.
+- _Hand-written JSON Schema plus a different validator_ — this creates contract drift between the
+  schema UIs render, the config callers persist, and the adapter behavior. The strict contract uses
+  one schema boundary for all three.
 
 **Consequences:**
 
 - Config validation fires before auth, rate-limiter, and adapter — the fastest possible rejection
   for a misconfigured call.
 - The `configJsonSchema` field can be serialized to JSON and returned to clients as part of a
-  model-capabilities API response; no schema library required on the client.
-- Hosts that add custom model descriptors can supply their own validators by implementing the
-  Standard Schema v1 interface.
-- Extending the validated field set is non-breaking: new fields added to the projection simply
-  become subject to validation for any descriptor that chooses to check them.
+  model-capabilities API response; no schema library is required on the client.
+- Hosts that add custom model descriptors must publish the same schema artifacts as built-ins.
+- Provider-specific extension keys only exist when the descriptor schema admits them; they are not
+  a second caller-wins config API.
 
 ---
 
@@ -389,7 +433,7 @@ would call to resolve URIs or inject cached content. Rejected for three reasons:
   additional exports from `@gullabs/google`, not engine dependencies.
 - The `GoogleFileHandle.uri` field maps directly to `FileUriPart.uri`; no conversion step needed.
 - The `GoogleCacheHandle.cacheName` is passed as `providerOptions.google.cachedContent`; the
-  Gemini adapter forwards it verbatim via the `providerOptions.google` merge.
+  Gemini adapter maps that allowlisted key into the SDK request.
 - The helpers have injectable clients and clocks so tests run without network or real SDK.
 
 ---
@@ -410,8 +454,8 @@ engine's clean `LlmError('timeout')`.
 The Gemini adapter sets `config.httpOptions.timeout` on every request according to this precedence
 (highest first):
 
-1. **Caller-supplied `providerOptions.google.httpOptions`** — wins unconditionally; caller values
-   are spread over any computed value. This is the standard `providerOptions` escape-hatch.
+1. **Allowlisted `providerOptions.google.httpOptions.timeout`** — caller timeout wins over computed
+   transport timeout. Extra `httpOptions` fields are not a general SDK escape hatch.
 2. **`timeoutMs` is set** — transport timeout = `timeoutMs + TRANSPORT_TIMEOUT_BUFFER_MS`
    (currently 5 000 ms). This ensures the engine's `AbortSignal` always fires before the SDK
    transport timer.
@@ -442,20 +486,21 @@ and fallback logic belongs in the middleware chain where it is explicit and audi
 
 ---
 
-## ADR-013: Grounding via `providerOptions` Passthrough; Hard Guard Against Grounding + Schema
+## ADR-013: Grounding via Typed Provider Extensions; Exact Guard for Structured Output + Tools
 
 **Status:** Accepted
 
 **Context:**
 Google Search grounding is a Gemini capability that attaches live search results to the model's
 response. It is requested by including `{ googleSearch: {} }` in the Gemini `tools` array.
-Grounding is not a cross-provider concept and the library does not model it in `GenConfig`. A
-first-class `grounding` field on `GenConfig` would need to be mapped — or noop-ed — for every
-adapter, which is the wrong trade-off for a provider-specific feature. Grounding and structured
-output (`responseSchema`) are mutually exclusive at the Gemini API level.
+Grounding is not a cross-provider concept and the library does not model it as a top-level generic
+field. At the same time, the old contract was too loose in two ways: it treated
+`providerOptions.google` as a broad passthrough lane, and it documented grounding plus structured
+output as a blanket incompatibility even after Google narrowed that restriction to exact models and
+tool combinations.
 
 **Decision:**
-Grounding is requested entirely via `providerOptions.google`:
+Grounding remains a provider-specific extension inside the Google descriptor-owned config schema:
 
 ```ts
 config: {
@@ -465,15 +510,14 @@ config: {
 }
 ```
 
-The `providerOptions.google` object is merged after typed-field mapping, so `tools` reaches the
-SDK verbatim; transport/abort scaffolding (`abortSignal`, `httpOptions`) is applied afterward,
-and caller-supplied `httpOptions` still wins.
+The admitted Google extension keys are typed and model-aware. Descriptor-owned fields such as
+`serviceTier`, sampling knobs, reasoning knobs, and response-schema fields are not overrideable via
+`providerOptions.google`.
 
-The adapter inspects the merged config after the merge and enforces a hard guard: if
-`tools` contains any entry with a `googleSearch` or `googleSearchRetrieval` key AND
-`req.outputJsonSchema` is set, the adapter throws `LlmError('bad_request', retryable: false)` with a
-clear message. This catches the incompatibility at the library boundary rather than as a cryptic
-provider error.
+Grounding plus structured output is guarded exactly, not blanketly. The library should only admit
+the documented `generateContent` model and tool combinations that Google currently supports for
+structured output with built-in tools. Requests outside that exact support set fail before network
+dispatch.
 
 When grounding is active, the adapter captures `candidate.groundingMetadata` from the response
 and includes it in `result.providerMetadata` alongside any `promptFeedback`. The host reads
@@ -482,10 +526,9 @@ library does not model the grounding metadata structure as a typed field.
 
 **Consequences:**
 
-- Grounding support requires no new typed fields on `GenConfig` or `LlmRequest`; it uses the
-  existing `providerOptions` passthrough.
-- The `bad_request` guard surfaces the mutual-exclusion constraint at call time with a human-
-  readable message, not as a provider API error.
+- Grounding support stays provider-specific without pretending to be a cross-provider generic field.
+- The guard follows exact public evidence instead of hiding unsupported paths behind a blanket rule
+  or permissive passthrough.
 - Grounding metadata is preserved in `result.providerMetadata` and persisted in the `LlmCallRecord`
   via the existing `providerMetadata` JSONB lane — no schema migration required.
 - Adding first-class typed grounding support later is additive and non-breaking.
@@ -547,8 +590,8 @@ enforces it as an **overall wall-clock ceiling** for the logical call. Implement
    the attempt is rethrown immediately (no sleep; no next attempt).
 5. Back-off sleep is clamped: `delayMs = Math.min(delayMs, remainingAfter)` so the sleep never
    overshoots the deadline.
-6. When `timeoutMs` is **not** set (undefined), all deadline logic is skipped and behavior is
-   identical to the pre-fix implementation (full backward compatibility).
+6. When `timeoutMs` is **not** set (undefined), all deadline logic is skipped because there is no
+   caller-supplied wall-clock ceiling to enforce.
 
 The `retryMiddleware` opts object gains an optional `now?: () => number` injectable clock so the
 deadline logic can be tested deterministically without real timers.
@@ -635,13 +678,13 @@ request with `temperature=0.7` on a Gemini 3.x model is accepted and processed.
 
 **Decision:**
 We deliberately choose to **hard-reject** `temperature`, `topP`, and `topK` on all Gemini 3.x
-models in the registry validator (`makeGeminiConfigValidator({ sampling: 'fixed' })`). Additionally,
-these fields are stripped with a warning from the `providerOptions.google` escape hatch before the
-request reaches the adapter.
+models. The strict contract expresses this in the per-model runtime schema itself: fixed-sampling
+models omit those fields from `configSchema`, omit them from derived `configJsonSchema`, and use
+strict objects so they cannot sneak back in through provider-specific extension objects.
 
 This is a **house-policy invariant** that is intentionally stricter than Google's advisory stance.
-The `ModelDescriptor.capabilities.sampling` field encodes this as `'fixed'`, and the engine validates
-the projection of `GenConfig` against the descriptor's validator before auth and rate-limiter acquire.
+The `ModelDescriptor.capabilities.sampling` field encodes this as `'fixed'`, and the engine
+validates the resolved config against the descriptor schema before auth and rate-limiter acquire.
 
 **Rationale:**
 A single enforced sampling contract per model family is more valuable for our typed-config and UX

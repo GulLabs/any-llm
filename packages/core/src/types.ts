@@ -152,7 +152,7 @@ export interface ReasoningIntent {
    * - Gemini 3.x → maps to `thinkingLevel`.
    */
   effort?: ReasoningEffort
-  /** Explicit token budget for thinking (overrides `effort` when both present). */
+  /** Explicit token budget for budget-API models; schemas reject it with `effort`. */
   budgetTokens?: number
   /**
    * When `true`, the adapter requests the provider to return the thought-summary
@@ -161,11 +161,34 @@ export interface ReasoningIntent {
   includeThoughts?: boolean
 }
 
-/**
- * Common generation knobs plus a quarantined `providerOptions` escape-hatch.
- * Unknown knobs go in `providerOptions`; the adapter forwards them verbatim and
- * the engine logs a warning so nothing is silently dropped.
- */
+export type GoogleSafetySetting = {
+  category: string
+  threshold: string
+}
+
+export type GoogleSearchTool = {
+  googleSearch: Record<string, never>
+}
+
+export type GoogleProviderOptions = {
+  /** Google cached content resource name. */
+  cachedContent?: string
+  /** Allowlisted Google safety settings. */
+  safetySettings?: GoogleSafetySetting[]
+  /** Exact Google tool declarations admitted by the selected model schema. */
+  tools?: GoogleSearchTool[]
+  /** Allowlisted Google transport options. */
+  httpOptions?: {
+    /** Per-request Google transport timeout in milliseconds. */
+    timeout?: number
+  }
+}
+
+export type ProviderOptions = {
+  google?: GoogleProviderOptions
+}
+
+/** Common generation knobs plus schema-admitted provider extension lanes. */
 export interface GenConfig {
   /** Sampling temperature (0–2 typical). */
   temperature?: number
@@ -177,19 +200,20 @@ export interface GenConfig {
   maxOutputTokens?: number
   /** Stop sequences — generation halts when any string is produced. */
   stopSequences?: string[]
-  /** Reasoning / thinking intent; adapter maps best-effort (may warn). */
+  /** Reasoning / thinking intent; exact fields are selected by the model schema. */
   reasoning?: ReasoningIntent
   /**
-   * Service tier.  Defaults to `'flex'` in v1.
-   * `'flex'` enables Gemini Flex pricing tier; `'standard'` uses standard pricing.
+   * Explicit service tier. Omitted tier stays omitted and uses provider-default
+   * request behavior.
    */
   serviceTier?: 'flex' | 'standard'
   /**
-   * Gemini Flex capacity fallback.
+   * Gemini Flex capacity fallback. Valid only when the same parsed config
+   * explicitly sets `serviceTier: 'flex'`.
    *
-   * Defaults to `true`: Gemini flex capacity errors are retried once by the
-   * provider adapter on standard tier. Set to `false` to surface the original
-   * flex capacity error.
+   * Defaults to `true` on explicit Flex calls: Gemini flex capacity errors are
+   * retried once by the provider adapter on standard tier. Set to `false` to
+   * surface the original flex capacity error.
    */
   flexFallback?: boolean
   /**
@@ -206,15 +230,8 @@ export interface GenConfig {
    * the engine arms an `AbortSignal` at exactly this value for the adapter.
    */
   timeoutMs?: number
-  /**
-   * Verbatim provider-specific options forwarded to the raw SDK.
-   * This is the caller's escape hatch for non-standard provider settings.
-   * Values are persisted in the record's `generationConfig` JSONB lane; the
-   * secret-bearing sub-fields (`providerOptions` itself and `httpOptions.headers`)
-   * are run through `redactSecrets` before storage so credentials injected here
-   * do not appear in the audit log.  Standard generation knobs are NOT scanned.
-   */
-  providerOptions?: Record<string, JsonValue>
+  /** Schema-admitted provider extension lanes. Not a raw SDK passthrough. */
+  providerOptions?: ProviderOptions
 }
 
 /**

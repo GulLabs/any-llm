@@ -12,6 +12,7 @@ import { createClient, geminiPricingSource } from './index.js'
 import type { Handler, EngineCtx, ResolvedRequest } from './ports.js'
 import type { LlmResult, Usage } from './types.js'
 import { FakeAdapter, FakeClock, FakeIds, RecordingSink } from '@gullabs/testing'
+import { makeTestDescriptor } from './test-model-descriptor.js'
 
 // ---------------------------------------------------------------------------
 // Shared test fixtures
@@ -56,7 +57,7 @@ function makeReq(): ResolvedRequest {
   return {
     model: 'gemini-2.5-pro',
     messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
-    config: { serviceTier: 'flex' },
+    config: {},
   }
 }
 
@@ -293,6 +294,68 @@ describe('retryMiddleware', () => {
 
     expect(calls).toBe(1) // only one attempt was made before abort
   }, 2_000)
+
+  it('does not pin servedServiceTier onto a descriptor with no supported service tiers', async () => {
+    const seenTiers: Array<'flex' | 'standard' | undefined> = []
+    const req: ResolvedRequest = {
+      ...makeReq(),
+      model: 'gemma-4-31b-it',
+      modelDescriptor: makeTestDescriptor({
+        id: 'gemma-4-31b-it',
+        provider: 'google',
+      }),
+    }
+
+    let calls = 0
+    const handler: Handler = async (attemptReq) => {
+      calls++
+      seenTiers.push(attemptReq.config.serviceTier)
+      if (calls === 1) {
+        throw new LlmError('Rate limited', {
+          kind: 'rate_limited',
+          retryable: true,
+          servedServiceTier: 'standard',
+        })
+      }
+      return DUMMY_RESULT
+    }
+
+    const mw = retryMiddleware({ maxAttempts: 2 }, { sleep: NO_SLEEP, random: () => 0 })
+    await mw.intercept(req, makeCtx(), handler)
+
+    expect(seenTiers).toEqual([undefined, undefined])
+  })
+
+  it('does not pin an unsupported servedServiceTier onto the next retry attempt', async () => {
+    const seenTiers: Array<'flex' | 'standard' | undefined> = []
+    const req: ResolvedRequest = {
+      ...makeReq(),
+      modelDescriptor: makeTestDescriptor({
+        id: 'google-standard-only-model',
+        provider: 'google',
+        capabilities: { serviceTiers: ['standard'] },
+      }),
+    }
+
+    let calls = 0
+    const handler: Handler = async (attemptReq) => {
+      calls++
+      seenTiers.push(attemptReq.config.serviceTier)
+      if (calls === 1) {
+        throw new LlmError('Rate limited', {
+          kind: 'rate_limited',
+          retryable: true,
+          servedServiceTier: 'flex',
+        })
+      }
+      return DUMMY_RESULT
+    }
+
+    const mw = retryMiddleware({ maxAttempts: 2 }, { sleep: NO_SLEEP, random: () => 0 })
+    await mw.intercept(req, makeCtx(), handler)
+
+    expect(seenTiers).toEqual([undefined, undefined])
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -315,7 +378,7 @@ describe('engine + middleware — integration', () => {
     }
   }
 
-  it('empty middleware: one attempt, same callId+attemptId record (backward compat)', async () => {
+  it('empty middleware: one attempt, same callId+attemptId record', async () => {
     const adapter = new FakeAdapter('google', makeSuccessResult())
     const sink = new RecordingSink()
     const ids = new FakeIds()

@@ -17,6 +17,18 @@ import type { Middleware, Handler, EngineCtx } from './ports.js'
 import type { ResolvedRequest } from './ports.js'
 import type { LlmResult } from './types.js'
 
+function revalidatePinnedServiceTier(
+  req: ResolvedRequest,
+  tier: string | undefined,
+): 'flex' | 'standard' | undefined {
+  if (tier !== 'flex' && tier !== 'standard') {
+    return undefined
+  }
+
+  const supported = req.modelDescriptor?.capabilities?.serviceTiers
+  return supported?.includes(tier) === true ? tier : undefined
+}
+
 // ---------------------------------------------------------------------------
 // Policy
 // ---------------------------------------------------------------------------
@@ -261,18 +273,11 @@ export function retryMiddleware(
 
         try {
           const result = await next(currentReq, ctx)
-          if (
-            result.servedServiceTier === 'flex' ||
-            result.servedServiceTier === 'standard'
-          ) {
-            pinnedServiceTier = result.servedServiceTier
-          }
+          pinnedServiceTier = revalidatePinnedServiceTier(req, result.servedServiceTier)
           return result
         } catch (rawErr) {
           const err = classifyError(rawErr)
-          if (err.servedServiceTier === 'flex' || err.servedServiceTier === 'standard') {
-            pinnedServiceTier = err.servedServiceTier
-          }
+          pinnedServiceTier = revalidatePinnedServiceTier(req, err.servedServiceTier)
 
           // Abort is always terminal — never retry.
           if (err.kind === 'aborted') throw err
