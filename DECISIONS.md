@@ -6,6 +6,33 @@ costs. The canonical overview of what these decisions produced is in
 
 ---
 
+## P0 Standing Decision: No Legacy Compatibility
+
+**Status:** Accepted until explicitly revised by the owner
+
+**Context:**
+This codebase is greenfield. Backward compatibility, legacy aliases, deprecated APIs, migration
+helpers, compatibility shims, and transitional fallback code paths add design debt without protecting
+real external users.
+
+**Decision:**
+Backward compatibility is not a design constraint. New work must choose the clean current contract
+and delete legacy, dead, transitional, and compatibility code. Do not preserve old behavior through
+shims, aliases, deprecated exports, compatibility modes, feature flags, or fallback branches unless
+the owner explicitly revises this rule.
+
+Migration documentation may explain the new contract and how to update call sites, but it must not
+introduce legacy APIs or compatibility layers.
+
+**Consequences:**
+
+- Compatibility-preserving plans are P0 blockers and must be revised.
+- Deprecated exports should be removed, not retained for a later breaking release.
+- Tests should assert absence of legacy and dead paths where practical.
+- Reviewers should prefer deletion over adapters or repair helpers.
+
+---
+
 ## ADR-001: Ports & Adapters (Hexagonal) Architecture
 
 **Status:** Accepted
@@ -547,8 +574,8 @@ enforces it as an **overall wall-clock ceiling** for the logical call. Implement
    the attempt is rethrown immediately (no sleep; no next attempt).
 5. Back-off sleep is clamped: `delayMs = Math.min(delayMs, remainingAfter)` so the sleep never
    overshoots the deadline.
-6. When `timeoutMs` is **not** set (undefined), all deadline logic is skipped and behavior is
-   identical to the pre-fix implementation (full backward compatibility).
+6. When `timeoutMs` is **not** set (undefined), all deadline logic is skipped because there is no
+   caller-supplied wall-clock ceiling to enforce.
 
 The `retryMiddleware` opts object gains an optional `now?: () => number` injectable clock so the
 deadline logic can be tested deterministically without real timers.
