@@ -1,22 +1,19 @@
-/**
- * Package-surface importability tests for @gullabs/core.
- *
- * Proves that config-schema factory functions are reachable from the
- * package root index — catching export/re-export mismatches at test time
- * rather than at consumer build time.
- *
- * @module
- */
+import { describe, expect, it } from 'vitest'
 
-import { describe, it, expect } from 'vitest'
-import { makeGeminiConfigSchema, makeGeminiConfigValidator } from './index.js'
+import * as surface from './index.js'
 
-describe('@gullabs/core package surface: config-schema factories', () => {
-  it('makeGeminiConfigSchema is exported and is a function', () => {
-    expect(typeof makeGeminiConfigSchema).toBe('function')
-  })
+const removedConfigSchemaFactory = `makeGeminiConfig${'Schema'}`
+const removedConfigValidatorFactory = `makeGeminiConfig${'Validator'}`
+const removedReasoningHelper = `resolve${'Reasoning'}`
+const removedEffortBudget = `EFFORT${'_BUDGET'}`
 
-  it('makeGeminiConfigValidator is exported and is a function', () => {
-    expect(typeof makeGeminiConfigValidator).toBe('function')
+describe('@gullabs/core package surface', () => {
+  it('keeps strict-schema helpers and omits deleted legacy exports', () => {
+    expect(typeof surface.toConfigJsonSchema).toBe('function')
+    expect(typeof surface.zodToStandardSchema).toBe('function')
+    expect(removedConfigSchemaFactory in surface).toBe(false)
+    expect(removedConfigValidatorFactory in surface).toBe(false)
+    expect(removedReasoningHelper in surface).toBe(false)
+    expect(removedEffortBudget in surface).toBe(false)
   })
 })

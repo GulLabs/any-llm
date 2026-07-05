@@ -1,0 +1,234 @@
+import { z } from 'zod'
+
+export const Gemini31ProPreviewConfigSchema = z
+  .union([
+    z.strictObject({
+      maxOutputTokens: z.number().int().positive().optional().meta({
+        title: 'Max Output Tokens',
+        description: 'Maximum output token cap for gemini-3.1-pro-preview.',
+      }),
+      stopSequences: z.array(z.string()).max(5).optional().meta({
+        title: 'Stop Sequences',
+        description: 'Up to five stop sequences for gemini-3.1-pro-preview.',
+      }),
+      serviceTier: z.literal('flex').meta({
+        title: 'Service Tier',
+        description: 'Explicit flex tier for gemini-3.1-pro-preview.',
+      }),
+      reasoning: z
+        .union([
+          z.strictObject({
+            effort: z.enum(['low', 'medium', 'high']).meta({
+              title: 'Reasoning Effort',
+              description:
+                'Reasoning effort for gemini-3.1-pro-preview. Thinking off is not supported.',
+            }),
+            includeThoughts: z.boolean().optional().meta({
+              title: 'Include Thoughts',
+              description: 'Return provider thought summaries when supported.',
+            }),
+          }),
+          z.strictObject({
+            includeThoughts: z.boolean().meta({
+              title: 'Include Thoughts',
+              description: 'Return provider thought summaries when supported.',
+            }),
+          }),
+        ])
+        .optional()
+        .meta({
+          title: 'Reasoning',
+          description: 'Gemini 3.1 Pro Preview thinkingLevel configuration.',
+        }),
+      timeoutMs: z.number().int().positive().optional().meta({
+        title: 'Timeout',
+        description: 'Logical request timeout in milliseconds.',
+      }),
+      flexFallback: z.boolean().optional().meta({
+        title: 'Flex Fallback',
+        description:
+          'Allow provider fallback from flex when flex was explicitly selected.',
+      }),
+      providerOptions: z
+        .strictObject({
+          google: z
+            .strictObject({
+              cachedContent: z.string().min(1).optional().meta({
+                title: 'Cached Content',
+                description: 'Google cached content resource name.',
+              }),
+              safetySettings: z
+                .array(
+                  z.strictObject({
+                    category: z.string().min(1).meta({
+                      title: 'Safety Category',
+                      description: 'Google safety category identifier.',
+                    }),
+                    threshold: z.string().min(1).meta({
+                      title: 'Safety Threshold',
+                      description: 'Google safety threshold identifier.',
+                    }),
+                  }),
+                )
+                .optional()
+                .meta({
+                  title: 'Safety Settings',
+                  description: 'Allowlisted Google safety settings.',
+                }),
+              tools: z
+                .array(
+                  z.strictObject({
+                    googleSearch: z.strictObject({}).meta({
+                      title: 'Google Search',
+                      description: 'Google Search grounding tool.',
+                    }),
+                  }),
+                )
+                .min(1)
+                .optional()
+                .meta({
+                  title: 'Tools',
+                  description: 'Allowlisted Google tools for gemini-3.1-pro-preview.',
+                }),
+              httpOptions: z
+                .strictObject({
+                  timeout: z.number().int().positive().optional().meta({
+                    title: 'HTTP Timeout',
+                    description: 'Per-request Google transport timeout in milliseconds.',
+                  }),
+                })
+                .optional()
+                .meta({
+                  title: 'HTTP Options',
+                  description: 'Allowlisted Google transport options.',
+                }),
+            })
+            .optional()
+            .meta({
+              title: 'Google Provider Options',
+              description:
+                'Allowlisted Google provider options for gemini-3.1-pro-preview.',
+            }),
+        })
+        .optional()
+        .meta({
+          title: 'Provider Options',
+          description: 'Provider-specific options accepted for gemini-3.1-pro-preview.',
+        }),
+    }),
+    z.strictObject({
+      maxOutputTokens: z.number().int().positive().optional().meta({
+        title: 'Max Output Tokens',
+        description: 'Maximum output token cap for gemini-3.1-pro-preview.',
+      }),
+      stopSequences: z.array(z.string()).max(5).optional().meta({
+        title: 'Stop Sequences',
+        description: 'Up to five stop sequences for gemini-3.1-pro-preview.',
+      }),
+      serviceTier: z.literal('standard').optional().meta({
+        title: 'Service Tier',
+        description: 'Standard tier or omitted tier for gemini-3.1-pro-preview.',
+      }),
+      reasoning: z
+        .union([
+          z.strictObject({
+            effort: z.enum(['low', 'medium', 'high']).meta({
+              title: 'Reasoning Effort',
+              description:
+                'Reasoning effort for gemini-3.1-pro-preview. Thinking off is not supported.',
+            }),
+            includeThoughts: z.boolean().optional().meta({
+              title: 'Include Thoughts',
+              description: 'Return provider thought summaries when supported.',
+            }),
+          }),
+          z.strictObject({
+            includeThoughts: z.boolean().meta({
+              title: 'Include Thoughts',
+              description: 'Return provider thought summaries when supported.',
+            }),
+          }),
+        ])
+        .optional()
+        .meta({
+          title: 'Reasoning',
+          description: 'Gemini 3.1 Pro Preview thinkingLevel configuration.',
+        }),
+      timeoutMs: z.number().int().positive().optional().meta({
+        title: 'Timeout',
+        description: 'Logical request timeout in milliseconds.',
+      }),
+      providerOptions: z
+        .strictObject({
+          google: z
+            .strictObject({
+              cachedContent: z.string().min(1).optional().meta({
+                title: 'Cached Content',
+                description: 'Google cached content resource name.',
+              }),
+              safetySettings: z
+                .array(
+                  z.strictObject({
+                    category: z.string().min(1).meta({
+                      title: 'Safety Category',
+                      description: 'Google safety category identifier.',
+                    }),
+                    threshold: z.string().min(1).meta({
+                      title: 'Safety Threshold',
+                      description: 'Google safety threshold identifier.',
+                    }),
+                  }),
+                )
+                .optional()
+                .meta({
+                  title: 'Safety Settings',
+                  description: 'Allowlisted Google safety settings.',
+                }),
+              tools: z
+                .array(
+                  z.strictObject({
+                    googleSearch: z.strictObject({}).meta({
+                      title: 'Google Search',
+                      description: 'Google Search grounding tool.',
+                    }),
+                  }),
+                )
+                .min(1)
+                .optional()
+                .meta({
+                  title: 'Tools',
+                  description: 'Allowlisted Google tools for gemini-3.1-pro-preview.',
+                }),
+              httpOptions: z
+                .strictObject({
+                  timeout: z.number().int().positive().optional().meta({
+                    title: 'HTTP Timeout',
+                    description: 'Per-request Google transport timeout in milliseconds.',
+                  }),
+                })
+                .optional()
+                .meta({
+                  title: 'HTTP Options',
+                  description: 'Allowlisted Google transport options.',
+                }),
+            })
+            .optional()
+            .meta({
+              title: 'Google Provider Options',
+              description:
+                'Allowlisted Google provider options for gemini-3.1-pro-preview.',
+            }),
+        })
+        .optional()
+        .meta({
+          title: 'Provider Options',
+          description: 'Provider-specific options accepted for gemini-3.1-pro-preview.',
+        }),
+    }),
+  ])
+  .meta({
+    title: 'Gemini31ProPreviewConfig',
+    description:
+      'Strict generateContent config for model gemini-3.1-pro-preview. Level reasoning, fixed sampling, flex/standard tiers, structured output, grounding, priced.',
+    examples: [{ serviceTier: 'flex', reasoning: { effort: 'high' } }],
+  })

@@ -8,7 +8,7 @@
  * (a) Total virtual elapsed time across all attempts + sleeps never exceeds timeoutMs.
  * (b) A retry is refused (throws timeout) once the overall budget is exhausted.
  * (c) Back-off sleep is clamped to the remaining budget so it never overshoots.
- * (d) With no timeoutMs set, the middleware behaves exactly as before (backward compat).
+ * (d) With no timeoutMs set, the middleware preserves the unlimited-budget retry path.
  *
  * @module
  */
@@ -272,10 +272,10 @@ describe('retryMiddleware — overall timeout (FIX 1)', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // (d) With no timeoutMs, behavior is unchanged (backward compat)
+  // (d) With no timeoutMs, the middleware keeps the unlimited-budget retry path.
   // ---------------------------------------------------------------------------
 
-  it('(d) with no timeoutMs, retries exactly maxAttempts times — backward compat', async () => {
+  it('(d) with no timeoutMs, retries exactly maxAttempts times', async () => {
     let attemptCount = 0
     const handler: Handler = async () => {
       attemptCount++
@@ -301,7 +301,7 @@ describe('retryMiddleware — overall timeout (FIX 1)', () => {
     expect(sleepCalls).toHaveLength(2) // 2 sleeps between 3 attempts
   })
 
-  it('(d) with no timeoutMs, succeeds on third attempt — backward compat', async () => {
+  it('(d) with no timeoutMs, succeeds on third attempt', async () => {
     let attemptCount = 0
     const handler: Handler = async () => {
       attemptCount++

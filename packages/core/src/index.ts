@@ -21,6 +21,10 @@ export type {
   Message,
   ReasoningEffort,
   ReasoningIntent,
+  GoogleSafetySetting,
+  GoogleSearchTool,
+  GoogleProviderOptions,
+  ProviderOptions,
   GenConfig,
   LlmRequest,
   FinishReason,
@@ -71,10 +75,6 @@ export type { ModelRates } from './pricing.js'
 // Cost computation
 export { computeCost, geminiPricingSource } from './cost.js'
 
-// Reasoning resolution
-export type { ResolveReasoningInput, ResolvedReasoning } from './reasoning.js'
-export { resolveReasoning, EFFORT_BUDGET } from './reasoning.js'
-
 // Engine
 export type {
   ClientConfig,
@@ -91,9 +91,8 @@ export {
   gemmaModelDescriptors,
   geminiModelDescriptors,
   defaultGeminiRegistry,
-  makeGeminiConfigSchema,
-  makeGeminiConfigValidator,
 } from './registry.js'
+export { toConfigJsonSchema, zodToStandardSchema } from './model-config/index.js'
 
 // Call site
 export type { CallSite } from './callsite.js'

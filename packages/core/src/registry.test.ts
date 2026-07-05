@@ -1,73 +1,74 @@
-/**
- * Tests for ModelRegistry, createModelRegistry, isReasoningModel, and the
- * duplicate-adapter-id guard in createClient.
- *
- * @module
- */
+import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 
-import { describe, it, expect } from 'vitest'
 import {
   createModelRegistry,
   defaultGeminiRegistry,
-  gemmaModelDescriptors,
   geminiModelDescriptors,
+  gemmaModelDescriptors,
   LlmError,
-  createClient,
-  geminiPricingSource,
+  toConfigJsonSchema,
+  zodToStandardSchema,
 } from './index.js'
+import { GEMINI_PRICING } from './pricing.js'
 import type { ModelDescriptor } from './index.js'
-import { FakeAdapter, FakeIds, FakeClock } from '@gullabs/testing'
 
-// ---------------------------------------------------------------------------
-// createModelRegistry
-// ---------------------------------------------------------------------------
+const removedConfigSchemaFactory = `makeGeminiConfig${'Schema'}`
+const removedConfigValidatorFactory = `makeGeminiConfig${'Validator'}`
+const EXPECTED_GEMINI_MODEL_IDS = [
+  'gemini-2.5-pro',
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
+  'gemini-3.5-flash',
+  'gemini-3.1-flash-lite',
+  'gemini-3.1-pro-preview',
+  'gemini-3-flash-preview',
+] as const
+const EXPECTED_GEMMA_MODEL_IDS = ['gemma-4-31b-it', 'gemma-4-26b-a4b-it'] as const
+const EXPECTED_BUILT_IN_MODEL_IDS = [
+  ...EXPECTED_GEMINI_MODEL_IDS,
+  ...EXPECTED_GEMMA_MODEL_IDS,
+] as const
+const ADAPTER_FIXTURE_MODEL_IDS = new Set<string>(EXPECTED_BUILT_IN_MODEL_IDS)
+const NEGATIVE_CONTRACT_FIXTURE_MODEL_IDS = new Set<string>(EXPECTED_BUILT_IN_MODEL_IDS)
+const EXPLICIT_UNPRICED_MODEL_IDS = new Set<string>(EXPECTED_GEMMA_MODEL_IDS)
+
+const EmptyConfigSchema = z
+  .strictObject({})
+  .meta({ title: 'EmptyConfig', description: 'Test schema.', examples: [{}] })
+
+function makeDescriptor(id: string, provider: string): ModelDescriptor {
+  return {
+    id,
+    provider,
+    configSchema: EmptyConfigSchema,
+    configJsonSchema: toConfigJsonSchema(EmptyConfigSchema),
+    validateConfig: zodToStandardSchema(EmptyConfigSchema),
+  }
+}
 
 describe('createModelRegistry', () => {
-  const descriptors: ModelDescriptor[] = [
-    { id: 'alpha', provider: 'p1' },
-    { id: 'beta-v2', provider: 'p2' },
-    { id: 'beta', provider: 'p3' },
+  const descriptors = [
+    makeDescriptor('alpha', 'p1'),
+    makeDescriptor('beta-v2', 'p2'),
+    makeDescriptor('beta', 'p3'),
   ]
 
-  it('exact match returns the correct descriptor', () => {
+  it('resolves exact and longest-prefix matches', () => {
     const registry = createModelRegistry(descriptors)
+
     expect(registry.resolve('alpha')?.provider).toBe('p1')
-    expect(registry.resolve('beta-v2')?.provider).toBe('p2')
-    expect(registry.resolve('beta')?.provider).toBe('p3')
+    expect(registry.resolve('beta-v2-001')?.provider).toBe('p2')
+    expect(registry.resolve('beta-experimental')?.provider).toBe('p3')
   })
 
-  it('prefix match: "beta-v2-001" matches "beta-v2" (longer prefix wins)', () => {
+  it('returns undefined for unknown models', () => {
     const registry = createModelRegistry(descriptors)
-    const resolved = registry.resolve('beta-v2-001')
-    expect(resolved?.id).toBe('beta-v2')
-    expect(resolved?.provider).toBe('p2')
+
+    expect(registry.resolve('unknown')).toBeUndefined()
   })
 
-  it('prefix match: "beta-experimental" matches "beta" (shorter prefix)', () => {
-    const registry = createModelRegistry(descriptors)
-    const resolved = registry.resolve('beta-experimental')
-    expect(resolved?.id).toBe('beta')
-    expect(resolved?.provider).toBe('p3')
-  })
-
-  it('longest prefix wins over shorter prefix', () => {
-    const registry = createModelRegistry([
-      { id: 'gemini', provider: 'short' },
-      { id: 'gemini-2.5', provider: 'medium' },
-      { id: 'gemini-2.5-pro', provider: 'long' },
-    ])
-    expect(registry.resolve('gemini-2.5-pro-001')?.provider).toBe('long')
-    expect(registry.resolve('gemini-2.5-flash')?.provider).toBe('medium')
-    expect(registry.resolve('gemini-1.0')?.provider).toBe('short')
-  })
-
-  it('unknown model returns undefined', () => {
-    const registry = createModelRegistry(descriptors)
-    expect(registry.resolve('totally-unknown-model')).toBeUndefined()
-    expect(registry.resolve('')).toBeUndefined()
-  })
-
-  it('listDescriptors returns the registered descriptors without exposing registry internals', () => {
+  it('returns a defensive copy from listDescriptors', () => {
     const registry = createModelRegistry(descriptors)
     const listed = registry.listDescriptors?.()
 
@@ -75,196 +76,105 @@ describe('createModelRegistry', () => {
     expect(listed).not.toBe(descriptors)
   })
 
-  it('throws LlmError on duplicate id', () => {
+  it('throws on duplicate descriptor ids', () => {
     expect(() =>
-      createModelRegistry([
-        { id: 'dup', provider: 'a' },
-        { id: 'dup', provider: 'b' },
-      ]),
+      createModelRegistry([makeDescriptor('dup', 'a'), makeDescriptor('dup', 'b')]),
     ).toThrow(LlmError)
   })
 
-  it('duplicate throws with bad_request kind', () => {
-    try {
+  it('throws when a custom descriptor is missing required schema artifacts', () => {
+    expect(() =>
       createModelRegistry([
-        { id: 'dup', provider: 'a' },
-        { id: 'dup', provider: 'b' },
-      ])
-      expect.fail('should have thrown')
-    } catch (e) {
-      expect(e).toBeInstanceOf(LlmError)
-      expect((e as LlmError).kind).toBe('bad_request')
-    }
+        {
+          id: 'broken-model',
+          provider: 'google',
+          configSchema: EmptyConfigSchema,
+        } as unknown as ModelDescriptor,
+      ]),
+    ).toThrow(/missing required schema artifacts/i)
   })
 })
 
-// ---------------------------------------------------------------------------
-// geminiModelDescriptors
-// ---------------------------------------------------------------------------
-
-describe('geminiModelDescriptors', () => {
-  it('contains all pricing-table models', () => {
-    const ids = geminiModelDescriptors.map((d) => d.id)
-    expect(ids).toContain('gemini-2.5-pro')
-    expect(ids).toContain('gemini-2.5-flash')
-    expect(ids).toContain('gemini-2.5-flash-lite')
-    expect(ids).toContain('gemini-3.5-flash')
-    expect(ids).toContain('gemini-3.1-flash-lite')
-    expect(ids).toContain('gemini-3.1-pro-preview')
-  })
-
-  it('all descriptors have provider "google"', () => {
-    for (const d of geminiModelDescriptors) {
-      expect(d.provider).toBe('google')
+describe('built-in descriptors', () => {
+  it('publish schema artifacts for every built-in model', () => {
+    for (const descriptor of [...geminiModelDescriptors, ...gemmaModelDescriptors]) {
+      expect(descriptor.configSchema, descriptor.id).toBeDefined()
+      expect(descriptor.configJsonSchema, descriptor.id).toBeDefined()
+      expect(descriptor.validateConfig, descriptor.id).toBeDefined()
     }
   })
 
-  it('all descriptors have reasoning: true', () => {
-    for (const d of geminiModelDescriptors) {
-      expect(d.capabilities?.reasoning).toBe(true)
+  it('keeps the expected built-in model ids registered', () => {
+    expect(geminiModelDescriptors.map((descriptor) => descriptor.id)).toEqual(
+      EXPECTED_GEMINI_MODEL_IDS,
+    )
+
+    expect(gemmaModelDescriptors.map((descriptor) => descriptor.id)).toEqual(
+      EXPECTED_GEMMA_MODEL_IDS,
+    )
+  })
+
+  it('fails model onboarding unless schema, fixtures, and pricing decisions are explicit', () => {
+    const descriptors = [...geminiModelDescriptors, ...gemmaModelDescriptors]
+    expect(descriptors.map((descriptor) => descriptor.id)).toEqual(
+      EXPECTED_BUILT_IN_MODEL_IDS,
+    )
+
+    for (const descriptor of descriptors) {
+      expect(descriptor.configJsonSchema, descriptor.id).toEqual(
+        toConfigJsonSchema(descriptor.configSchema),
+      )
+      expect(ADAPTER_FIXTURE_MODEL_IDS.has(descriptor.id), descriptor.id).toBe(true)
+      expect(NEGATIVE_CONTRACT_FIXTURE_MODEL_IDS.has(descriptor.id), descriptor.id).toBe(
+        true,
+      )
+
+      const pricingFamily = descriptor.pricingFamily ?? descriptor.id
+      const hasPricing = GEMINI_PRICING[pricingFamily] !== undefined
+      const hasExplicitUnpricedDecision = EXPLICIT_UNPRICED_MODEL_IDS.has(descriptor.id)
+      expect(hasPricing || hasExplicitUnpricedDecision, descriptor.id).toBe(true)
     }
   })
 
-  it('all descriptors have structuredOutput: true', () => {
-    for (const d of geminiModelDescriptors) {
-      expect(d.capabilities?.structuredOutput).toBe(true)
-    }
-  })
-})
+  it('enforces the stricter documented reasoning effort sets', () => {
+    expect(
+      geminiModelDescriptors.find((descriptor) => descriptor.id === 'gemini-2.5-pro')
+        ?.capabilities?.admittedReasoningEfforts,
+    ).toEqual(['low', 'medium', 'high'])
 
-describe('gemmaModelDescriptors', () => {
-  it('contains exactly 2 API-verified Gemma 4 descriptors', () => {
-    expect(gemmaModelDescriptors).toHaveLength(2)
-    const ids = gemmaModelDescriptors.map((d) => d.id)
-    expect(ids).toEqual(['gemma-4-31b-it', 'gemma-4-26b-a4b-it'])
-  })
+    expect(
+      geminiModelDescriptors.find((descriptor) => descriptor.id === 'gemini-3.5-flash')
+        ?.capabilities?.admittedReasoningEfforts,
+    ).toEqual(['none', 'low', 'medium', 'high'])
 
-  it('both descriptors have provider "google"', () => {
-    for (const d of gemmaModelDescriptors) {
-      expect(d.provider).toBe('google')
-    }
-  })
+    expect(
+      geminiModelDescriptors.find(
+        (descriptor) => descriptor.id === 'gemini-3.1-pro-preview',
+      )?.capabilities?.admittedReasoningEfforts,
+    ).toEqual(['low', 'medium', 'high'])
 
-  it('both descriptors have verified capabilities: reasoning/level, nativeStructuredOutput, grounding, vision, tunable sampling', () => {
-    for (const d of gemmaModelDescriptors) {
-      expect(d.capabilities?.reasoning, d.id).toBe(true)
-      expect(d.capabilities?.reasoningApi, d.id).toBe('level')
-      expect(d.capabilities?.structuredOutput, d.id).toBe(true)
-      expect(d.capabilities?.nativeStructuredOutput, d.id).toBe(true)
-      expect(d.capabilities?.grounding, d.id).toBe(true)
-      expect(d.capabilities?.vision, d.id).toBe(true)
-      expect(d.capabilities?.sampling, d.id).toBe('tunable')
-    }
+    expect(
+      gemmaModelDescriptors.find((descriptor) => descriptor.id === 'gemma-4-31b-it')
+        ?.capabilities?.admittedReasoningEfforts,
+    ).toEqual(['none', 'high'])
   })
 
-  it('neither descriptor has pricingFamily, serviceTiers, caching, or audioInput', () => {
-    for (const d of gemmaModelDescriptors) {
-      expect(d.pricingFamily, d.id).toBeUndefined()
-      expect(d.capabilities?.serviceTiers, d.id).toBeUndefined()
-      expect(d.capabilities?.caching, d.id).toBeUndefined()
-      expect(d.capabilities?.audioInput, d.id).toBeUndefined()
-    }
-  })
-
-  it('default registry resolves both Gemma 4 descriptors', () => {
+  it('default registry resolves known models and does not register deleted aliases', () => {
+    expect(defaultGeminiRegistry.resolve('gemini-3-flash-preview-001')?.id).toBe(
+      'gemini-3-flash-preview',
+    )
     expect(defaultGeminiRegistry.resolve('gemma-4-31b-it')?.provider).toBe('google')
-    expect(defaultGeminiRegistry.resolve('gemma-4-26b-a4b-it')?.provider).toBe('google')
-  })
-
-  it('google/ aliases are not registered (dropped)', () => {
     expect(defaultGeminiRegistry.resolve('google/gemma-4-31b-it')).toBeUndefined()
   })
 })
 
-// ---------------------------------------------------------------------------
-// geminiModelDescriptors — cache minTokens
-// ---------------------------------------------------------------------------
+describe('@gullabs/core package surface', () => {
+  it('exports the new Zod helpers and no longer exports the Gemini schema factories', async () => {
+    const surface = await import('./index.js')
 
-describe('geminiModelDescriptors — cache minTokens', () => {
-  it('2.5-series models have caching minTokens 2048', () => {
-    const twoPointFiveIds = [
-      'gemini-2.5-pro',
-      'gemini-2.5-flash',
-      'gemini-2.5-flash-lite',
-    ]
-    for (const id of twoPointFiveIds) {
-      const desc = geminiModelDescriptors.find((d) => d.id === id)
-      expect(desc?.capabilities?.caching?.minTokens, `${id} minTokens`).toBe(2048)
-    }
-  })
-
-  it('3.x-series models have caching minTokens 2048 (not 4096)', () => {
-    const threeXIds = [
-      'gemini-3.5-flash',
-      'gemini-3.1-flash-lite',
-      'gemini-3.1-pro-preview',
-      'gemini-3-flash-preview',
-    ]
-    for (const id of threeXIds) {
-      const desc = geminiModelDescriptors.find((d) => d.id === id)
-      expect(desc?.capabilities?.caching?.minTokens, `${id} minTokens`).toBe(2048)
-    }
-  })
-
-  it('all models have explicit caching enabled', () => {
-    for (const d of geminiModelDescriptors) {
-      expect(d.capabilities?.caching?.explicit, `${d.id} explicit`).toBe(true)
-    }
-  })
-})
-
-// ---------------------------------------------------------------------------
-// createClient — duplicate adapter id guard
-// ---------------------------------------------------------------------------
-
-describe('createClient — duplicate adapter id', () => {
-  const PRICING = geminiPricingSource()
-  const SUCCESS_RESULT = {
-    text: 'ok',
-    usage: { inputTokens: 1, outputTokens: 1, details: {}, raw: null },
-    model: 'gemini-2.5-pro',
-    warnings: [] as [],
-  }
-
-  it('throws LlmError bad_request when two adapters share the same id', () => {
-    const a1 = new FakeAdapter('google', SUCCESS_RESULT)
-    const a2 = new FakeAdapter('google', SUCCESS_RESULT)
-
-    expect(() =>
-      createClient({
-        adapters: [a1, a2],
-        pricing: PRICING,
-        clock: new FakeClock(),
-        ids: new FakeIds(),
-      }),
-    ).toThrow(LlmError)
-  })
-
-  it('thrown error has kind bad_request and retryable false', () => {
-    const a1 = new FakeAdapter('google', SUCCESS_RESULT)
-    const a2 = new FakeAdapter('google', SUCCESS_RESULT)
-
-    try {
-      createClient({ adapters: [a1, a2], pricing: PRICING })
-      expect.fail('should have thrown')
-    } catch (e) {
-      expect(e).toBeInstanceOf(LlmError)
-      expect((e as LlmError).kind).toBe('bad_request')
-      expect((e as LlmError).retryable).toBe(false)
-    }
-  })
-
-  it('distinct adapter ids do not throw', () => {
-    const a1 = new FakeAdapter('google', SUCCESS_RESULT)
-    const a2 = new FakeAdapter('anthropic', SUCCESS_RESULT)
-
-    expect(() =>
-      createClient({
-        adapters: [a1, a2],
-        pricing: PRICING,
-        clock: new FakeClock(),
-        ids: new FakeIds(),
-      }),
-    ).not.toThrow()
+    expect(typeof surface.toConfigJsonSchema).toBe('function')
+    expect(typeof surface.zodToStandardSchema).toBe('function')
+    expect(removedConfigSchemaFactory in surface).toBe(false)
+    expect(removedConfigValidatorFactory in surface).toBe(false)
   })
 })

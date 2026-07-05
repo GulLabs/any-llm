@@ -20,6 +20,7 @@ This installs the core engine, Gemini adapter, and `@google/genai`.
 ```ts
 import {
   createClient,
+  defaultGeminiRegistry,
   defineCallSite,
   geminiAdapter,
   geminiPricingSource,
@@ -50,7 +51,21 @@ const result = await client.runStructured(
   { text: documentText },
   { auth: { apiKey: process.env.GEMINI_API_KEY! } },
 )
+
+const descriptor = defaultGeminiRegistry.resolve('gemini-3.5-flash')
+if (!descriptor) throw new Error('unknown model')
+
+const parsedConfig = descriptor.configSchema.parse({
+  reasoning: { effort: 'medium' },
+})
 ```
+
+Built-in descriptors own the strict model-config contract:
+`descriptor.configSchema` parses persisted or user-supplied config, and
+`descriptor.configJsonSchema` is the derived UI/form schema. Use
+`reasoning.effort` for Gemini 3 and Gemma built-ins, omit `serviceTier` for the
+provider's standard tier, and set `flex` explicitly when that trade-off is
+intended. `priority` remains rejected by the library for now.
 
 ## Key exports
 

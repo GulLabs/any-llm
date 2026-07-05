@@ -536,10 +536,10 @@ export function buildRecord(input: BuildRecordInput): LlmCallRecord {
   // Merge caller warnings with any clamp warnings.
   const allWarnings: Warning[] = [...(input.warnings ?? []), ...clampWarnings]
 
-  // C1: Scoped providerOptions / httpOptions.headers redaction.
-  // Only the secret-bearing escape-hatch lanes are redacted; all standard generation
-  // knobs (temperature, topP, maxOutputTokens, stopSequences, serviceTier, etc.) pass
-  // through untouched.  We shallow-copy before redacting so the caller's original
+  // C1: Scoped provider extension redaction.
+  // Only secret-bearing provider lanes are redacted; all standard generation knobs
+  // (temperature, topP, maxOutputTokens, stopSequences, serviceTier, etc.) pass
+  // through untouched. We shallow-copy before redacting so the caller's original
   // config object is never mutated.
   let gcMut: Record<string, unknown> = {
     ...(input.generationConfig as unknown as Record<string, unknown>),
@@ -550,22 +550,6 @@ export function buildRecord(input: BuildRecordInput): LlmCallRecord {
       providerOptions: JSON.parse(
         redactSecrets(JSON.stringify(gcMut['providerOptions'])),
       ) as unknown,
-    }
-  }
-  if (
-    gcMut['httpOptions'] !== null &&
-    typeof gcMut['httpOptions'] === 'object' &&
-    (gcMut['httpOptions'] as Record<string, unknown>)['headers'] !== undefined
-  ) {
-    const httpOpts = gcMut['httpOptions'] as Record<string, unknown>
-    gcMut = {
-      ...gcMut,
-      httpOptions: {
-        ...httpOpts,
-        headers: JSON.parse(
-          redactSecrets(JSON.stringify(httpOpts['headers'])),
-        ) as unknown,
-      },
     }
   }
   // Cast GenConfig → JsonValue.

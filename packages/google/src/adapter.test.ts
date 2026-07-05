@@ -10,14 +10,14 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
   LlmError,
-  EFFORT_BUDGET,
   createClient,
   geminiPricingSource,
   retryMiddleware,
   gemmaModelDescriptors,
   geminiModelDescriptors,
 } from '@gullabs/core'
-import type { ResolvedRequest, AdapterCtx } from '@gullabs/core'
+import type { ResolvedRequest, AdapterCtx, ModelDescriptor } from '@gullabs/core'
+import type { ProviderOptions } from '@gullabs/core'
 import {
   fakeGeminiResponse,
   fakeGeminiBlocked,
@@ -30,6 +30,8 @@ import { geminiAdapter } from './adapter.js'
 import { isGeminiCapacityError } from './flex-fallback.js'
 import { FLEX_DEFAULT_TIMEOUT_MS } from './client.js'
 import type { GeminiClientLike, GeminiResponseShape } from './client.js'
+import { GOOGLE_REASONING_EFFORT_BUDGET } from './reasoning-budget.js'
+import { makeTestDescriptor } from '../../core/src/test-model-descriptor.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -49,6 +51,15 @@ function makeResolvedReq(overrides: Partial<ResolvedRequest> = {}): ResolvedRequ
 const FAKE_CTX: AdapterCtx = {
   auth: { apiKey: 'test-key' },
   logger: { info() {}, warn() {}, error() {}, debug() {} },
+}
+
+function makeGoogleDescriptor(
+  overrides: Partial<ModelDescriptor> & Pick<ModelDescriptor, 'id'>,
+): ModelDescriptor {
+  return makeTestDescriptor({
+    provider: 'google',
+    ...overrides,
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -175,7 +186,7 @@ describe('usage mapping', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 2. Service tier — flex is sent to the SDK
+// 2. Service tier — explicit tiers only
 // ---------------------------------------------------------------------------
 
 describe('service tier', () => {
@@ -199,14 +210,29 @@ describe('service tier', () => {
     expect(call?.config?.serviceTier).toBe('standard')
   })
 
+  it('omits serviceTier when a flex-capable model has no explicit tier', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+    const descriptor = geminiModelDescriptors.find((d) => d.id === 'gemini-2.5-pro')!
+
+    await adapter.run(
+      makeResolvedReq({
+        model: 'gemini-2.5-pro',
+        modelDescriptor: descriptor,
+        config: {} as ResolvedRequest['config'],
+      }),
+      FAKE_CTX,
+    )
+
+    const call = client.calls[0] as { config?: { serviceTier?: string } }
+    expect(call?.config?.serviceTier).toBeUndefined()
+  })
+
   it('omits serviceTier without warning when the model descriptor has no supported service tiers and no explicit tier is requested', async () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
     const gemma = gemmaModelDescriptors.find((d) => d.id === 'gemma-4-31b-it')!
 
-    // Cast to bypass the type requirement — we're testing the adapter path where
-    // serviceTier is absent at runtime (the engine always sets it, but the adapter
-    // must handle the undefined case gracefully without warning).
     const result = await adapter.run(
       makeResolvedReq({
         model: 'gemma-4-31b-it',
@@ -229,11 +255,10 @@ describe('service tier', () => {
       adapter.run(
         makeResolvedReq({
           model: 'google-standard-only-model',
-          modelDescriptor: {
+          modelDescriptor: makeGoogleDescriptor({
             id: 'google-standard-only-model',
-            provider: 'google',
             capabilities: { serviceTiers: ['standard'] },
-          },
+          }),
           config: { serviceTier: 'flex' },
         }),
         FAKE_CTX,
@@ -400,23 +425,22 @@ describe('flex fallback', () => {
 // ---------------------------------------------------------------------------
 
 describe('reasoning mapping', () => {
-  it('maps effort to thinkingBudget for gemini-2.5 models using the shared core EFFORT_BUDGET', async () => {
+  it('maps effort to thinkingBudget for gemini-2.5 models using the adapter-owned budget table', async () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
 
     await adapter.run(
       makeResolvedReq({
         model: 'gemini-2.5-pro',
-        modelDescriptor: {
+        modelDescriptor: makeGoogleDescriptor({
           id: 'gemini-2.5-pro',
-          provider: 'google',
           capabilities: {
             reasoning: true,
             structuredOutput: true,
             reasoningApi: 'budget',
             serviceTiers: ['flex', 'standard'],
           },
-        },
+        }),
         config: {
           serviceTier: 'flex',
           reasoning: { effort: 'high' },
@@ -428,7 +452,9 @@ describe('reasoning mapping', () => {
     const call = client.calls[0] as {
       config?: { thinkingConfig?: { thinkingBudget?: number } }
     }
-    expect(call?.config?.thinkingConfig?.thinkingBudget).toBe(EFFORT_BUDGET.high)
+    expect(call?.config?.thinkingConfig?.thinkingBudget).toBe(
+      GOOGLE_REASONING_EFFORT_BUDGET.high,
+    )
   })
 
   it('uses budgetTokens directly for gemini-2.5 models', async () => {
@@ -438,16 +464,15 @@ describe('reasoning mapping', () => {
     await adapter.run(
       makeResolvedReq({
         model: 'gemini-2.5-flash',
-        modelDescriptor: {
+        modelDescriptor: makeGoogleDescriptor({
           id: 'gemini-2.5-flash',
-          provider: 'google',
           capabilities: {
             reasoning: true,
             structuredOutput: true,
             reasoningApi: 'budget',
             serviceTiers: ['flex', 'standard'],
           },
-        },
+        }),
         config: {
           serviceTier: 'flex',
           reasoning: { budgetTokens: 4096 },
@@ -469,16 +494,15 @@ describe('reasoning mapping', () => {
     await adapter.run(
       makeResolvedReq({
         model: 'gemini-2.5-pro',
-        modelDescriptor: {
+        modelDescriptor: makeGoogleDescriptor({
           id: 'gemini-2.5-pro',
-          provider: 'google',
           capabilities: {
             reasoning: true,
             structuredOutput: true,
             reasoningApi: 'budget',
             serviceTiers: ['flex', 'standard'],
           },
-        },
+        }),
         config: { serviceTier: 'flex', reasoning: { effort: 'none' } },
       }),
       FAKE_CTX,
@@ -497,15 +521,14 @@ describe('reasoning mapping', () => {
     await adapter.run(
       makeResolvedReq({
         model: 'gemini-3.0-pro',
-        modelDescriptor: {
+        modelDescriptor: makeGoogleDescriptor({
           id: 'gemini-3.0-pro',
-          provider: 'google',
           capabilities: {
             reasoning: true,
             reasoningApi: 'level',
             serviceTiers: ['flex', 'standard'],
           },
-        },
+        }),
         config: {
           serviceTier: 'flex',
           reasoning: { effort: 'high' },
@@ -527,15 +550,14 @@ describe('reasoning mapping', () => {
     await adapter.run(
       makeResolvedReq({
         model: 'gemini-3.5-pro',
-        modelDescriptor: {
+        modelDescriptor: makeGoogleDescriptor({
           id: 'gemini-3.5-pro',
-          provider: 'google',
           capabilities: {
             reasoning: true,
             reasoningApi: 'level',
             serviceTiers: ['flex', 'standard'],
           },
-        },
+        }),
         config: { serviceTier: 'flex', reasoning: { effort: 'low' } },
       }),
       FAKE_CTX,
@@ -555,15 +577,14 @@ describe('reasoning mapping', () => {
       adapter.run(
         makeResolvedReq({
           model: 'gemini-3.0-ultra',
-          modelDescriptor: {
+          modelDescriptor: makeGoogleDescriptor({
             id: 'gemini-3.0-ultra',
-            provider: 'google',
             capabilities: {
               reasoning: true,
               reasoningApi: 'level',
               serviceTiers: ['flex', 'standard'],
             },
-          },
+          }),
           config: { serviceTier: 'flex', reasoning: { budgetTokens: 1000 } },
         }),
         FAKE_CTX,
@@ -579,16 +600,15 @@ describe('reasoning mapping', () => {
       adapter.run(
         makeResolvedReq({
           model: 'gemini-2.5-pro',
-          modelDescriptor: {
+          modelDescriptor: makeGoogleDescriptor({
             id: 'gemini-2.5-pro',
-            provider: 'google',
             capabilities: {
               reasoning: true,
               structuredOutput: true,
               reasoningApi: 'budget',
               serviceTiers: ['flex', 'standard'],
             },
-          },
+          }),
           config: {
             serviceTier: 'flex',
             reasoning: { effort: 'high', budgetTokens: 4096 },
@@ -613,16 +633,15 @@ describe('reasoning mapping', () => {
     const result = await adapter.run(
       makeResolvedReq({
         model: 'gemini-2.5-pro',
-        modelDescriptor: {
+        modelDescriptor: makeGoogleDescriptor({
           id: 'gemini-2.5-pro',
-          provider: 'google',
           capabilities: {
             reasoning: true,
             structuredOutput: true,
             reasoningApi: 'budget',
             serviceTiers: ['flex', 'standard'],
           },
-        },
+        }),
         config: { serviceTier: 'flex', reasoning: { includeThoughts: true } },
       }),
       FAKE_CTX,
@@ -641,16 +660,15 @@ describe('reasoning mapping', () => {
     await adapter.run(
       makeResolvedReq({
         model: 'gemini-2.5-pro',
-        modelDescriptor: {
+        modelDescriptor: makeGoogleDescriptor({
           id: 'gemini-2.5-pro',
-          provider: 'google',
           capabilities: {
             reasoning: true,
             structuredOutput: true,
             reasoningApi: 'budget',
             serviceTiers: ['flex', 'standard'],
           },
-        },
+        }),
         config: { serviceTier: 'flex', reasoning: { includeThoughts: true } },
       }),
       FAKE_CTX,
@@ -728,9 +746,8 @@ describe('structured output', () => {
     // Use a synthetic descriptor with nativeStructuredOutput: false to test the
     // skip-native-schema path. The real gemma-4-26b-a4b-it now has
     // nativeStructuredOutput: true (verified against the live API).
-    const syntheticNoNativeOutput = {
+    const syntheticNoNativeOutput = makeGoogleDescriptor({
       id: 'gemma-4-26b-a4b-it',
-      provider: 'google',
       capabilities: {
         structuredOutput: true,
         nativeStructuredOutput: false,
@@ -738,7 +755,7 @@ describe('structured output', () => {
         sampling: 'tunable' as const,
         serviceTiers: ['flex', 'standard'] as ['flex', 'standard'],
       },
-    }
+    })
 
     const result = await adapter.run(
       makeResolvedReq({
@@ -943,62 +960,45 @@ describe('error classification', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 9. providerOptions.google passthrough
+// 9. providerOptions.google lockdown
 // ---------------------------------------------------------------------------
 
-describe('providerOptions.google passthrough', () => {
-  it('spreads google providerOptions into the config (last, caller wins)', async () => {
+describe('providerOptions.google lockdown', () => {
+  it('rejects unsupported providerOptions.google keys instead of treating them as SDK passthrough', async () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
 
-    await adapter.run(
-      makeResolvedReq({
-        config: {
-          serviceTier: 'flex',
-          providerOptions: {
-            google: {
-              candidateCount: 2,
-              seed: 42,
-            },
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          config: {
+            serviceTier: 'flex',
+            providerOptions: {
+              google: { candidateCount: 2, seed: 42 },
+            } as unknown as ProviderOptions,
           },
-        },
-      }),
-      FAKE_CTX,
-    )
-
-    const call = client.calls[0] as {
-      config?: { candidateCount?: number; seed?: number; serviceTier?: string }
-    }
-    expect(call?.config?.candidateCount).toBe(2)
-    expect(call?.config?.seed).toBe(42)
-    // Standard config should still be there
-    expect(call?.config?.serviceTier).toBe('flex')
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request', retryable: false })
   })
 
-  it('providerOptions.google can override serviceTier', async () => {
-    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
-    const adapter = geminiAdapter({ client })
-    const descriptor = geminiModelDescriptors.find((d) => d.id === 'gemini-2.5-pro')!
-
-    await adapter.run(
-      makeResolvedReq({
-        modelDescriptor: descriptor,
-        config: {
-          serviceTier: 'flex',
-          providerOptions: {
-            google: { serviceTier: 'standard' },
-          },
-        },
-      }),
-      FAKE_CTX,
-    )
-
-    const call = client.calls[0] as { config?: { serviceTier?: string } }
-    // providerOptions spread last, so it wins
-    expect(call?.config?.serviceTier).toBe('standard')
-  })
-
-  it('throws LlmError bad_request when providerOptions.google supplies an unsupported serviceTier string', async () => {
+  it.each([
+    ['serviceTier', { serviceTier: 'standard' }],
+    ['thinkingConfig', { thinkingConfig: { thinkingBudget: 1024 } }],
+    ['responseMimeType', { responseMimeType: 'application/json' }],
+    ['responseSchema', { responseSchema: { type: 'object' } }],
+    ['_responseJsonSchema', { _responseJsonSchema: { type: 'object' } }],
+    ['responseJsonSchema', { responseJsonSchema: { type: 'object' } }],
+    ['responseFormat', { responseFormat: { text: { mimeType: 'application/json' } } }],
+    ['temperature', { temperature: 0.7 }],
+    ['topP', { topP: 0.8 }],
+    ['topK', { topK: 40 }],
+    ['mediaResolution', { mediaResolution: 'MEDIA_RESOLUTION_HIGH' }],
+    ['speechConfig', { speechConfig: {} }],
+    ['imageConfig', { imageConfig: {} }],
+    ['responseModalities', { responseModalities: ['TEXT'] }],
+  ])('rejects reserved key %s in providerOptions.google', async (_key, googleOptions) => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
     const descriptor = geminiModelDescriptors.find((d) => d.id === 'gemini-2.5-pro')!
@@ -1010,8 +1010,8 @@ describe('providerOptions.google passthrough', () => {
           config: {
             serviceTier: 'flex',
             providerOptions: {
-              google: { serviceTier: 'priority' },
-            },
+              google: googleOptions,
+            } as unknown as ProviderOptions,
           },
         }),
         FAKE_CTX,
@@ -1048,6 +1048,53 @@ describe('providerOptions.google passthrough', () => {
 
     const call = client.calls[0] as { config?: { safetySettings?: unknown } }
     expect(call?.config?.safetySettings).toEqual(safetySettings)
+  })
+
+  it('rejects malformed safetySettings instead of forwarding raw SDK shapes', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          config: {
+            serviceTier: 'flex',
+            providerOptions: {
+              google: {
+                safetySettings: [
+                  {
+                    category: 'HARM_CATEGORY_HATE_SPEECH',
+                    threshold: 'BLOCK_MEDIUM_AND_ABOVE',
+                    method: 'SDK_ONLY',
+                  },
+                ],
+              },
+            } as unknown as ProviderOptions,
+          },
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request', retryable: false })
+  })
+
+  it('passes cachedContent through providerOptions.google', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await adapter.run(
+      makeResolvedReq({
+        config: {
+          serviceTier: 'flex',
+          providerOptions: {
+            google: { cachedContent: 'cachedContents/abc123' },
+          },
+        },
+      }),
+      FAKE_CTX,
+    )
+
+    const call = client.calls[0] as { config?: { cachedContent?: string } }
+    expect(call?.config?.cachedContent).toBe('cachedContents/abc123')
   })
 })
 
@@ -1643,11 +1690,10 @@ describe('transport timeout (httpOptions.timeout)', () => {
     expect(call?.config?.httpOptions?.timeout).toBe(305_000)
   })
 
-  it('caller-supplied httpOptions.timeout wins over computed timeout and extra fields are preserved', async () => {
+  it('caller-supplied httpOptions.timeout wins over computed timeout', async () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
 
-    // Caller passes httpOptions with a custom timeout AND an extra field.
     // The adapter computes timeoutMs + buffer = 1_205_000, but caller's 42 wins.
     await adapter.run(
       makeResolvedReq({
@@ -1656,7 +1702,7 @@ describe('transport timeout (httpOptions.timeout)', () => {
           timeoutMs: 1_200_000,
           providerOptions: {
             google: {
-              httpOptions: { timeout: 42, someOtherField: 'x' },
+              httpOptions: { timeout: 42 },
             },
           },
         },
@@ -1665,27 +1711,83 @@ describe('transport timeout (httpOptions.timeout)', () => {
     )
 
     const call = client.calls[0] as {
-      config?: { httpOptions?: Record<string, unknown> }
+      config?: { httpOptions?: { timeout?: number } }
     }
-    // Caller timeout wins over computed timeout.
-    expect(call?.config?.httpOptions?.['timeout']).toBe(42)
-    // Extra caller field is preserved.
-    expect(call?.config?.httpOptions?.['someOtherField']).toBe('x')
+    expect(call?.config?.httpOptions?.timeout).toBe(42)
+  })
+
+  it('rejects unsupported httpOptions keys instead of preserving SDK passthrough', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          config: {
+            serviceTier: 'flex',
+            providerOptions: {
+              google: {
+                httpOptions: { timeout: 42, someOtherField: 'x' },
+              },
+            } as unknown as ProviderOptions,
+          },
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request', retryable: false })
   })
 })
 
 // ---------------------------------------------------------------------------
-// 18. Grounding — conflict guard
+// 18. Grounding — model-aware tool guard
 // ---------------------------------------------------------------------------
 
-describe('grounding — conflict guard', () => {
-  it('rejects with LlmError bad_request when googleSearch tool + outputJsonSchema both present', async () => {
+describe('grounding — model-aware tool guard', () => {
+  it.each(['gemini-3.1-pro-preview', 'gemini-3.5-flash'] as const)(
+    'allows structured output + googleSearch for %s',
+    async (model) => {
+      const client = makeFakeGemini(
+        fakeGeminiResponse({ structuredJson: '{"winner":"Spain"}' }),
+      )
+      const adapter = geminiAdapter({ client })
+      const descriptor = geminiModelDescriptors.find((d) => d.id === model)!
+
+      const result = await adapter.run(
+        makeResolvedReq({
+          model,
+          modelDescriptor: descriptor,
+          outputJsonSchema: {
+            type: 'object',
+            properties: { winner: { type: 'string' } },
+            required: ['winner'],
+            additionalProperties: false,
+          },
+          config: {
+            serviceTier: 'flex',
+            providerOptions: { google: { tools: [{ googleSearch: {} }] } },
+          },
+        }),
+        FAKE_CTX,
+      )
+
+      expect(result.rawStructured).toEqual({ winner: 'Spain' })
+      const call = client.calls[0] as {
+        config?: { responseMimeType?: string; tools?: unknown[] }
+      }
+      expect(call?.config?.responseMimeType).toBe('application/json')
+      expect(call?.config?.tools).toEqual([{ googleSearch: {} }])
+    },
+  )
+
+  it('rejects structured output + googleSearch on non-allowlisted models before dispatch', async () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
+    const descriptor = geminiModelDescriptors.find((d) => d.id === 'gemini-2.5-pro')!
 
     const err = await adapter
       .run(
         makeResolvedReq({
+          modelDescriptor: descriptor,
           outputJsonSchema: { type: 'object', additionalProperties: true },
           config: {
             serviceTier: 'flex',
@@ -1699,10 +1801,10 @@ describe('grounding — conflict guard', () => {
     expect(err).toBeInstanceOf(LlmError)
     expect((err as LlmError).kind).toBe('bad_request')
     expect((err as LlmError).retryable).toBe(false)
-    expect((err as LlmError).message).toMatch(/grounding.*structured output/i)
+    expect((err as LlmError).message).toMatch(/structured output with googleSearch/i)
   })
 
-  it('rejects with LlmError bad_request when googleSearchRetrieval tool + outputJsonSchema both present', async () => {
+  it('rejects unsupported tool keys', async () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
 
@@ -1712,7 +1814,50 @@ describe('grounding — conflict guard', () => {
           outputJsonSchema: { type: 'object', additionalProperties: true },
           config: {
             serviceTier: 'flex',
-            providerOptions: { google: { tools: [{ googleSearchRetrieval: {} }] } },
+            providerOptions: {
+              google: { tools: [{ unsupportedTool: {} }] },
+            } as unknown as ProviderOptions,
+          },
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request', retryable: false })
+  })
+
+  it('rejects googleSearch tools with non-empty config objects', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          config: {
+            serviceTier: 'flex',
+            providerOptions: {
+              google: { tools: [{ googleSearch: { dynamic: true } }] },
+            } as unknown as ProviderOptions,
+          },
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request', retryable: false })
+  })
+
+  it('rejects googleSearch tools when the model does not support grounding', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          model: 'google-no-grounding',
+          modelDescriptor: makeGoogleDescriptor({
+            id: 'google-no-grounding',
+            capabilities: { grounding: false },
+          }),
+          config: {
+            serviceTier: 'flex',
+            providerOptions: { google: { tools: [{ googleSearch: {} }] } },
           },
         }),
         FAKE_CTX,
@@ -1758,9 +1903,11 @@ describe('grounding — conflict guard', () => {
       fakeGeminiResponse({ text: 'Paris', groundingMetadata: fakeGrounding }),
     )
     const adapter = geminiAdapter({ client })
+    const descriptor = geminiModelDescriptors.find((d) => d.id === 'gemini-2.5-pro')!
 
     const result = await adapter.run(
       makeResolvedReq({
+        modelDescriptor: descriptor,
         config: {
           serviceTier: 'flex',
           providerOptions: { google: { tools: [{ googleSearch: {} }] } },
@@ -1879,10 +2026,10 @@ describe('grounding — registry capabilities', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Fixed-sampling invariant re-assertion (FIX 4)
+// Fixed-sampling defensive check
 // ---------------------------------------------------------------------------
 
-describe('fixed-sampling invariant re-assertion after providerOptions merge', () => {
+describe('fixed-sampling defensive check', () => {
   it('throws LlmError bad_request when providerOptions.google supplies sampling params for a fixed-sampling model', async () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
@@ -1896,11 +2043,10 @@ describe('fixed-sampling invariant re-assertion after providerOptions merge', ()
             serviceTier: 'flex',
             providerOptions: {
               google: { temperature: 0.9, topP: 0.8, topK: 40 },
-            },
+            } as unknown as ProviderOptions,
           },
-          modelDescriptor: {
+          modelDescriptor: makeGoogleDescriptor({
             id: 'gemini-3.5-flash',
-            provider: 'google',
             pricingFamily: 'gemini-3.5-flash',
             capabilities: {
               reasoning: true,
@@ -1909,46 +2055,43 @@ describe('fixed-sampling invariant re-assertion after providerOptions merge', ()
               sampling: 'fixed',
               serviceTiers: ['flex', 'standard'],
             },
-          },
+          }),
         },
         FAKE_CTX,
       ),
     ).rejects.toMatchObject({ kind: 'bad_request', retryable: false })
   })
 
-  it('keeps providerOptions temperature for a tunable-sampling model (gemini-2.5-pro)', async () => {
+  it('rejects providerOptions.google sampling params even on tunable-sampling models', async () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })
 
-    await adapter.run(
-      {
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
-        config: {
-          serviceTier: 'flex',
-          providerOptions: {
-            google: { temperature: 0.7 },
+    await expect(
+      adapter.run(
+        {
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
+          config: {
+            serviceTier: 'flex',
+            providerOptions: {
+              google: { temperature: 0.7 },
+            } as unknown as ProviderOptions,
           },
+          modelDescriptor: makeGoogleDescriptor({
+            id: 'gemini-2.5-pro',
+            pricingFamily: 'gemini-2.5-pro',
+            capabilities: {
+              reasoning: true,
+              structuredOutput: true,
+              reasoningApi: 'budget',
+              sampling: 'tunable',
+              serviceTiers: ['flex', 'standard'],
+            },
+          }),
         },
-        modelDescriptor: {
-          id: 'gemini-2.5-pro',
-          provider: 'google',
-          pricingFamily: 'gemini-2.5-pro',
-          capabilities: {
-            reasoning: true,
-            structuredOutput: true,
-            reasoningApi: 'budget',
-            sampling: 'tunable',
-            serviceTiers: ['flex', 'standard'],
-          },
-        },
-      },
-      FAKE_CTX,
-    )
-
-    // SDK MUST receive temperature for tunable models
-    const call = client.calls[0] as { config?: { temperature?: number } }
-    expect(call?.config?.temperature).toBe(0.7)
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request', retryable: false })
   })
 })
 

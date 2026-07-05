@@ -9,9 +9,10 @@ description: >-
   a UsageSink for cost tracking. Also applies whenever the user mentions any-llm, the
   Gemini adapter, Gemini Flex tier, structured-output validation, or per-call auth for
   this library. Covers the mandatory per-call `{ auth: { apiKey } }` pattern (there is
-  no env-var or ambient auth), the caller-owned output-validation contract, and the
-  reject-don't-map error philosophy — the things a developer used to other LLM SDKs
-  would otherwise get wrong by default.
+  no env-var or ambient auth), the caller-owned output-validation contract, the
+  descriptor-owned strict model-config boundary (`configSchema` / `configJsonSchema`),
+  and the reject-don't-map error philosophy — the things a developer used to other
+  LLM SDKs would otherwise get wrong by default.
 ---
 
 # any-llm
@@ -102,8 +103,36 @@ further `{{...}}`, preventing template injection) and applies to both `system` a
 `userTemplate`. A missing var is left as the literal `{{var}}` placeholder, not an
 empty string. `runStructured` also accepts a two-arg form, `(callSite, opts)`, when the
 template has no vars. Config resolution order everywhere is
-`clientDefaults → callSite.config → opts.config` (later wins; objects like `reasoning`
-and `providerOptions` merge key-by-key, everything else is last-write-wins).
+`clientDefaults → callSite.config → opts.config`, and the merged config must still pass
+the selected descriptor's strict runtime schema before dispatch.
+
+## Strict model-config boundary
+
+Treat model config as descriptor-owned:
+
+```ts
+import { defaultGeminiRegistry } from '@gullabs/core'
+
+const descriptor = defaultGeminiRegistry.resolve('gemini-3.5-flash')
+if (!descriptor) throw new Error('unknown model')
+
+// UI/forms:
+const formSchema = descriptor.configJsonSchema
+
+// Persisted or user-supplied config:
+const parsedConfig = descriptor.configSchema.parse({
+  reasoning: { effort: 'medium' },
+  serviceTier: 'flex',
+})
+```
+
+Important distinctions:
+
+- `descriptor.configSchema` is the runtime boundary for request config.
+- `descriptor.configJsonSchema` is derived from that same schema for form generation.
+- `request.output.jsonSchema` is only the output-format hint for structured responses.
+- `providerOptions.google` is a typed provider-extension lane, not a caller-wins
+  override lane for `serviceTier`, sampling, reasoning, or response schema.
 
 ## Structured output — auth + validation together
 
@@ -194,10 +223,10 @@ try {
 Bad input or config throws `bad_request` (or `invalid_auth`) **before any I/O** —
 nothing is silently clamped, coerced, or defaulted around a typo. Examples already
 enforced by the engine/adapter: an unrouteable `model` string, a config value that
-fails a model's schema (`validateConfig`), a `reasoning.budgetTokens` set on a model
-whose API only supports `reasoning.effort`, duplicate adapter/middleware `id`s, and
-grounding (`providerOptions.google.tools` search) combined with `output.jsonSchema` in
-the same request (mutually exclusive on Gemini — see `docs/grounded-structured.md`).
+fails the selected descriptor schema, a `reasoning.budgetTokens` set on a model whose
+API only supports `reasoning.effort`, duplicate adapter/middleware `id`s, and a
+grounding + structured-output combination outside the exact documented Gemini support
+set.
 
 **Do not add defensive fallback/clamping code around this library.** If a call throws
 `bad_request`, fix the input — do not catch-and-retry with a "safer" guessed value; the
@@ -213,14 +242,19 @@ config: {
 
 `ReasoningEffort` is `'none' | 'low' | 'medium' | 'high'`. Two provider APIs exist
 under the hood: Gemini 2.5 models take a token `budgetTokens`; Gemini 3.x / Gemma 4
-models take a discrete `effort` level (`thinkingLevel`). `EFFORT_BUDGET` (from
-`@gullabs/core`) is the shared effort→token mapping (`none: 0, low: 1024, medium: 8192,
-high: 24576`) and `resolveReasoning({ model, budgetTokens, registry })` — also exported
-from `@gullabs/core` — buckets a raw token budget into the nearest admitted effort
-level for a given model, throwing `bad_request` if the model doesn't support reasoning
-at all or has no admitted effort at or above the requested bucket. Prefer setting
-`reasoning.effort` directly for level-API models rather than a token budget; the
-adapter throws `bad_request` if you pass `budgetTokens` to a level-API model.
+models take a discrete `effort` level (`thinkingLevel`).
+
+Use the model-native boundary directly:
+
+- Gemini 2.5: `reasoning.budgetTokens` or admitted `reasoning.effort`
+- Gemini 3 / Gemma 4: `reasoning.effort`
+
+Exact model reminders:
+
+- `gemini-3.1-pro-preview` does **not** admit `effort: 'none'`
+- Gemma 4 is binary: only `effort: 'none'` or `effort: 'high'`
+- Omit `serviceTier` for provider-standard; set `flex` explicitly
+- `priority` remains rejected by the library even though Google documents it
 
 ## Rate limiting and cost tracking
 
@@ -246,7 +280,9 @@ adapter throws `bad_request` if you pass `budgetTokens` to a level-API model.
   the Gemini Developer API (API-key auth) is supported.
 - Catching a `bad_request` `LlmError` and retrying with a clamped/guessed value instead
   of fixing the call — the library never silently coerces invalid config.
-- Setting `reasoning.budgetTokens` on a `thinkingLevel`-API model (Gemini 3.x / Gemma 4) — use `reasoning.effort` instead; the adapter throws `bad_request` otherwise.
+- Setting `reasoning.budgetTokens` on a `thinkingLevel`-API model (Gemini 3.x / Gemma 4) — use `reasoning.effort` instead; the descriptor schema should reject it.
+- Assuming omitted `serviceTier` still means Flex — it now stays omitted and
+  uses provider-default request behavior unless you explicitly opt into `flex`.
 
 ## For more detail
 

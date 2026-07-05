@@ -1,11 +1,17 @@
 # Grounded -> Structured on Gemini
 
-Gemini grounding and native structured output are mutually exclusive in one request. The Google
-adapter enforces that directly: if `providerOptions.google.tools` requests `googleSearch` or
-`googleSearchRetrieval` and the same request also sets `output.jsonSchema`, the library throws
-`bad_request`.
+Gemini grounding and native structured output are model-specific in one
+request. The Google adapter only admits the combined `googleSearch` +
+`output.jsonSchema` path for models with current `generateContent` evidence:
+`gemini-3.1-pro-preview` and `gemini-3.5-flash`. Other models throw
+`bad_request` before provider dispatch.
 
-The recommended pattern is two calls:
+The old `googleSearchRetrieval` tool name is not a compatibility alias. Use the
+documented `googleSearch` tool shape or the descriptor schema rejects the
+config.
+
+For models without combined grounding + structured-output evidence, use two
+calls:
 
 1. grounded research;
 2. structured synthesis.

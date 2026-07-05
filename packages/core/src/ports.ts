@@ -48,9 +48,10 @@ export interface ResolvedRequest {
   outputJsonSchema?: JsonValue
   /**
    * Merged generation config.
-   * `serviceTier` is always present (defaulted to `'flex'` by the engine).
+   * `serviceTier` remains optional; when omitted, adapters must preserve the
+   * provider's default behavior instead of inferring a tier.
    */
-  config: Required<Pick<GenConfig, 'serviceTier'>> & GenConfig
+  config: GenConfig
   /** Propagated abort signal (timeout + caller cancel merged). */
   signal?: AbortSignal
   /**

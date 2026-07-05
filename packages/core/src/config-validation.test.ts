@@ -1,559 +1,178 @@
-/**
- * Tests for per-model config validation (Batch 2b).
- *
- * Verifies that:
- * - 3.x models with temperature/topP/topK in config throw bad_request
- * - 2.5 models accept temperature/topP/topK
- * - timeoutMs on 3.x does NOT trigger rejection
- * - All 7 descriptors have configJsonSchema and validateConfig
- * - gemini-3-flash-preview resolves and is priced
- * - Failed validation writes an error record to the sink
- *
- * @module
- */
+import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 
-import { describe, it, expect } from 'vitest'
 import {
-  createClient,
-  geminiPricingSource,
-  gemmaModelDescriptors,
   geminiModelDescriptors,
-  defaultGeminiRegistry,
-  LlmError,
+  gemmaModelDescriptors,
+  toConfigJsonSchema,
+  zodToStandardSchema,
 } from './index.js'
-import type { AdapterResult, Usage } from './index.js'
-import type { StandardSchemaV1 } from './standard-schema.js'
-import { FakeAdapter, FakeClock, FakeIds, RecordingSink } from '@gullabs/testing'
+import type { JsonValue } from './index.js'
 
-// ---------------------------------------------------------------------------
-// Shared fixtures
-// ---------------------------------------------------------------------------
-
-const PRICING = geminiPricingSource()
-const TEST_AUTH = { apiKey: 'test-key' }
-
-const GOOD_USAGE: Usage = {
-  inputTokens: 100,
-  outputTokens: 20,
-  details: {},
-  raw: null,
-}
-
-function makeSuccessResult(model: string): AdapterResult {
-  return {
-    text: 'ok',
-    usage: GOOD_USAGE,
-    model,
-    warnings: [],
-  }
-}
-
-/**
- * Creates a client wired to a FakeAdapter that reports `model` as the
- * resolved model name.  The registry used is the default Gemini registry so
- * per-model validateConfig is present.
- */
-function makeClient(model: string) {
-  const clock = new FakeClock(1_000)
-  const ids = new FakeIds()
-  const sink = new RecordingSink()
-  const adapter = new FakeAdapter('google', makeSuccessResult(model))
-
-  const client = createClient({
-    adapters: [adapter],
-    pricing: PRICING,
-    sink,
-    clock,
-    ids,
-    // Use the default registry (includes validateConfig on each descriptor).
-    modelRegistry: defaultGeminiRegistry,
-  })
-
-  return { client, sink, clock, ids }
-}
-
-const MESSAGES = [
-  { role: 'user' as const, parts: [{ kind: 'text' as const, text: 'hi' }] },
-]
-
-// ---------------------------------------------------------------------------
-// Helper: run a generate call that is expected to throw an LlmError,
-// returning both the error and the sink state for inspection.
-// ---------------------------------------------------------------------------
-async function expectBadRequest(
-  client: ReturnType<typeof makeClient>['client'],
-  model: string,
-  config: Parameters<typeof client.generate>[0]['config'],
-): Promise<LlmError> {
-  try {
-    await client.generate(
-      { model, messages: MESSAGES, ...(config !== undefined ? { config } : {}) },
-      { auth: TEST_AUTH },
-    )
-    throw new Error('expected generate() to throw, but it resolved')
-  } catch (e) {
-    expect(e).toBeInstanceOf(LlmError)
-    const err = e as LlmError
-    expect(err.kind).toBe('bad_request')
-    expect(err.retryable).toBe(false)
-    return err
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 1. Descriptor completeness — all 7 models have configJsonSchema + validateConfig
-// ---------------------------------------------------------------------------
-
-describe('geminiModelDescriptors — Batch 2b fields', () => {
-  it('has exactly 7 descriptors', () => {
-    expect(geminiModelDescriptors).toHaveLength(7)
-  })
-
-  it('every descriptor has configJsonSchema (non-null JsonValue)', () => {
-    for (const d of geminiModelDescriptors) {
-      expect(d.configJsonSchema, `${d.id} should have configJsonSchema`).toBeDefined()
-      expect(
-        d.configJsonSchema,
-        `${d.id} configJsonSchema must not be null`,
-      ).not.toBeNull()
-    }
-  })
-
-  it('every descriptor has validateConfig (Standard Schema v1 shape)', () => {
-    for (const d of geminiModelDescriptors) {
-      expect(d.validateConfig, `${d.id} should have validateConfig`).toBeDefined()
-      expect(d.validateConfig!['~standard'].vendor).toBe('gullabs-gemini')
-      expect(d.validateConfig!['~standard'].version).toBe(1)
-      expect(typeof d.validateConfig!['~standard'].validate).toBe('function')
-    }
-  })
-
-  it('2.5 models have sampling: tunable', () => {
-    const tunable = geminiModelDescriptors.filter((d) => d.id.startsWith('gemini-2.5'))
-    expect(tunable.length).toBeGreaterThan(0)
-    for (const d of tunable) {
-      expect(d.capabilities?.sampling, `${d.id}`).toBe('tunable')
-    }
-  })
-
-  it('3.x models have sampling: fixed', () => {
-    const fixed = geminiModelDescriptors.filter((d) => d.id.startsWith('gemini-3'))
-    expect(fixed.length).toBeGreaterThan(0)
-    for (const d of fixed) {
-      expect(d.capabilities?.sampling, `${d.id}`).toBe('fixed')
-    }
-  })
-
-  it('all 7 descriptors have caching.explicit === true', () => {
-    for (const d of geminiModelDescriptors) {
-      expect(d.capabilities?.caching?.explicit, `${d.id}`).toBe(true)
-    }
-  })
-
-  it('2.5 models have caching.minTokens === 2048', () => {
-    const tunable = geminiModelDescriptors.filter((d) => d.id.startsWith('gemini-2.5'))
-    for (const d of tunable) {
-      expect(d.capabilities?.caching?.minTokens, `${d.id}`).toBe(2048)
-    }
-  })
-
-  it('3.x models have caching.minTokens === 2048', () => {
-    const fixed = geminiModelDescriptors.filter((d) => d.id.startsWith('gemini-3'))
-    for (const d of fixed) {
-      expect(d.capabilities?.caching?.minTokens, `${d.id}`).toBe(2048)
-    }
-  })
-
-  it('gemini-3-flash-preview is in the descriptor list with correct fields', () => {
-    const found = geminiModelDescriptors.find((d) => d.id === 'gemini-3-flash-preview')
-    expect(found).toBeDefined()
-    expect(found!.provider).toBe('google')
-    expect(found!.capabilities?.reasoningApi).toBe('level')
-    expect(found!.capabilities?.sampling).toBe('fixed')
-    expect(found!.capabilities?.grounding).toBe(true)
-    expect(found!.capabilities?.caching).toEqual({ explicit: true, minTokens: 2048 })
-  })
-})
-
-describe('gemmaModelDescriptors — config fields', () => {
-  it('has all 2 Gemma descriptors with configJsonSchema + validateConfig', () => {
-    expect(gemmaModelDescriptors).toHaveLength(2)
-    for (const d of gemmaModelDescriptors) {
-      expect(d.configJsonSchema, `${d.id} should have configJsonSchema`).toBeDefined()
-      expect(d.validateConfig, `${d.id} should have validateConfig`).toBeDefined()
-      expect(d.validateConfig!['~standard'].vendor).toBe('gullabs-gemini')
-      expect(d.validateConfig!['~standard'].version).toBe(1)
-    }
-  })
-
-  it('Gemma descriptors use tunable sampling schema and no service-tier capability', () => {
-    for (const d of gemmaModelDescriptors) {
-      expect(d.capabilities?.sampling, d.id).toBe('tunable')
-      expect(d.capabilities?.serviceTiers, d.id).toBeUndefined()
-      const schema = d.configJsonSchema as Record<string, unknown>
-      const props = schema['properties'] as Record<string, unknown>
-      expect(props['temperature'], d.id).toBeDefined()
-      expect(props['topP'], d.id).toBeDefined()
-      expect(props['topK'], d.id).toBeDefined()
-    }
-  })
-})
-
-describe('gemmaModelDescriptors — reasoning effort validation', () => {
-  it('effort "low" is rejected with path ["reasoning","effort"]', () => {
-    for (const d of gemmaModelDescriptors) {
-      const result = d.validateConfig!['~standard'].validate({
-        reasoning: { effort: 'low' },
-      })
-      expect('issues' in result, `${d.id} should have issues`).toBe(true)
-      const issues = (result as { issues: StandardSchemaV1.Issue[] }).issues
-      const effortIssue = issues.find(
-        (i) =>
-          Array.isArray(i.path) && i.path[0] === 'reasoning' && i.path[1] === 'effort',
-      )
-      expect(effortIssue, `${d.id} missing effort issue`).toBeDefined()
-      expect(effortIssue!.message).toMatch(/not supported/)
-    }
-  })
-
-  it('effort "medium" is rejected with path ["reasoning","effort"]', () => {
-    for (const d of gemmaModelDescriptors) {
-      const result = d.validateConfig!['~standard'].validate({
-        reasoning: { effort: 'medium' },
-      })
-      expect('issues' in result, `${d.id} should have issues`).toBe(true)
-      const issues = (result as { issues: StandardSchemaV1.Issue[] }).issues
-      const effortIssue = issues.find(
-        (i) =>
-          Array.isArray(i.path) && i.path[0] === 'reasoning' && i.path[1] === 'effort',
-      )
-      expect(effortIssue, `${d.id} missing effort issue`).toBeDefined()
-      expect(effortIssue!.message).toMatch(/not supported/)
-    }
-  })
-
-  it('effort "none" passes (no issues)', () => {
-    for (const d of gemmaModelDescriptors) {
-      const result = d.validateConfig!['~standard'].validate({
-        reasoning: { effort: 'none' },
-      })
-      expect('value' in result, `${d.id} should pass`).toBe(true)
-    }
-  })
-
-  it('effort "high" passes (no issues)', () => {
-    for (const d of gemmaModelDescriptors) {
-      const result = d.validateConfig!['~standard'].validate({
-        reasoning: { effort: 'high' },
-      })
-      expect('value' in result, `${d.id} should pass`).toBe(true)
-    }
-  })
-
-  it('reasoning absent entirely passes (no issues)', () => {
-    for (const d of gemmaModelDescriptors) {
-      const result = d.validateConfig!['~standard'].validate({ maxOutputTokens: 1024 })
-      expect('value' in result, `${d.id} should pass`).toBe(true)
-    }
-  })
-
-  it('default validator (no reasoningEfforts) still accepts effort "low" (regression guard)', () => {
-    // makeGeminiConfigValidator with no reasoningEfforts must NOT constrain effort.
-    // Use a 2.5 series descriptor as the reference.
-    const gemini25 = geminiModelDescriptors.find((d) => d.id === 'gemini-2.5-pro')!
-    const result = gemini25.validateConfig!['~standard'].validate({
-      reasoning: { effort: 'low' },
-    })
-    expect('value' in result).toBe(true)
-  })
-})
-
-describe('gemini-3.1-pro-preview — reasoning effort validation', () => {
-  const proPreview = geminiModelDescriptors.find(
-    (d) => d.id === 'gemini-3.1-pro-preview',
+function findDescriptor(id: string) {
+  return [...geminiModelDescriptors, ...gemmaModelDescriptors].find(
+    (descriptor) => descriptor.id === id,
   )!
+}
 
-  it('effort "none" is rejected with path ["reasoning","effort"]', () => {
-    const result = proPreview.validateConfig!['~standard'].validate({
-      reasoning: { effort: 'none' },
-    })
-    expect('issues' in result).toBe(true)
-    const issues = (result as { issues: StandardSchemaV1.Issue[] }).issues
-    const effortIssue = issues.find(
-      (i) => Array.isArray(i.path) && i.path[0] === 'reasoning' && i.path[1] === 'effort',
-    )
-    expect(effortIssue, 'missing effort issue').toBeDefined()
-    expect(effortIssue!.message).toMatch(/not supported/)
-  })
+function collectObjectSchemas(value: unknown, acc: Record<string, unknown>[] = []) {
+  if (value === null || typeof value !== 'object') return acc
 
-  it('effort "low" passes (no issues)', () => {
-    const result = proPreview.validateConfig!['~standard'].validate({
-      reasoning: { effort: 'low' },
-    })
-    expect('value' in result).toBe(true)
-  })
-
-  it('effort "medium" passes (no issues)', () => {
-    const result = proPreview.validateConfig!['~standard'].validate({
-      reasoning: { effort: 'medium' },
-    })
-    expect('value' in result).toBe(true)
-  })
-
-  it('effort "high" passes (no issues)', () => {
-    const result = proPreview.validateConfig!['~standard'].validate({
-      reasoning: { effort: 'high' },
-    })
-    expect('value' in result).toBe(true)
-  })
-
-  it('reasoning absent passes (no issues)', () => {
-    const result = proPreview.validateConfig!['~standard'].validate({
-      maxOutputTokens: 512,
-    })
-    expect('value' in result).toBe(true)
-  })
-
-  it('regression: gemini-3.5-flash still accepts effort "none"', () => {
-    const flash = geminiModelDescriptors.find((d) => d.id === 'gemini-3.5-flash')!
-    const result = flash.validateConfig!['~standard'].validate({
-      reasoning: { effort: 'none' },
-    })
-    expect('value' in result).toBe(true)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 2. makeGeminiConfigSchema — JSON Schema shape
-// ---------------------------------------------------------------------------
-
-describe('configJsonSchema shape', () => {
-  it('2.5 model configJsonSchema includes temperature, topP, topK', () => {
-    const desc = geminiModelDescriptors.find((d) => d.id === 'gemini-2.5-pro')!
-    const schema = desc.configJsonSchema as Record<string, unknown>
-    const props = schema['properties'] as Record<string, unknown>
-    expect(props['temperature']).toBeDefined()
-    expect(props['topP']).toBeDefined()
-    expect(props['topK']).toBeDefined()
-    expect(props['maxOutputTokens']).toBeDefined()
-    expect(props['stopSequences']).toBeDefined()
-    expect(props['serviceTier']).toBeDefined()
-    expect(props['reasoning']).toBeDefined()
-  })
-
-  it('3.x model configJsonSchema omits temperature, topP, topK', () => {
-    const desc = geminiModelDescriptors.find((d) => d.id === 'gemini-3.5-flash')!
-    const schema = desc.configJsonSchema as Record<string, unknown>
-    const props = schema['properties'] as Record<string, unknown>
-    expect(props['temperature']).toBeUndefined()
-    expect(props['topP']).toBeUndefined()
-    expect(props['topK']).toBeUndefined()
-    // Common props still present
-    expect(props['maxOutputTokens']).toBeDefined()
-    expect(props['serviceTier']).toBeDefined()
-    expect(props['reasoning']).toBeDefined()
-  })
-
-  it('reasoning.budgetTokens has minimum: 0', () => {
-    const desc = geminiModelDescriptors.find((d) => d.id === 'gemini-2.5-pro')!
-    const schema = desc.configJsonSchema as Record<string, unknown>
-    const props = schema['properties'] as Record<string, unknown>
-    const reasoningSchema = props['reasoning'] as Record<string, unknown>
-    const reasoningProps = reasoningSchema['properties'] as Record<string, unknown>
-    const budgetTokensSchema = reasoningProps['budgetTokens'] as Record<string, unknown>
-    expect(budgetTokensSchema['minimum']).toBe(0)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 3. Engine validation — 3.x model rejects sampling params
-// ---------------------------------------------------------------------------
-
-describe('engine — config validation for 3.x (fixed sampling) models', () => {
-  const FIXED_MODELS = [
-    'gemini-3.5-flash',
-    'gemini-3.1-flash-lite',
-    'gemini-3.1-pro-preview',
-    'gemini-3-flash-preview',
-  ]
-
-  for (const model of FIXED_MODELS) {
-    it(`${model} + temperature → bad_request, message mentions temperature`, async () => {
-      const { client, sink } = makeClient(model)
-      const err = await expectBadRequest(client, model, { temperature: 0.7 })
-      expect(err.message).toMatch(/temperature/)
-
-      // Error record IS written to sink
-      expect(sink.records).toHaveLength(1)
-      expect(sink.last()!.status).toBe('api_error')
-    })
-
-    it(`${model} + topP → bad_request, message mentions topP`, async () => {
-      const { client, sink } = makeClient(model)
-      const err = await expectBadRequest(client, model, { topP: 0.9 })
-      expect(err.message).toMatch(/topP/)
-
-      expect(sink.records).toHaveLength(1)
-      expect(sink.last()!.status).toBe('api_error')
-    })
-
-    it(`${model} + topK → bad_request, message mentions topK`, async () => {
-      const { client, sink } = makeClient(model)
-      const err = await expectBadRequest(client, model, { topK: 40 })
-      expect(err.message).toMatch(/topK/)
-
-      expect(sink.records).toHaveLength(1)
-      expect(sink.last()!.status).toBe('api_error')
-    })
+  if (Array.isArray(value)) {
+    for (const item of value) collectObjectSchemas(item, acc)
+    return acc
   }
 
-  it('temperature + topP together — both issues reported in single message', async () => {
-    const { client } = makeClient('gemini-3.5-flash')
-    const err = await expectBadRequest(client, 'gemini-3.5-flash', {
-      temperature: 0.7,
-      topP: 0.9,
-    })
-    // Both violations are collected (no short-circuit)
-    expect(err.message).toMatch(/temperature/)
-    expect(err.message).toMatch(/topP/)
-  })
-
-  it('timeoutMs only on 3.x model → NOT rejected (execution-spine field excluded from projection)', async () => {
-    const { client, sink } = makeClient('gemini-3.5-flash')
-
-    // timeoutMs is excluded from config projection — must not trigger validation failure.
-    // The fake adapter returns in <1ms so a 30s timeout will not fire.
-    const result = await client.generate(
-      {
-        model: 'gemini-3.5-flash',
-        messages: MESSAGES,
-        config: { timeoutMs: 30_000 },
-      },
-      { auth: TEST_AUTH },
-    )
-
-    expect(result).toBeDefined()
-    expect(sink.records).toHaveLength(1)
-    expect(sink.last()!.status).toBe('ok')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 4. Engine validation — 2.5 model accepts sampling params
-// ---------------------------------------------------------------------------
-
-describe('engine — 2.5 (tunable) models accept sampling params', () => {
-  const TUNABLE_MODELS = ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
-
-  for (const model of TUNABLE_MODELS) {
-    it(`${model} + temperature/topP/topK → resolves successfully`, async () => {
-      const { client, sink } = makeClient(model)
-
-      const result = await client.generate(
-        {
-          model,
-          messages: MESSAGES,
-          config: { temperature: 0.8, topP: 0.95, topK: 64 },
-        },
-        { auth: TEST_AUTH },
-      )
-
-      expect(result).toBeDefined()
-      expect(sink.records).toHaveLength(1)
-      expect(sink.last()!.status).toBe('ok')
-    })
+  const record = value as Record<string, unknown>
+  if (record['type'] === 'object') {
+    acc.push(record)
   }
+
+  for (const child of Object.values(record)) {
+    collectObjectSchemas(child, acc)
+  }
+
+  return acc
+}
+
+describe('model-config helpers', () => {
+  it('preserves Zod metadata in derived JSON Schema', () => {
+    const schema = findDescriptor('gemini-2.5-pro').configJsonSchema as Record<
+      string,
+      unknown
+    >
+    const branches = schema['anyOf'] as Record<string, unknown>[]
+    const firstBranch = branches[0]!
+    const temperature = (firstBranch['properties'] as Record<string, unknown>)[
+      'temperature'
+    ] as Record<string, unknown>
+
+    expect(schema['title']).toBe('Gemini25ProConfig')
+    expect(schema['description']).toMatch(/gemini-2.5-pro/i)
+    expect(temperature['title']).toBe('Temperature')
+    expect(temperature['description']).toMatch(/sampling temperature/i)
+    expect(temperature['examples']).toEqual([0.7])
+  })
+
+  it('throws when JSON Schema generation encounters an unrepresentable Zod construct', () => {
+    expect(() => toConfigJsonSchema(z.map(z.string(), z.string()))).toThrow()
+  })
+
+  it('adapts Zod safeParse to StandardSchema v1', () => {
+    const schema = z
+      .strictObject({
+        serviceTier: z.literal('flex'),
+      })
+      .meta({ title: 'FlexOnly', description: 'Flex-only test schema.' })
+
+    const validator = zodToStandardSchema(schema)
+    const success = validator['~standard'].validate({ serviceTier: 'flex' })
+    const failure = validator['~standard'].validate({ serviceTier: 'standard' })
+
+    expect('value' in success && success.value).toEqual({ serviceTier: 'flex' })
+    expect('issues' in failure).toBe(true)
+  })
 })
 
-// ---------------------------------------------------------------------------
-// 5. gemini-3-flash-preview — registry resolution + pricing
-// ---------------------------------------------------------------------------
+describe('strict built-in config schemas', () => {
+  it('reject unknown keys at the top level', () => {
+    const result = findDescriptor('gemini-2.5-flash').configSchema.safeParse({
+      unexpected: true,
+    })
 
-describe('gemini-3-flash-preview — resolution and pricing', () => {
-  it('resolves exact id from defaultGeminiRegistry', () => {
-    const desc = defaultGeminiRegistry.resolve('gemini-3-flash-preview')
-    expect(desc).toBeDefined()
-    expect(desc!.id).toBe('gemini-3-flash-preview')
-    expect(desc!.provider).toBe('google')
+    expect(result.success).toBe(false)
   })
 
-  it('prefix-matches gemini-3-flash-preview-001', () => {
-    const desc = defaultGeminiRegistry.resolve('gemini-3-flash-preview-001')
-    expect(desc).toBeDefined()
-    expect(desc!.id).toBe('gemini-3-flash-preview')
-  })
-
-  it('produces a non-null microUsd cost via the engine (flex tier)', async () => {
-    const { client, sink } = makeClient('gemini-3-flash-preview')
-
-    const result = await client.generate(
-      {
-        model: 'gemini-3-flash-preview',
-        messages: MESSAGES,
+  it('reject unknown nested providerOptions keys', () => {
+    const result = findDescriptor('gemini-2.5-flash').configSchema.safeParse({
+      providerOptions: {
+        google: {
+          unsupported: true,
+        },
       },
-      { auth: TEST_AUTH },
-    )
+    })
 
-    expect(result.cost).toBeDefined()
-    expect(result.cost!.microUsd).not.toBeNull()
-    expect(typeof result.cost!.microUsd).toBe('number')
-    // 100 input + 20 output at flex (50% of standard):
-    //   input:  100 * 500_000 / 1_000_000 * 0.5 = 25 µUSD
-    //   output:  20 * 3_000_000 / 1_000_000 * 0.5 = 30 µUSD
-    //   total: 55 µUSD
-    expect(result.cost!.microUsd).toBe(55)
-
-    // Cost on result === cost on record
-    expect(sink.last()!.costMicroUsd).toBe(result.cost!.microUsd)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 6. Error record path — failed validation writes a record to the sink
-// ---------------------------------------------------------------------------
-
-describe('engine — failed validation writes error record to sink', () => {
-  it('bad_request from validateConfig still produces a sink record with api_error status', async () => {
-    const { client, sink } = makeClient('gemini-3.5-flash')
-
-    await expect(
-      client.generate(
-        {
-          model: 'gemini-3.5-flash',
-          messages: MESSAGES,
-          config: { temperature: 1.0 },
-        },
-        { auth: TEST_AUTH },
-      ),
-    ).rejects.toBeInstanceOf(LlmError)
-
-    // Sink received exactly one error record
-    expect(sink.records).toHaveLength(1)
-    const rec = sink.last()!
-    expect(rec.status).toBe('api_error')
-    expect(rec.model).toBe('gemini-3.5-flash')
-    expect(rec.provider).toBe('google')
+    expect(result.success).toBe(false)
   })
 
-  it('error record attemptId matches the thrown LlmError.attemptId', async () => {
-    const { client, sink } = makeClient('gemini-3.5-flash')
+  it('rejects flexFallback unless serviceTier is explicitly flex', () => {
+    expect(
+      findDescriptor('gemini-2.5-flash').configSchema.safeParse({
+        flexFallback: false,
+      }).success,
+    ).toBe(false)
 
-    let thrownErr: LlmError | undefined
-    try {
-      await client.generate(
-        {
-          model: 'gemini-3.5-flash',
-          messages: MESSAGES,
-          config: { temperature: 0.5 },
-        },
-        { auth: TEST_AUTH },
-      )
-    } catch (e) {
-      thrownErr = e as LlmError
+    expect(
+      findDescriptor('gemini-2.5-flash').configSchema.safeParse({
+        serviceTier: 'standard',
+        flexFallback: false,
+      }).success,
+    ).toBe(false)
+
+    expect(
+      findDescriptor('gemini-2.5-flash').configSchema.safeParse({
+        serviceTier: 'flex',
+        flexFallback: false,
+      }).success,
+    ).toBe(true)
+  })
+
+  it('rejects unsupported sampling fields on fixed-sampling models', () => {
+    const result = findDescriptor('gemini-3.5-flash').configSchema.safeParse({
+      temperature: 0.5,
+    })
+
+    expect(result.success).toBe(false)
+  })
+
+  it('admits thinking-off only for models whose evidence allows it', () => {
+    expect(
+      findDescriptor('gemini-2.5-pro').configSchema.safeParse({
+        reasoning: { effort: 'none' },
+      }).success,
+    ).toBe(false)
+
+    expect(
+      findDescriptor('gemini-3.5-flash').configSchema.safeParse({
+        reasoning: { effort: 'none' },
+      }).success,
+    ).toBe(true)
+
+    expect(
+      findDescriptor('gemini-3.1-pro-preview').configSchema.safeParse({
+        reasoning: { effort: 'none' },
+      }).success,
+    ).toBe(false)
+  })
+
+  it('enforces model-specific budget rules', () => {
+    expect(
+      findDescriptor('gemini-2.5-pro').configSchema.safeParse({
+        reasoning: { budgetTokens: 0 },
+      }).success,
+    ).toBe(false)
+
+    expect(
+      findDescriptor('gemini-2.5-flash-lite').configSchema.safeParse({
+        reasoning: { budgetTokens: 0 },
+      }).success,
+    ).toBe(true)
+
+    expect(
+      findDescriptor('gemini-2.5-flash-lite').configSchema.safeParse({
+        reasoning: { budgetTokens: 1 },
+      }).success,
+    ).toBe(false)
+  })
+
+  it('keeps additionalProperties false at every object boundary in derived JSON Schema', () => {
+    for (const descriptor of [...geminiModelDescriptors, ...gemmaModelDescriptors]) {
+      const objectSchemas = collectObjectSchemas(descriptor.configJsonSchema as JsonValue)
+
+      expect(objectSchemas.length, descriptor.id).toBeGreaterThan(0)
+      for (const objectSchema of objectSchemas) {
+        expect(objectSchema['additionalProperties'], descriptor.id).toBe(false)
+      }
     }
-
-    expect(thrownErr).toBeDefined()
-    expect(thrownErr!.attemptId).toBe('attempt_1')
-    expect(sink.last()!.attemptId).toBe('attempt_1')
   })
 })

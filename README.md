@@ -38,7 +38,7 @@ const client = createClient({
   pricing: geminiPricingSource(),
 })
 
-// 2. Define a reusable call site with a provider-forwarded JSON Schema hint
+// 2. Define a reusable call site with a structured output schema
 const codeReview = defineCallSite({
   id: 'code-review',
   model: 'gemini-2.5-flash',
@@ -103,6 +103,50 @@ for (const item of items) {
 The key is redacted from any persisted records or logs.
 
 Vertex AI: see [Roadmap](./ROADMAP.md).
+
+## Strict model config
+
+Strict model config is descriptor-owned. The runtime boundary is
+`descriptor.configSchema`, and the UI/form boundary is
+`descriptor.configJsonSchema` derived from that same schema.
+
+```ts
+import { defaultGeminiRegistry } from '@gullabs/core'
+
+const descriptor = defaultGeminiRegistry.resolve('gemini-3.5-flash')
+if (!descriptor) throw new Error('unknown model')
+
+// 1. Build forms from the descriptor's derived JSON Schema.
+const formSchema = descriptor.configJsonSchema
+
+// 2. Parse persisted config through the exact runtime schema before dispatch.
+const parsedConfig = descriptor.configSchema.parse({
+  reasoning: { effort: 'medium', includeThoughts: true },
+  serviceTier: 'flex',
+})
+
+await client.generate(
+  {
+    model: descriptor.id,
+    messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Summarize this PR.' }] }],
+    config: parsedConfig,
+  },
+  { auth },
+)
+```
+
+Use this boundary consistently:
+
+- `reasoning.budgetTokens` is a Gemini 2.5 budget-API setting. Gemini 3 and
+  Gemma built-ins should use `reasoning.effort`.
+- `gemini-3.1-pro-preview` does not admit `effort: 'none'`; remove that value
+  instead of expecting the library to repair it.
+- Omit `serviceTier` to use provider-default request behavior. Opt into `flex`
+  explicitly.
+- Google documents `priority`, but the library still rejects it until pricing,
+  served-tier recording, and tests exist for that lane.
+- `LlmRequest.output.jsonSchema` is an output-format hint. It is not the same
+  contract as `descriptor.configJsonSchema`.
 
 ## Architecture
 
@@ -225,8 +269,9 @@ const qa = await client.generate(
 
 Both Gemma 4 models support native structured output (`responseMimeType` +
 `responseSchema`), grounding (`tools:[{googleSearch:{}}]`), vision input, and
-thinking via `thinkingLevel`. They do not support Gemini Flex service tier or
-pricing (unpriced: `cost.microUsd` will be `null`).
+thinking via `thinkingLevel`. They remain intentionally unpriced, and the
+strict contract does not admit any `serviceTier` for them until Google provides
+matching public evidence or fresh live verification.
 
 Gemma 4 thinking is binary: use `reasoning: { effort: 'none' }` (MINIMAL, thinking off)
 or `{ effort: 'high' }` (HIGH, thinking on). Passing `effort: 'low'` or `effort: 'medium'`
@@ -287,7 +332,7 @@ const cacheHandle = await cacheStore.getOrCreate(
   }),
 )
 
-// Pass the cache name via providerOptions; the adapter forwards it verbatim
+// Pass the cache name through the allowlisted Google provider-options lane
 const result = await client.generate(
   {
     model: 'gemini-2.5-pro',
@@ -307,9 +352,13 @@ const refreshed = await cacheStore.refreshIfExpiringSoon(cacheHandle)
 
 ## Flex long-timeout calls
 
-Flex-tier calls can run for up to 25 minutes. When a Flex call has no explicit `timeoutMs`, the
-adapter sets `httpOptions.timeout` to `FLEX_DEFAULT_TIMEOUT_MS` (1 500 000 ms) automatically. To
-set an explicit per-call deadline on top of that:
+Flex-tier calls can run for up to 25 minutes. Flex is now explicit: if you omit
+`serviceTier`, the provider uses standard. Set `serviceTier: 'flex'` only for
+the calls that should actually take the Flex latency/cost trade-off.
+
+When a Flex call has no explicit `timeoutMs`, the adapter sets
+`httpOptions.timeout` to `FLEX_DEFAULT_TIMEOUT_MS` (1 500 000 ms)
+automatically. To set an explicit per-call deadline on top of that:
 
 ```ts
 const result = await client.generate(
@@ -330,11 +379,13 @@ const result = await client.generate(
 )
 ```
 
-**Verified field syntax for Flex:** set `serviceTier: 'flex'` in `config` (not in
-`providerOptions.google`) and set `timeoutMs` in ms in `config` for the engine deadline. The
-adapter automatically sets `httpOptions.timeout` to `timeoutMs + 5 000 ms` as a transport-layer
-buffer. `priority` was evaluated and intentionally excluded until Google pricing and availability
-for that tier are verified.
+**Verified field syntax for Flex:** set `serviceTier: 'flex'` in `config`, and
+set `timeoutMs` in ms in `config` for the engine deadline. The adapter
+automatically sets `httpOptions.timeout` to `timeoutMs + 5 000 ms` as a
+transport-layer buffer. If `serviceTier` is omitted, requests stay on provider
+standard. `priority` remains rejected even though Google documents it, because
+the library has not shipped the schema, pricing, served-tier recording, and
+test coverage needed for that contract.
 
 If a Flex call fails with a shared-capacity error (as opposed to quota/billing exhaustion),
 `isGeminiCapacityError(error)` (exported from `@gullabs/google`) tells you whether it is safe to
@@ -373,28 +424,39 @@ if (result.cost) {
 }
 ```
 
-## providerOptions escape hatch
+## Typed provider extensions
 
-`config.providerOptions` is an **unvalidated passthrough**. Values are forwarded verbatim to the
-raw provider SDK; the engine does not validate, log, or audit them.
+`config.providerOptions.google` is a typed extension lane owned by the selected
+descriptor schema. Use it for provider-specific fields the descriptor admits,
+such as cached content handles, safety settings, or exact tool declarations.
+Do not treat it as an override lane for descriptor-owned fields like
+`serviceTier`, sampling, reasoning, or response schema.
 
 ```ts
-// Example: inject a cached-content resource name for the Gemini adapter
+import { defaultGeminiRegistry } from '@gullabs/core'
+
+const descriptor = defaultGeminiRegistry.resolve('gemini-2.5-pro')
+if (!descriptor) throw new Error('unknown model')
+
+// Parse the exact provider extension shape through the descriptor schema.
+const config = descriptor.configSchema.parse({
+  providerOptions: {
+    google: { cachedContent: cacheHandle.cacheName },
+  },
+})
+
 const result = await client.generate(
   {
-    model: 'gemini-2.5-pro',
+    model: descriptor.id,
     messages: [...],
-    config: {
-      providerOptions: {
-        google: { cachedContent: cacheHandle.cacheName },
-      },
-    },
+    config,
   },
   { auth: { apiKey: process.env.GEMINI_API_KEY! } },
 )
 ```
 
-Gemini SDK settings that are not first-class in `GenConfig` use the same lane:
+Gemini-specific settings that are not first-class generic fields use the same
+lane when the descriptor admits them:
 
 ```ts
 await client.generate(
@@ -418,9 +480,8 @@ await client.generate(
 )
 ```
 
-There is no guarantee that any key inside `providerOptions` will be honoured — it depends entirely
-on what the underlying provider adapter does with it. Use sparingly and document any reliance on
-specific keys in application code.
+Unsupported provider keys should fail at the schema boundary instead of being
+silently forwarded or merged on top of validated config.
 
 ## Overall timeout semantics (`timeoutMs`)
 
@@ -553,8 +614,7 @@ idempotency. This is ledger idempotency only; provider calls are not deduplicate
 `redactSecrets` is applied automatically before persistence:
 
 - `errorMessage` in the persisted record (API keys / Bearer tokens in provider error URLs).
-- The `providerOptions` and `httpOptions.headers` lanes of `generationConfig` (escape-hatch fields
-  that may carry credentials).
+- The `providerOptions` lane of `generationConfig` when present.
 
 Standard generation knobs (`temperature`, `topP`, etc.) are NOT scanned. Host-supplied `metadata`
 is stored **verbatim** — do not put secrets there.

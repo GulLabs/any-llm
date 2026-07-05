@@ -20,8 +20,10 @@ import type {
   Part,
   Message,
   GenConfig,
+  ProviderOptions,
   ReasoningIntent,
 } from './types.js'
+import type { ResolvedRequest } from './ports.js'
 import { isTextPart, isInlineMediaPart, isFileUriPart } from './types.js'
 
 describe('LlmResult type shape', () => {
@@ -244,9 +246,15 @@ describe('GenConfig type shape', () => {
     >()
   })
 
-  it('providerOptions is Record<string, JsonValue> | undefined', () => {
+  it('providerOptions is the schema-admitted provider options shape', () => {
     expectTypeOf<GenConfig['providerOptions']>().toEqualTypeOf<
-      Record<string, JsonValue> | undefined
+      ProviderOptions | undefined
     >()
+  })
+})
+
+describe('ResolvedRequest type shape', () => {
+  it('config does not require serviceTier', () => {
+    expectTypeOf<ResolvedRequest['config']>().toEqualTypeOf<GenConfig>()
   })
 })

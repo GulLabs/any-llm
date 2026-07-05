@@ -15,7 +15,7 @@
  *   5. Fail-open — throwing sink / telemetry / pricing never fails the call.
  *   6. Cancellation — classification is 'timeout' or 'aborted', never mixed.
  *   7. Structured output parse-only — caller owns shape validation.
- *   8. providerOptions deep nesting preserved through resolution.
+ *   8. providerOptions.google is strict: allowlisted keys merge, unknown keys reject.
  *
  * @module
  */
@@ -1282,16 +1282,15 @@ describe('surface-stress: structured output parse-only', () => {
 })
 
 // ---------------------------------------------------------------------------
-// INVARIANT 8: providerOptions deep nesting preserved through resolution
+// INVARIANT 8: providerOptions.google allowlist enforced through resolution
 // ---------------------------------------------------------------------------
 
-describe('surface-stress: providerOptions deep nesting preserved', () => {
-  it('deeply-nested providerOptions survive merge and are passed to adapter (20 iterations)', async () => {
+describe('surface-stress: providerOptions.google strict allowlist', () => {
+  it('allowlisted providerOptions survive merge and are passed to adapter (20 iterations)', async () => {
     const rand = mulberry32(0xaabbccdd)
 
     for (let i = 0; i < 20; i++) {
       const uniqueVal = Math.floor(rand() * 100_000)
-      const nestedKey = `key_${i}`
 
       // Capture adapter calls
       const capturedOptions: Array<Record<string, unknown> | undefined> = []
@@ -1310,7 +1309,10 @@ describe('surface-stress: providerOptions deep nesting preserved', () => {
         ids: new FakeIds(),
         defaults: {
           providerOptions: {
-            google: { base: { x: 1, y: 2 }, fixed: true },
+            google: {
+              cachedContent: `cachedContents/base-${i}`,
+              httpOptions: { timeout: 60_000 + uniqueVal },
+            },
           },
         },
       })
@@ -1321,7 +1323,14 @@ describe('surface-stress: providerOptions deep nesting preserved', () => {
           messages: MESSAGES,
           config: {
             providerOptions: {
-              google: { [nestedKey]: { deep: { value: uniqueVal } } },
+              google: {
+                safetySettings: [
+                  {
+                    category: `HARM_CATEGORY_TEST_${i}`,
+                    threshold: 'BLOCK_ONLY_HIGH',
+                  },
+                ],
+              },
             },
           },
         },
@@ -1332,16 +1341,50 @@ describe('surface-stress: providerOptions deep nesting preserved', () => {
       expect(merged).toBeDefined()
 
       const googleBlock = merged!['google'] as Record<string, unknown>
-      // Per-call key is present
-      const perCallBlock = googleBlock[nestedKey] as Record<string, unknown>
-      const deepBlock = perCallBlock['deep'] as Record<string, unknown>
-      expect(deepBlock['value']).toBe(uniqueVal)
+      expect(googleBlock['cachedContent']).toBe(`cachedContents/base-${i}`)
+      expect(googleBlock['httpOptions']).toEqual({ timeout: 60_000 + uniqueVal })
+      expect(googleBlock['safetySettings']).toEqual([
+        {
+          category: `HARM_CATEGORY_TEST_${i}`,
+          threshold: 'BLOCK_ONLY_HIGH',
+        },
+      ])
+    }
+  })
 
-      // Sibling keys from defaults survive
-      const baseBlock = googleBlock['base'] as Record<string, unknown>
-      expect(baseBlock['x']).toBe(1)
-      expect(baseBlock['y']).toBe(2)
-      expect(googleBlock['fixed']).toBe(true)
+  it('unknown google providerOptions reject before adapter dispatch (20 iterations)', async () => {
+    const rand = mulberry32(0xddccbbaa)
+
+    for (let i = 0; i < 20; i++) {
+      const uniqueVal = Math.floor(rand() * 100_000)
+      const captureAdapter: ProviderAdapter = {
+        id: 'google',
+        async run(): Promise<AdapterResult> {
+          throw new Error('adapter should not be called for invalid providerOptions')
+        },
+      }
+
+      const client = createClient({
+        adapters: [captureAdapter],
+        pricing: PRICING,
+        clock: new FakeClock(),
+        ids: new FakeIds(),
+      })
+
+      await expect(
+        client.generate(
+          {
+            model: 'gemini-2.5-pro',
+            messages: MESSAGES,
+            config: {
+              providerOptions: {
+                google: { [`unknown_${i}`]: uniqueVal },
+              },
+            },
+          },
+          { auth: TEST_AUTH },
+        ),
+      ).rejects.toMatchObject({ kind: 'bad_request', retryable: false })
     }
   })
 })

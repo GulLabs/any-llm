@@ -33,6 +33,20 @@ field docs in schema metadata, derived JSON Schema, Standard Schema validation,
 adapter fixtures, and negative tests. The adapter should receive parsed config,
 not a stringly typed config bag it has to repair.
 
+Hard rules:
+
+- A supported built-in model without a strict documented Zod schema is not
+  supported.
+- The library boundary is the parsed model schema, not hand-written JSON
+  Schema, string JSON, best-effort coercion, or adapter-side validation.
+- Do not add compatibility translations, alias normalization, config repair,
+  migration helpers, fallback parsers, or model-conditional config mutation.
+- Model-specific capability differences must be encoded in that model's schema
+  by accepting only valid fields and omitting unsupported fields.
+- The only allowed provider mapping is the final adapter projection from an
+  already-validated typed config object to the provider SDK request shape. That
+  projection must not broaden the public contract or repair invalid config.
+
 This is not just a validation cleanup. It fixes a design quality problem:
 today, callers can persist invalid config that looks valid in JSON Schema,
 passes registry validation, and fails later in the Google adapter. That is the
@@ -60,7 +74,7 @@ contract the runtime enforces.
 ## P0 Legacy Deletion Rule
 
 This plan follows the repo-wide rule in `CLAUDE.md`, `AGENTS.md`, and
-`DECISIONS.md`: backward compatibility is not a constraint until the owner
+`DECISIONS.md`: legacy-preserving behavior is not a constraint until the owner
 explicitly revises that rule.
 
 Implementation must delete the old config contract, not wrap it:
@@ -265,9 +279,12 @@ Precondition:
 Tasks:
 
 - Implement one complete strict schema per supported built-in model.
-- Delete `makeGeminiConfigSchema` and replace every built-in descriptor's broad
+- Delete the Gemini config schema factories and replace every built-in descriptor's broad
   hand-written JSON Schema with derived JSON Schema from its exact Zod schema.
 - Duplicate schema shape in each model file, including field docs.
+- Do not share schema fragments between model schemas. Local duplication is the
+  intended design because it keeps each model contract inspectable and prevents
+  accidental family-level coupling.
 - Encode top-level fields: `temperature`, `topP`, `topK`,
   `maxOutputTokens`, `stopSequences`, `timeoutMs`, `flexFallback`,
   `serviceTier`, `reasoning`, and `providerOptions`.
@@ -405,10 +422,10 @@ Goal: remove the APIs that made ambiguous config feel supported.
 
 Tasks:
 
-- Remove public exports:
-  `resolveReasoning`, `ResolveReasoningInput`, `ResolvedReasoning`,
-  `makeGeminiConfigSchema`, and `makeGeminiConfigValidator`.
-- Keep `EFFORT_BUDGET` internal unless a clean current API requires exposing it.
+- Remove public exports for the deleted reasoning helper family and Gemini
+  config factory family.
+- Remove the core `EFFORT_BUDGET` export; provider-local effort-to-budget mapping
+  belongs inside the Google package.
 - Add a public `parseModelConfig(model, config, registry?)` helper only if it
   delegates to the descriptor schema and does not mutate config.
 - Update README, package docs, and skill docs that currently teach helper-based
@@ -449,10 +466,10 @@ Tasks:
     config schemas now use Zod at runtime.
   - ADR-010: Zod schema is the source of truth; hand-written JSON Schema and
     projection-only validation are deleted.
-  - ADR-013: grounding plus structured output is no longer a blanket hard guard;
-    it is an exact model/API-mode/tool-shape guard.
-  - ADR-017: fixed-sampling enforcement comes from per-model Zod schema field
-    omission and strict objects, not the deleted `makeGeminiConfigValidator`.
+- ADR-013: grounding plus structured output is no longer a blanket hard guard;
+  it is an exact model/API-mode/tool-shape guard.
+- ADR-017: fixed-sampling enforcement comes from per-model Zod schema field
+  omission and strict objects, not the deleted validator factory.
 
 Acceptance:
 
@@ -484,11 +501,11 @@ Additional targeted tests:
 - No raw `Object.assign` or object spread from `providerOptions.google` into SDK
   generation config.
 - No exported repair helpers.
-- No `Required<Pick<GenConfig, 'serviceTier'>>` remains in the adapter-facing
+- No required-service-tier wrapper type remains in the adapter-facing
   request path.
 - Retry never pins or injects a service tier that the descriptor schema would
   reject.
-- No `makeGeminiConfigSchema`, `makeGeminiConfigValidator`, `resolveReasoning`,
+- No deleted Gemini config factories, deleted reasoning helper exports,
   deprecated export stubs, compatibility flags, non-strict registry mode, or
   old Flex-default assertions remain.
 - JSON Schema snapshot tests for every supported model.

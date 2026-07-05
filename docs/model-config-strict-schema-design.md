@@ -29,6 +29,14 @@ Every built-in supported model must publish:
 5. Adapter fixtures proving that valid parsed config translates correctly.
 6. Negative tests proving invalid config is rejected before provider dispatch.
 
+A supported built-in model without that schema is not supported. No
+compatibility translation layer is allowed between caller config and the schema
+boundary: no alias normalization, no best-effort coercion, no migration helper,
+no fallback parser, and no adapter-side repair path may make invalid public
+config valid. No model-conditional config helper is allowed; a model-specific
+rule belongs in that model's schema, even when that duplicates nearby model
+files.
+
 This intentionally replaces the current split-brain contract:
 
 - `configJsonSchema` is broad and hand-written.
@@ -83,7 +91,7 @@ Primary docs checked:
 ### 1. Schema and validator drift
 
 `packages/core/src/registry.ts` currently builds JSON Schema manually with
-`additionalProperties: true`, while `makeGeminiConfigValidator` only rejects a
+`additionalProperties: true`, while the old validator factory only rejected a
 small subset of invalid configs. This lets invalid configs pass persistence and
 UI validation and fail later in `packages/google/src/adapter.ts`.
 
@@ -98,12 +106,12 @@ Examples that currently pass descriptor validation:
 
 ### 2. Public API encourages repair helpers
 
-`resolveReasoning` is exported from `@gullabs/core`. It turns a numeric budget
+The old public reasoning helper turns a numeric budget
 into model-specific config, which makes ambiguous persisted config feel normal.
 The new contract should make such persisted config impossible to accept for the
 wrong model.
 
-`makeGeminiConfigSchema` and `makeGeminiConfigValidator` are also exported.
+The old Gemini config schema factories are also exported.
 They are family factories, not exact model contracts, and should not be public.
 
 ### 3. Type docs contradict runtime behavior
@@ -135,17 +143,15 @@ That is not an escape hatch; it is an untyped second config API.
 
 ### 5. Service-tier defaulting is not descriptor-aware
 
-The engine currently defaults missing `serviceTier` to `flex` before adapter
-dispatch. That is wrong for models whose descriptor omits `serviceTiers`, such
-as Gemma. The adapter rejects explicit tiers for those models, so the standard
-client path can create invalid config that the caller did not request.
+Before this change, the engine defaulted missing `serviceTier` to `flex` before
+adapter dispatch. That was wrong for models whose descriptor omitted
+`serviceTiers`, such as Gemma. The adapter rejects explicit tiers for those
+models, so the old standard client path could create invalid config that the
+caller did not request.
 
 Target behavior:
 
-- If the descriptor supports `flex`, default according to the library's chosen
-  default policy.
-- If the descriptor supports `standard` but not `flex`, default to `standard`.
-- If the descriptor has no service tiers, omit `serviceTier` entirely.
+- Omitted `serviceTier` stays omitted and uses provider-default request behavior.
 - If the caller explicitly supplies `serviceTier`, validate it against that
   descriptor before dispatch.
 
@@ -158,7 +164,8 @@ must distinguish:
 
 - GenerateContent vs Interactions API mode.
 - Gemini 2.5 vs Gemini 3.
-- `googleSearch` vs older `googleSearchRetrieval`.
+- current `googleSearch` only; older `googleSearchRetrieval` is not a
+  compatibility alias.
 
 Until verified against the current GenerateContent adapter, keep the conservative
 guard in code but track it as an explicit drift issue, not as a permanent model
@@ -223,8 +230,8 @@ export interface ModelDescriptor<TConfig = unknown> {
 ```
 
 `configSchema`, `configJsonSchema`, and `validateConfig` are all required for
-built-in descriptors. For custom descriptors, `createModelRegistry()` should
-throw in strict mode if any are missing.
+built-in and custom descriptors. `createModelRegistry()` must throw if any are
+missing.
 
 ### Consumer Flow
 
@@ -238,7 +245,7 @@ const config = descriptor.configSchema.parse(persistedConfig)
 await client.generate({ model, messages, config }, { auth })
 ```
 
-They should not call `resolveReasoning`, `normalizeConfigForModel`,
+They should not call the deleted public reasoning helper, `normalizeConfigForModel`,
 `buildReasoningConfig`, or any helper that conditionally mutates config by model
 string.
 
@@ -247,15 +254,14 @@ string.
 Remove these exports as part of the strict schema change. Do not keep deprecated
 aliases or compatibility helpers:
 
-- `resolveReasoning`
+- deleted public reasoning helper
 - `ResolveReasoningInput`
 - `ResolvedReasoning`
-- `makeGeminiConfigSchema`
-- `makeGeminiConfigValidator`
+- deleted Gemini config schema factory
+- deleted Gemini config validator factory
 
-Keep internal:
-
-- `EFFORT_BUDGET`, if the adapter needs it for `effort -> thinkingBudget`.
+Do not keep a core reasoning repair helper or exported effort-budget table. The
+Google adapter owns its provider-local effort-to-budget mapping.
 
 Add public:
 
@@ -369,17 +375,17 @@ Each schema must have top-level `.describe()`/`.meta()` explaining:
 
 ## Model Matrix
 
-| Model                    | Reasoning API | Reasoning Fields                                                         | Efforts                         | Sampling                      | Service Tier                                            | Structured | Grounding                                                                 | Vision/Audio         | Pricing                |
-| ------------------------ | ------------- | ------------------------------------------------------------------------ | ------------------------------- | ----------------------------- | ------------------------------------------------------- | ---------- | ------------------------------------------------------------------------- | -------------------- | ---------------------- |
-| `gemini-2.5-pro`         | budget        | `effort`, `budgetTokens`, `includeThoughts`; `effort` XOR `budgetTokens` | `none`, `low`, `medium`, `high` | `temperature`, `topP`, `topK` | `flex`, `standard` now; `priority` tracked, not enabled | yes        | yes                                                                       | vision yes, audio no | priced                 |
-| `gemini-2.5-flash`       | budget        | `effort`, `budgetTokens`, `includeThoughts`; XOR                         | `none`, `low`, `medium`, `high` | `temperature`, `topP`, `topK` | `flex`, `standard`; priority tracked                    | yes        | yes                                                                       | vision yes, audio no | priced                 |
-| `gemini-2.5-flash-lite`  | budget        | `effort`, `budgetTokens`, `includeThoughts`; XOR                         | `none`, `low`, `medium`, `high` | `temperature`, `topP`, `topK` | `flex`, `standard`; priority tracked                    | yes        | yes                                                                       | vision yes, audio no | priced                 |
-| `gemini-3.5-flash`       | level         | `effort`, `includeThoughts`; no `budgetTokens`                           | `none`, `low`, `medium`, `high` | fixed; no sampling fields     | `flex`, `standard`; priority tracked                    | yes        | yes                                                                       | vision yes, audio no | priced                 |
-| `gemini-3.1-flash-lite`  | level         | `effort`, `includeThoughts`; no `budgetTokens`                           | `none`, `low`, `medium`, `high` | fixed; no sampling fields     | `flex`, `standard`; priority tracked                    | yes        | current docs indicate old preview status; verify exact id before shipping | vision yes, audio no | priced                 |
-| `gemini-3.1-pro-preview` | level         | `effort`, `includeThoughts`; no `budgetTokens`                           | `low`, `medium`, `high`         | fixed; no sampling fields     | `flex`, `standard`; priority tracked                    | yes        | yes                                                                       | vision yes, audio no | priced                 |
-| `gemini-3-flash-preview` | level         | `effort`, `includeThoughts`; no `budgetTokens`                           | `none`, `low`, `medium`, `high` | fixed; no sampling fields     | `flex`, `standard`; priority tracked                    | yes        | yes                                                                       | vision yes, audio no | priced                 |
-| `gemma-4-31b-it`         | level         | `effort`, `includeThoughts`; no `budgetTokens`                           | `none`, `high`                  | `temperature`, `topP`, `topK` | none until verified                                     | yes        | current repo says yes; verify against current public docs/live API        | vision yes, audio no | intentionally unpriced |
-| `gemma-4-26b-a4b-it`     | level         | `effort`, `includeThoughts`; no `budgetTokens`                           | `none`, `high`                  | `temperature`, `topP`, `topK` | none until verified                                     | yes        | current repo says yes; verify against current public docs/live API        | vision yes, audio no | intentionally unpriced |
+| Model                    | Reasoning API | Reasoning Fields                                                         | Efforts                         | Sampling                      | Service Tier                                            | Structured | Grounding                                                           | Vision/Audio         | Pricing                |
+| ------------------------ | ------------- | ------------------------------------------------------------------------ | ------------------------------- | ----------------------------- | ------------------------------------------------------- | ---------- | ------------------------------------------------------------------- | -------------------- | ---------------------- |
+| `gemini-2.5-pro`         | budget        | `effort`, `budgetTokens`, `includeThoughts`; `effort` XOR `budgetTokens` | `low`, `medium`, `high`         | `temperature`, `topP`, `topK` | `flex`, `standard` now; `priority` tracked, not enabled | yes        | yes                                                                 | vision yes, audio no | priced                 |
+| `gemini-2.5-flash`       | budget        | `effort`, `budgetTokens`, `includeThoughts`; XOR                         | `none`, `low`, `medium`, `high` | `temperature`, `topP`, `topK` | `flex`, `standard`; priority tracked                    | yes        | yes                                                                 | vision yes, audio no | priced                 |
+| `gemini-2.5-flash-lite`  | budget        | `effort`, `budgetTokens`, `includeThoughts`; XOR                         | `none`, `low`, `medium`, `high` | `temperature`, `topP`, `topK` | `flex`, `standard`; priority tracked                    | yes        | yes                                                                 | vision yes, audio no | priced                 |
+| `gemini-3.5-flash`       | level         | `effort`, `includeThoughts`; no `budgetTokens`                           | `none`, `low`, `medium`, `high` | fixed; no sampling fields     | `flex`, `standard`; priority tracked                    | yes        | yes                                                                 | vision yes, audio no | priced                 |
+| `gemini-3.1-flash-lite`  | level         | `effort`, `includeThoughts`; no `budgetTokens`                           | `none`, `low`, `medium`, `high` | fixed; no sampling fields     | `flex`, `standard`; priority tracked                    | yes        | current docs verified stable id; combined tools path still rejected | vision yes, audio no | priced                 |
+| `gemini-3.1-pro-preview` | level         | `effort`, `includeThoughts`; no `budgetTokens`                           | `low`, `medium`, `high`         | fixed; no sampling fields     | `flex`, `standard`; priority tracked                    | yes        | yes                                                                 | vision yes, audio no | priced                 |
+| `gemini-3-flash-preview` | level         | `effort`, `includeThoughts`; no `budgetTokens`                           | `none`, `low`, `medium`, `high` | fixed; no sampling fields     | `flex`, `standard`; priority tracked                    | yes        | yes                                                                 | vision yes, audio no | priced                 |
+| `gemma-4-31b-it`         | level         | `effort`, `includeThoughts`; no `budgetTokens`                           | `none`, `high`                  | `temperature`, `topP`, `topK` | none until verified                                     | yes        | current repo says yes; verify against current public docs/live API  | vision yes, audio no | intentionally unpriced |
+| `gemma-4-26b-a4b-it`     | level         | `effort`, `includeThoughts`; no `budgetTokens`                           | `none`, `high`                  | `temperature`, `topP`, `topK` | none until verified                                     | yes        | current repo says yes; verify against current public docs/live API  | vision yes, audio no | intentionally unpriced |
 
 Blank or "verify" cells are findings. The implementation should either verify
 them live and encode them or mark them unsupported in schema/capabilities.
@@ -455,9 +461,10 @@ export interface GenConfig {
 - `safetySettings`
 - `tools`, with an exact per-model/API-mode schema. For GenerateContent this
   means only tool entries the adapter understands and can validate, such as
-  current `googleSearch` where supported. Unsupported or stale tools such as
-  older `googleSearchRetrieval` must be model/API-mode gated.
-- `httpOptions`, with documented timeout/header behavior.
+  current `googleSearch` where supported. Unsupported or stale tools, including
+  older `googleSearchRetrieval`, must be rejected unless current public docs
+  prove they are valid for that exact model/API mode.
+- `httpOptions`, currently limited to documented timeout behavior.
 
 Reserved keys must be rejected inside `providerOptions.google`:
 
@@ -540,10 +547,12 @@ Follow-up design needed:
 - model descriptors may have separate config schemas per API mode
 - grounding + structured-output rules become API-mode specific
 - service-tier spelling/mapping differs (`serviceTier` vs `service_tier`)
-- the public `GenConfig` remains library-normalized camelCase; adapters map to
-  provider/API spelling. Adding Interactions must be additive by introducing
-  new descriptors or adapter mode, not by changing existing GenerateContent
-  descriptor schemas.
+- the public `GenConfig` remains library-normalized camelCase; adapters may only
+  project already-validated typed config to provider/API spelling. That
+  projection is not a compatibility translation layer and must not broaden,
+  normalize, or repair the public config contract. Adding Interactions must be
+  additive by introducing new descriptors or adapter mode, not by changing
+  existing GenerateContent descriptor schemas.
 
 ## Implementation Plan
 
@@ -555,8 +564,8 @@ Follow-up design needed:
 4. Generate `configJsonSchema` with `z.toJSONSchema(schema)`.
 5. Update descriptors to attach exact `configSchema`, derived
    `configJsonSchema`, and Zod-backed `validateConfig`.
-6. Remove exported `makeGeminiConfigSchema` and `makeGeminiConfigValidator`.
-7. Remove `resolveReasoning` from public exports.
+6. Remove the exported Gemini config factories.
+7. Remove the deleted public reasoning helper from exports.
 8. Update `ReasoningIntent` docs and preferably make the TypeScript type a
    discriminated/XOR shape.
 9. Replace adapter `Object.assign` provider-options merge with field mapping.
@@ -619,38 +628,19 @@ for (const descriptor of descriptors) {
 }
 ```
 
-## Migration Notes
+## Breaking-Change Notes
 
-This is a breaking API tightening.
+This is a breaking API tightening with no compatibility layer.
 
-Recommended release path:
+Implemented decisions:
 
-1. Patch release:
-   - add warnings/docs that `resolveReasoning` and schema factories are
-     removed;
-   - add adapter reserved-key rejections for the most dangerous bypasses.
-2. Minor release:
-   - add `configSchema` while keeping `configJsonSchema` and `validateConfig`;
-   - update docs to recommend `descriptor.configSchema.parse`.
-3. Major release:
-   - remove public family factories and `resolveReasoning`;
-   - require descriptor schemas;
-   - enforce strict provider options.
-
-## Open Questions Before Implementation
-
-1. Should `serviceTier` default remain `flex`? Google docs say omitted means
-   standard for Interactions/Flex docs. Current library intentionally defaults
-   to flex. Keep it only if product wants cost-first behavior and docs make the
-   divergence very obvious.
-2. Should Priority tier ship now? Recommendation: no. Design it, but do not
-   enable it until pricing, served-tier recording, downgrade behavior, and
-   current GenerateContent support are verified.
-3. Should Google Search grounding become first-class `config.grounding`? For
-   model-contract quality, yes eventually. In the immediate fix, allowlisted
-   `providerOptions.google.tools` is acceptable if it is schema-validated.
-4. Should custom registries be allowed without schemas? Recommendation: only in
-   explicit non-strict mode; built-in registry must always be strict.
+1. Omitted `serviceTier` stays omitted and uses provider-standard behavior.
+2. Priority tier remains rejected until pricing, served-tier recording, downgrade
+   behavior, and current GenerateContent support are designed.
+3. Google Search grounding stays in schema-validated, allowlisted
+   `providerOptions.google.tools` for this change.
+4. Custom registries remain supported only when every descriptor publishes the
+   same schema artifacts as built-ins. There is no non-strict registry mode.
 
 ## Signoff Checklist
 

@@ -42,7 +42,7 @@ The current library shape has two problems:
 
 - `packages/core/src/registry.ts` builds Gemini JSON schemas with
   `additionalProperties: true`.
-- `makeGeminiConfigValidator` does not reject a `reasoning` object that contains
+- The old validator factory does not reject a `reasoning` object that contains
   both `effort` and `budgetTokens`.
 
 The Google adapter does reject this later in `packages/google/src/adapter.ts`,
@@ -133,20 +133,19 @@ For level-api models, do not include `budgetTokens` at all. For budget-api model
 including both `effort` and `budgetTokens` must be rejected because that is an
 ambiguous request.
 
-## What To Remove or Deprecate
+## What To Remove
 
 Audit and remove design patterns that normalize ambiguous consumer config:
 
-- `resolveReasoning` as a public or recommended boundary for consumer config.
+- the deleted public reasoning helper as a public or recommended boundary for consumer config.
 - Consumer-side helpers named like `normalizeConfigForModel`,
   `buildReasoningConfig`, or `withoutDuplicateGeminiReasoningControls`.
 - Adapter-first validation for predictable model schema errors.
 - Broad schemas with `additionalProperties: true` for model-owned config.
 - Shared "family" schemas that are not explicitly attached per model descriptor.
 
-If any helper remains, it must not be required for normal consumers to construct
-valid model config. It should be internal-only, clearly documented, and covered
-by tests proving the schema boundary catches invalid input first.
+No helper should remain as a normal config-construction path. Provider-local
+translation belongs inside the adapter after strict model schema validation.
 
 ## Registry Invariants
 
@@ -227,7 +226,7 @@ and finally sent to a provider.
 Search for these patterns:
 
 ```bash
-rg -n "additionalProperties: true|resolveReasoning|normalize|reasoningApi|providerOptions|Object.assign|validateConfig|configJsonSchema|thinkingBudget|thinkingLevel|serviceTier|sampling" packages docs
+rg -n "additionalProperties: true|normalize|reasoningApi|providerOptions|Object.assign|validateConfig|configJsonSchema|thinkingBudget|thinkingLevel|serviceTier|sampling" packages docs
 ```
 
 For each hit, classify it:
@@ -325,4 +324,3 @@ The end state is not just "Gemini no longer errors." The end state is:
 - consumers do not contain model-specific config cleanup;
 - adapters translate valid config and defend escape hatches, but do not own the
   primary model contract.
-

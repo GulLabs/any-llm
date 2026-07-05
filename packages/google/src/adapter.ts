@@ -7,7 +7,7 @@
  * @module
  */
 
-import { LlmError, classifyError, assertNever, EFFORT_BUDGET } from '@gullabs/core'
+import { LlmError, classifyError, assertNever } from '@gullabs/core'
 import type {
   ProviderAdapter,
   ResolvedRequest,
@@ -26,6 +26,7 @@ import {
   STANDARD_DEFAULT_TIMEOUT_MS,
   TRANSPORT_TIMEOUT_BUFFER_MS,
 } from './client.js'
+import { GOOGLE_REASONING_EFFORT_BUDGET } from './reasoning-budget.js'
 import type {
   GeminiClientLike,
   GeminiGenerateConfig,
@@ -35,6 +36,307 @@ import type {
   GeminiUsageMetadataShape,
 } from './client.js'
 import { isGeminiCapacityError } from './flex-fallback.js'
+
+type GeminiGoogleSearchTool = { googleSearch: Record<string, never> }
+
+type GeminiAllowedTool = GeminiGoogleSearchTool
+
+type GeminiSafetySetting = {
+  category: string
+  threshold: string
+}
+
+type GeminiDispatchConfig = GeminiGenerateConfig & {
+  cachedContent?: string
+  httpOptions?: { timeout?: number }
+  safetySettings?: GeminiSafetySetting[]
+  tools?: GeminiAllowedTool[]
+}
+
+const ALLOWED_GOOGLE_PROVIDER_OPTION_KEYS = new Set([
+  'cachedContent',
+  'httpOptions',
+  'safetySettings',
+  'tools',
+])
+
+const ALLOWED_GOOGLE_HTTP_OPTION_KEYS = new Set(['timeout'])
+
+const RESERVED_GOOGLE_PROVIDER_OPTION_KEYS = new Set([
+  'abortSignal',
+  'imageConfig',
+  'maxOutputTokens',
+  'mediaResolution',
+  'responseFormat',
+  'responseMimeType',
+  'responseModalities',
+  'responseSchema',
+  'responseJsonSchema',
+  'serviceTier',
+  'speechConfig',
+  'stopSequences',
+  'temperature',
+  'thinkingConfig',
+  'topK',
+  'topP',
+  '_responseJsonSchema',
+])
+
+const GOOGLE_SEARCH_SUPPORTED_MODELS = new Set([
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-pro',
+  'gemini-3-flash-preview',
+  'gemini-3.1-flash-lite',
+  'gemini-3.1-pro-preview',
+  'gemini-3.5-flash',
+])
+
+const STRUCTURED_OUTPUT_GOOGLE_SEARCH_ALLOWLIST = new Set([
+  'gemini-3.1-pro-preview',
+  'gemini-3.5-flash',
+])
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isEmptyPlainObject(value: unknown): value is Record<string, never> {
+  return isPlainRecord(value) && Object.keys(value).length === 0
+}
+
+function badGoogleProviderOptions(message: string): LlmError {
+  return new LlmError(message, { kind: 'bad_request', retryable: false })
+}
+
+function parseGoogleTool(tool: unknown, model: string): GeminiAllowedTool {
+  if (!isPlainRecord(tool)) {
+    throw badGoogleProviderOptions(
+      `providerOptions.google.tools entries must be objects for model "${model}".`,
+    )
+  }
+
+  const keys = Object.keys(tool)
+  if (keys.length !== 1) {
+    throw badGoogleProviderOptions(
+      `providerOptions.google.tools entries must have exactly one supported tool key for model "${model}".`,
+    )
+  }
+
+  const key = keys[0]
+  switch (key) {
+    case 'googleSearch': {
+      if (!isEmptyPlainObject(tool['googleSearch'])) {
+        throw badGoogleProviderOptions(
+          `providerOptions.google.tools[].googleSearch must be an empty object for model "${model}".`,
+        )
+      }
+      return { googleSearch: {} }
+    }
+
+    default:
+      throw badGoogleProviderOptions(
+        `providerOptions.google.tools[].${key} is not supported for model "${model}".`,
+      )
+  }
+}
+
+function parseGoogleSafetySetting(
+  setting: unknown,
+  index: number,
+  model: string,
+): GeminiSafetySetting {
+  if (!isPlainRecord(setting)) {
+    throw badGoogleProviderOptions(
+      `providerOptions.google.safetySettings[${index}] must be an object for model "${model}".`,
+    )
+  }
+
+  const keys = Object.keys(setting)
+  const unknownKeys = keys.filter((key) => key !== 'category' && key !== 'threshold')
+  if (unknownKeys.length > 0) {
+    throw badGoogleProviderOptions(
+      `providerOptions.google.safetySettings[${index}] contains unsupported keys [${unknownKeys.join(
+        ', ',
+      )}] for model "${model}". Allowed keys: category, threshold.`,
+    )
+  }
+
+  if (typeof setting['category'] !== 'string' || setting['category'].length === 0) {
+    throw badGoogleProviderOptions(
+      `providerOptions.google.safetySettings[${index}].category must be a non-empty string for model "${model}".`,
+    )
+  }
+
+  if (typeof setting['threshold'] !== 'string' || setting['threshold'].length === 0) {
+    throw badGoogleProviderOptions(
+      `providerOptions.google.safetySettings[${index}].threshold must be a non-empty string for model "${model}".`,
+    )
+  }
+
+  return {
+    category: setting['category'],
+    threshold: setting['threshold'],
+  }
+}
+
+function mapGoogleProviderOptions(
+  googleOpts: unknown,
+  model: string,
+  structuredOutputRequested: boolean,
+  descriptorGrounding: boolean | undefined,
+): Partial<GeminiDispatchConfig> {
+  if (googleOpts === undefined) {
+    return {}
+  }
+
+  if (!isPlainRecord(googleOpts)) {
+    throw badGoogleProviderOptions(
+      `providerOptions.google must be an object for model "${model}".`,
+    )
+  }
+
+  const reservedKeys = Object.keys(googleOpts).filter((key) =>
+    RESERVED_GOOGLE_PROVIDER_OPTION_KEYS.has(key),
+  )
+  if (reservedKeys.length > 0) {
+    throw badGoogleProviderOptions(
+      `providerOptions.google reserves keys [${reservedKeys.join(
+        ', ',
+      )}] for typed model config on "${model}".`,
+    )
+  }
+
+  const unknownKeys = Object.keys(googleOpts).filter(
+    (key) =>
+      !ALLOWED_GOOGLE_PROVIDER_OPTION_KEYS.has(key) &&
+      !RESERVED_GOOGLE_PROVIDER_OPTION_KEYS.has(key),
+  )
+  if (unknownKeys.length > 0) {
+    throw badGoogleProviderOptions(
+      `providerOptions.google contains unsupported keys [${unknownKeys.join(
+        ', ',
+      )}] for model "${model}". Allowed keys: cachedContent, httpOptions, safetySettings, tools.`,
+    )
+  }
+
+  const mapped: Partial<GeminiDispatchConfig> = {}
+
+  if (googleOpts['cachedContent'] !== undefined) {
+    if (
+      typeof googleOpts['cachedContent'] !== 'string' ||
+      googleOpts['cachedContent'].length === 0
+    ) {
+      throw badGoogleProviderOptions(
+        `providerOptions.google.cachedContent must be a non-empty string for model "${model}".`,
+      )
+    }
+    mapped.cachedContent = googleOpts['cachedContent']
+  }
+
+  if (googleOpts['httpOptions'] !== undefined) {
+    if (!isPlainRecord(googleOpts['httpOptions'])) {
+      throw badGoogleProviderOptions(
+        `providerOptions.google.httpOptions must be an object for model "${model}".`,
+      )
+    }
+
+    const unknownHttpOptionKeys = Object.keys(googleOpts['httpOptions']).filter(
+      (key) => !ALLOWED_GOOGLE_HTTP_OPTION_KEYS.has(key),
+    )
+    if (unknownHttpOptionKeys.length > 0) {
+      throw badGoogleProviderOptions(
+        `providerOptions.google.httpOptions contains unsupported keys [${unknownHttpOptionKeys.join(
+          ', ',
+        )}] for model "${model}". Allowed keys: timeout.`,
+      )
+    }
+
+    const timeout = googleOpts['httpOptions']['timeout']
+    if (timeout !== undefined) {
+      if (typeof timeout !== 'number' || !Number.isInteger(timeout) || timeout <= 0) {
+        throw badGoogleProviderOptions(
+          `providerOptions.google.httpOptions.timeout must be a positive integer for model "${model}".`,
+        )
+      }
+      mapped.httpOptions = { timeout }
+    } else {
+      mapped.httpOptions = {}
+    }
+  }
+
+  if (googleOpts['safetySettings'] !== undefined) {
+    if (!Array.isArray(googleOpts['safetySettings'])) {
+      throw badGoogleProviderOptions(
+        `providerOptions.google.safetySettings must be an array for model "${model}".`,
+      )
+    }
+
+    mapped.safetySettings = googleOpts['safetySettings'].map((setting, index) =>
+      parseGoogleSafetySetting(setting, index, model),
+    )
+  }
+
+  if (googleOpts['tools'] !== undefined) {
+    if (!Array.isArray(googleOpts['tools'])) {
+      throw badGoogleProviderOptions(
+        `providerOptions.google.tools must be an array for model "${model}".`,
+      )
+    }
+
+    const tools = googleOpts['tools'].map((tool) => parseGoogleTool(tool, model))
+    const groundingSupported =
+      descriptorGrounding === true ||
+      (descriptorGrounding === undefined && GOOGLE_SEARCH_SUPPORTED_MODELS.has(model))
+
+    if (!groundingSupported) {
+      throw badGoogleProviderOptions(
+        `providerOptions.google.tools is not supported for model "${model}".`,
+      )
+    }
+
+    if (
+      structuredOutputRequested &&
+      !STRUCTURED_OUTPUT_GOOGLE_SEARCH_ALLOWLIST.has(model)
+    ) {
+      throw badGoogleProviderOptions(
+        `Structured output with googleSearch is supported only for models "gemini-3.1-pro-preview" and "gemini-3.5-flash"; got "${model}".`,
+      )
+    }
+
+    mapped.tools = tools
+  }
+
+  return mapped
+}
+
+function assertSamplingAllowed(
+  config: GeminiDispatchConfig,
+  model: string,
+  sampling: string | undefined,
+): void {
+  if (sampling !== 'fixed') {
+    return
+  }
+
+  const offendingSampling: string[] = []
+  if ('temperature' in config) {
+    offendingSampling.push('temperature')
+  }
+  if ('topP' in config) {
+    offendingSampling.push('topP')
+  }
+  if ('topK' in config) {
+    offendingSampling.push('topK')
+  }
+
+  if (offendingSampling.length > 0) {
+    throw new LlmError(
+      `Sampling parameters [${offendingSampling.join(', ')}] are not supported for model "${model}" (fixed sampling).`,
+      { kind: 'bad_request', retryable: false },
+    )
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Exported types for consumers that inject a custom client
@@ -234,7 +536,7 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       // 2. Build GenerateContentConfig
       // ------------------------------------------------------------------
       const genConfig = req.config
-      const config: GeminiGenerateConfig = {}
+      const config: GeminiDispatchConfig = {}
 
       // System instruction
       if (req.system !== undefined) {
@@ -274,14 +576,6 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
           )
         }
         config.serviceTier = explicit
-      } else {
-        // no explicit choice — default to flex only when the model supports it
-        if (req.modelDescriptor === undefined) {
-          config.serviceTier = 'flex'
-        } else if (supported?.includes('flex') === true) {
-          config.serviceTier = 'flex'
-        }
-        // otherwise omit serviceTier entirely
       }
 
       // ------------------------------------------------------------------
@@ -304,7 +598,7 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
             reasoning.budgetTokens !== undefined
               ? reasoning.budgetTokens
               : reasoning.effort !== undefined
-                ? EFFORT_BUDGET[reasoning.effort]
+                ? GOOGLE_REASONING_EFFORT_BUDGET[reasoning.effort]
                 : undefined
 
           config.thinkingConfig = {
@@ -370,85 +664,32 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       }
 
       // ------------------------------------------------------------------
-      // 5. providerOptions.google → spread verbatim (last, caller wins)
+      // 5. providerOptions.google → explicit allowlisted mapping
       // ------------------------------------------------------------------
-      const googleOpts = genConfig.providerOptions?.['google']
-      if (
-        googleOpts !== undefined &&
-        typeof googleOpts === 'object' &&
-        googleOpts !== null
-      ) {
-        Object.assign(config, googleOpts)
+      const googleProviderConfig = mapGoogleProviderOptions(
+        genConfig.providerOptions?.['google'],
+        model,
+        structuredOutputRequested,
+        req.modelDescriptor?.capabilities?.grounding,
+      )
+      if (googleProviderConfig.cachedContent !== undefined) {
+        config.cachedContent = googleProviderConfig.cachedContent
+      }
+      if (googleProviderConfig.httpOptions !== undefined) {
+        config.httpOptions = googleProviderConfig.httpOptions
+      }
+      if (googleProviderConfig.safetySettings !== undefined) {
+        config.safetySettings = googleProviderConfig.safetySettings
+      }
+      if (googleProviderConfig.tools !== undefined) {
+        config.tools = googleProviderConfig.tools
       }
 
       // ------------------------------------------------------------------
-      // 5a. Re-assert serviceTier validity AFTER providerOptions merge.
-      //     providerOptions.google is a last-write-wins escape hatch; without
-      //     this re-check a caller can inject an arbitrary serviceTier string
-      //     that bypasses the earlier validation.
+      // 5a. Fixed-sampling models reject sampling params even when a custom
+      //     descriptor or direct adapter test bypasses core parsing.
       // ------------------------------------------------------------------
-      const mergedServiceTier = (config as { serviceTier?: string }).serviceTier
-      if (mergedServiceTier !== undefined && req.modelDescriptor !== undefined) {
-        const supportedAfterMerge = req.modelDescriptor.capabilities?.serviceTiers
-        if (
-          supportedAfterMerge === undefined ||
-          !supportedAfterMerge.includes(mergedServiceTier as 'flex' | 'standard')
-        ) {
-          throw new LlmError(
-            `serviceTier "${mergedServiceTier}" is not supported for model "${model}".`,
-            { kind: 'bad_request', retryable: false },
-          )
-        }
-      }
-
-      // ------------------------------------------------------------------
-      // 5c. Re-assert fixed-sampling invariant AFTER providerOptions merge.
-      //     providerOptions.google is a last-write-wins escape hatch, but on
-      //     Gemini 3.x (sampling: 'fixed') the API rejects temperature/topP/topK
-      //     unconditionally.  Throw so the caller knows they sent bad config.
-      // ------------------------------------------------------------------
-      if (req.modelDescriptor?.capabilities?.sampling === 'fixed') {
-        const offendingSampling: string[] = []
-        if ('temperature' in config) {
-          offendingSampling.push('temperature')
-        }
-        if ('topP' in config) {
-          offendingSampling.push('topP')
-        }
-        if ('topK' in config) {
-          offendingSampling.push('topK')
-        }
-        if (offendingSampling.length > 0) {
-          throw new LlmError(
-            `Sampling parameters [${offendingSampling.join(
-              ', ',
-            )}] are not supported for model "${model}" (fixed sampling); they were supplied via providerOptions.google.`,
-            { kind: 'bad_request', retryable: false },
-          )
-        }
-      }
-
-      // ------------------------------------------------------------------
-      // 5b. Grounding ↔ structured-output conflict guard
-      //     Tools arrive via providerOptions.google; check after the merge.
-      // ------------------------------------------------------------------
-      const configAsAny = config as { tools?: unknown[] }
-      const groundingRequested =
-        Array.isArray(configAsAny.tools) &&
-        configAsAny.tools.some((t): boolean => {
-          if (t !== null && typeof t === 'object') {
-            const tool = t as Record<string, unknown>
-            return 'googleSearch' in tool || 'googleSearchRetrieval' in tool
-          }
-          return false
-        })
-
-      if (groundingRequested && structuredOutputRequested) {
-        throw new LlmError(
-          'Grounding (googleSearch) cannot be combined with structured output (output.jsonSchema) on Gemini; choose one.',
-          { kind: 'bad_request', retryable: false },
-        )
-      }
+      assertSamplingAllowed(config, model, req.modelDescriptor?.capabilities?.sampling)
 
       // ------------------------------------------------------------------
       // 6. AbortSignal passthrough + FIX A-2: client-side flex ceiling
@@ -458,8 +699,8 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       // generateContent. Upstream landed a related Undici dispatcher fix in
       // 2.0.0 (commit 850f680), but we keep this mitigation as
       // belt-and-suspenders since it is now merely double-covered, not made
-      // incorrect. On the flex-default path (flex tier, no explicit
-      // timeoutMs) the engine arms NO AbortSignal; relying solely on
+      // incorrect. On explicit flex calls without timeoutMs, the engine arms
+      // NO AbortSignal; relying solely on
       // httpOptions.timeout risks a silent hang. We arm our own
       // AbortController here and combine it with any incoming signal so WE
       // enforce the ceiling regardless of the SDK bug.
@@ -526,8 +767,7 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       //    HTTP transport does NOT preempt the AbortSignal hard ceiling.
       //
       //    Policy (precedence, highest first):
-      //    1. Caller-supplied httpOptions via providerOptions.google.httpOptions
-      //       WIN unconditionally; any extra fields are also preserved.
+      //    1. Caller-supplied providerOptions.google.httpOptions.timeout wins.
       //    2. timeoutMs is set → computed transport timeout = timeoutMs +
       //       TRANSPORT_TIMEOUT_BUFFER_MS so the engine's AbortSignal (hard
       //       ceiling at timeoutMs) always fires before the SDK transport timer.
@@ -535,15 +775,13 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       //       buffer; there is no engine AbortSignal deadline in this case).
       //    4. serviceTier 'standard', no timeoutMs → STANDARD_DEFAULT_TIMEOUT_MS.
       //
-      //    Merge order: computed timeout first, caller's httpOptions spread on
-      //    top so caller values always win.  Only assign config.httpOptions when
-      //    the merged object is non-empty (exactOptionalPropertyTypes-safe).
+      //    Only assign config.httpOptions when the merged object is non-empty
+      //    (exactOptionalPropertyTypes-safe).
       // ------------------------------------------------------------------
 
       // Capture caller-supplied httpOptions BEFORE we overwrite.
-      // These arrived via Object.assign(config, googleOpts) above and may
-      // include a caller timeout and/or other httpOptions fields.
-      const callerHttpOptions = config.httpOptions as Record<string, unknown> | undefined
+      // These arrived via the allowlisted provider-options mapper above.
+      const callerHttpOptions = config.httpOptions
 
       const computedTimeoutMs: number | undefined =
         genConfig.timeoutMs !== undefined
@@ -554,8 +792,7 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
               ? STANDARD_DEFAULT_TIMEOUT_MS
               : undefined
 
-      // Merge: our computed timeout is the base; caller wins on top.
-      const mergedHttpOptions: Record<string, unknown> = {
+      const mergedHttpOptions: { timeout?: number } = {
         ...(computedTimeoutMs !== undefined ? { timeout: computedTimeoutMs } : {}),
         ...callerHttpOptions,
       }

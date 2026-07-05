@@ -25,6 +25,9 @@
   "scripts": {
     "build": "tsup"
   },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
   "engines": {
     "node": ">=20.9.0"
   },

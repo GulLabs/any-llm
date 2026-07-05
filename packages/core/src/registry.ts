@@ -7,18 +7,25 @@
  * @module
  */
 
+import type * as z from 'zod'
+
 import { LlmError } from './errors.js'
-import type { JsonValue, ReasoningEffort } from './types.js'
+import {
+  Gemma426bA4bItConfigSchema,
+  Gemma431bItConfigSchema,
+  Gemini25FlashConfigSchema,
+  Gemini25FlashLiteConfigSchema,
+  Gemini25ProConfigSchema,
+  Gemini31FlashLiteConfigSchema,
+  Gemini31ProPreviewConfigSchema,
+  Gemini35FlashConfigSchema,
+  Gemini3FlashPreviewConfigSchema,
+  toConfigJsonSchema,
+  zodToStandardSchema,
+} from './model-config/index.js'
 import type { StandardSchemaV1 } from './standard-schema.js'
+import type { JsonValue, ReasoningEffort } from './types.js'
 
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
-
-/**
- * Describes a single model variant: which provider it belongs to, optional
- * pricing-table family, and capability flags.
- */
 export interface ModelDescriptor {
   /**
    * Model identifier — used as the exact-match key and as the prefix for
@@ -36,128 +43,76 @@ export interface ModelDescriptor {
   pricingFamily?: string
   /** Capability flags for routing and adapter logic. */
   capabilities?: {
-    /** `true` when the model supports reasoning / chain-of-thought output. */
     reasoning?: boolean
-    /** `true` when the model supports structured JSON output. */
     structuredOutput?: boolean
-    /**
-     * `true` when the provider can enforce structured output natively.
-     * When false, adapters should rely on prompt text + engine validation only.
-     */
     nativeStructuredOutput?: boolean
-    /** `true` when the model accepts image/video input parts. */
     vision?: boolean
-    /** `true` when the model accepts audio input parts. */
     audioInput?: boolean
-    /**
-     * Which thinkingConfig API variant the model uses.
-     * - `'budget'` → `thinkingBudget` (gemini-2.5* series).
-     * - `'level'`  → `thinkingLevel`  (gemini-3.* series).
-     * Omitted for models that do not support reasoning.
-     */
     reasoningApi?: 'budget' | 'level'
-    /**
-     * Reasoning effort tiers the model admits for `thinkingConfig`.
-     * Omitted for models that do not support reasoning.
-     */
     admittedReasoningEfforts?: ReadonlyArray<ReasoningEffort>
-    /**
-     * Whether the model supports tunable sampling parameters.
-     * - `'tunable'` — temperature, topP, topK are accepted (Gemini 2.5 series).
-     * - `'fixed'`   — sampling is fixed; temperature/topP/topK are rejected
-     *                 at dispatch time (Gemini 3.x series).
-     */
     sampling?: 'tunable' | 'fixed'
-    /**
-     * Explicit context caching configuration for this model.
-     * `explicit` — whether the model supports explicit cache creation.
-     * `minTokens` — minimum token count required before caching takes effect.
-     */
     caching?: { explicit: boolean; minTokens: number }
-    /**
-     * `true` when the model supports Google Search grounding.
-     * Per-model grounding support is populated in the grounding batch after verification.
-     */
     grounding?: boolean
-    /**
-     * Provider service tiers safe to send to the SDK for this model.
-     * Omit when the adapter should not emit serviceTier at all.
-     *
-     * `priority` is intentionally NOT a member of this union. It was evaluated
-     * and excluded: Gemini Developer API pricing and availability semantics for
-     * `priority` are unverified. Revisit only after confirming both with Google.
-     */
     serviceTiers?: ('flex' | 'standard')[]
   }
-  /**
-   * Plain JSON Schema object (suitable for client UX form-generation).
-   * Typed as {@link JsonValue} so it can be serialised without any schema lib.
-   */
-  configJsonSchema?: JsonValue
-  /**
-   * Hand-written Standard Schema v1 validator the engine runs before dispatch.
-   * Receives a projection of the resolved config (excluding execution-spine
-   * fields such as `timeoutMs`).  Returns `{ value }` on success or
-   * `{ issues }` on failure.
-   */
-  validateConfig?: StandardSchemaV1
+  /** Zod runtime schema for the full per-model config contract. */
+  configSchema: z.ZodType
+  /** JSON Schema derived from {@link configSchema}. */
+  configJsonSchema: JsonValue
+  /** Standard Schema adapter derived from {@link configSchema}. */
+  validateConfig: StandardSchemaV1
 }
 
-/**
- * Registry that resolves a model string to a {@link ModelDescriptor}.
- *
- * Resolution order:
- * 1. Exact match on `descriptor.id`.
- * 2. Longest-prefix match (e.g. `"gemini-2.5-pro-001"` → `"gemini-2.5-pro"`).
- * 3. `undefined` when no descriptor matches.
- */
 export interface ModelRegistry {
   resolve(model: string): ModelDescriptor | undefined
-  /**
-   * Optional: enumerate every descriptor this registry knows about. Required
-   * for `ClientConfig.strictPricing` to walk the full registered model set at
-   * construction time. Custom registries that omit this cannot use strict mode.
-   */
   listDescriptors?(): readonly ModelDescriptor[]
 }
 
-// ---------------------------------------------------------------------------
-// Factory
-// ---------------------------------------------------------------------------
+function assertDescriptorSchemaArtifacts(descriptor: Partial<ModelDescriptor>): void {
+  const missing: string[] = []
+  if (descriptor.configSchema === undefined) missing.push('configSchema')
+  if (descriptor.configJsonSchema === undefined) missing.push('configJsonSchema')
+  if (descriptor.validateConfig === undefined) missing.push('validateConfig')
 
-/**
- * Build a {@link ModelRegistry} from a list of {@link ModelDescriptor}s.
- *
- * Duplicate `id` values throw immediately — a registry with conflicting
- * descriptors is always a programming error.
- *
- * @throws {@link LlmError} `'bad_request'` when any two descriptors share the
- *   same `id`.
- */
+  if (missing.length > 0) {
+    throw new LlmError(
+      `Model descriptor "${descriptor.id ?? '<unknown>'}" is missing required schema artifacts: ${missing.join(
+        ', ',
+      )}.`,
+      {
+        kind: 'bad_request',
+        retryable: false,
+      },
+    )
+  }
+}
+
 export function createModelRegistry(descriptors: ModelDescriptor[]): ModelRegistry {
   const map = new Map<string, ModelDescriptor>()
-  for (const d of descriptors) {
-    if (map.has(d.id)) {
-      throw new LlmError(`Duplicate model descriptor id "${d.id}"`, {
+
+  for (const descriptor of descriptors) {
+    assertDescriptorSchemaArtifacts(descriptor)
+
+    if (map.has(descriptor.id)) {
+      throw new LlmError(`Duplicate model descriptor id "${descriptor.id}"`, {
         kind: 'bad_request',
         retryable: false,
       })
     }
-    map.set(d.id, d)
+
+    map.set(descriptor.id, descriptor)
   }
 
   return {
     resolve(model: string): ModelDescriptor | undefined {
-      // 1. Exact match — O(1) fast path.
       const exact = map.get(model)
       if (exact !== undefined) return exact
 
-      // 2. Longest-prefix match (e.g. "gemini-2.5-pro-001" → "gemini-2.5-pro").
       let best: ModelDescriptor | undefined
       let bestLen = 0
-      for (const [id, desc] of map) {
+      for (const [id, descriptor] of map) {
         if (model.startsWith(id) && id.length > bestLen) {
-          best = desc
+          best = descriptor
           bestLen = id.length
         }
       }
@@ -169,152 +124,24 @@ export function createModelRegistry(descriptors: ModelDescriptor[]): ModelRegist
   }
 }
 
-// ---------------------------------------------------------------------------
-// Gemini config schema + validator factories
-// ---------------------------------------------------------------------------
-
-/**
- * Returns a plain JSON Schema object for Gemini generation config.
- *
- * Common properties (both families): `maxOutputTokens`, `stopSequences`,
- * `reasoning`, `serviceTier`.
- *
- * When `sampling === 'tunable'`, also includes `temperature`, `topP`, `topK`.
- * When `sampling === 'fixed'`, those three are omitted.
- *
- * Typed as {@link JsonValue} — no schema library required.
- */
-export function makeGeminiConfigSchema(opts: {
-  sampling: 'tunable' | 'fixed'
-  reasoningEfforts?: ReadonlyArray<ReasoningEffort>
-}): JsonValue {
-  const samplingProps: { [k: string]: JsonValue } =
-    opts.sampling === 'tunable'
-      ? {
-          temperature: { type: 'number', minimum: 0, maximum: 2 },
-          topP: { type: 'number' },
-          topK: { type: 'integer' },
-        }
-      : {}
-
-  return {
-    type: 'object',
-    additionalProperties: true,
-    properties: {
-      maxOutputTokens: { type: 'integer' },
-      stopSequences: { type: 'array', items: { type: 'string' } },
-      reasoning: {
-        type: 'object',
-        properties: {
-          effort: {
-            type: 'string',
-            enum: opts.reasoningEfforts
-              ? [...opts.reasoningEfforts]
-              : [...ALL_REASONING_EFFORTS],
-          },
-          budgetTokens: { type: 'integer', minimum: 0 },
-          includeThoughts: { type: 'boolean' },
-        },
-      },
-      serviceTier: { type: 'string', enum: ['flex', 'standard'] },
-      ...samplingProps,
-    },
-  }
-}
-
-/**
- * Returns a hand-written Standard Schema v1 validator for Gemini generation
- * config.
- *
- * Behaviour:
- * - Non-object value → single issue (not a plain object).
- * - `sampling === 'fixed'` and `temperature` present → issue with path.
- * - `sampling === 'fixed'` and `topP` present → issue with path.
- * - `sampling === 'fixed'` and `topK` present → issue with path.
- * - All issues are collected before returning (no short-circuit).
- * - `sampling === 'tunable'` → always passes (no further constraints in v1).
- */
-export function makeGeminiConfigValidator(opts: {
-  sampling: 'tunable' | 'fixed'
-  reasoningEfforts?: ReadonlyArray<ReasoningEffort>
-}): StandardSchemaV1 {
-  return {
-    '~standard': {
-      vendor: 'gullabs-gemini',
-      version: 1,
-      validate(value: unknown): StandardSchemaV1.Result<unknown> {
-        if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-          return {
-            issues: [{ message: 'config must be an object' }],
-          }
-        }
-
-        const cfg = value as Record<string, unknown>
-        const issues: StandardSchemaV1.Issue[] = []
-
-        if (opts.sampling === 'fixed') {
-          if (cfg['temperature'] !== undefined) {
-            issues.push({
-              message:
-                'temperature is not supported on this model (Gemini 3.x fixes sampling); remove it.',
-              path: ['temperature'],
-            })
-          }
-          if (cfg['topP'] !== undefined) {
-            issues.push({
-              message:
-                'topP is not supported on this model (Gemini 3.x fixes sampling); remove it.',
-              path: ['topP'],
-            })
-          }
-          if (cfg['topK'] !== undefined) {
-            issues.push({
-              message:
-                'topK is not supported on this model (Gemini 3.x fixes sampling); remove it.',
-              path: ['topK'],
-            })
-          }
-        }
-
-        if (
-          opts.reasoningEfforts !== undefined &&
-          cfg['reasoning'] !== null &&
-          typeof cfg['reasoning'] === 'object' &&
-          !Array.isArray(cfg['reasoning'])
-        ) {
-          const reasoning = cfg['reasoning'] as Record<string, unknown>
-          const effort = reasoning['effort']
-          if (
-            effort !== undefined &&
-            !(opts.reasoningEfforts as ReadonlyArray<unknown>).includes(effort)
-          ) {
-            const effortLabel =
-              typeof effort === 'string' ? effort : JSON.stringify(effort)
-            issues.push({
-              message: `reasoning.effort "${effortLabel}" is not supported on this model; supported efforts: ${opts.reasoningEfforts.join(
-                ', ',
-              )}.`,
-              path: ['reasoning', 'effort'],
-            })
-          }
-        }
-
-        if (issues.length > 0) {
-          return { issues }
-        }
-        return { value }
-      },
-    },
-  }
-}
-
-const ALL_REASONING_EFFORTS = [
+const GEMINI_25_PRO_REASONING_EFFORTS = [
+  'low',
+  'medium',
+  'high',
+] as const satisfies ReadonlyArray<ReasoningEffort>
+const GEMINI_LEVEL_REASONING_EFFORTS = [
   'none',
   'low',
   'medium',
   'high',
 ] as const satisfies ReadonlyArray<ReasoningEffort>
-const PRO_PREVIEW_REASONING_EFFORTS = [
+const GEMINI_LEVEL_PRO_PREVIEW_REASONING_EFFORTS = [
+  'low',
+  'medium',
+  'high',
+] as const satisfies ReadonlyArray<ReasoningEffort>
+const GEMINI_25_FLASH_REASONING_EFFORTS = [
+  'none',
   'low',
   'medium',
   'high',
@@ -324,28 +151,7 @@ const GEMMA_REASONING_EFFORTS = [
   'high',
 ] as const satisfies ReadonlyArray<ReasoningEffort>
 
-// ---------------------------------------------------------------------------
-// Built-in Gemini descriptor set (derived from GEMINI_PRICING + adapter logic)
-// ---------------------------------------------------------------------------
-
-/**
- * Default set of Gemini model descriptors.
- *
- * Derived from the {@link GEMINI_PRICING} snapshot and the adapter's reasoning
- * detection (`gemini-2.5*` and `gemini-3*` both support thinkingConfig).
- * Extend or replace via `ClientConfig.modelRegistry`.
- *
- * Grounding support:
- * Google Search grounding is supported on all Gemini 2.5 and 3.x models listed
- * here.  Enable it by passing `{ googleSearch: {} }` in
- * `config.providerOptions.google.tools`.  Note: grounding is mutually exclusive
- * with structured output (`output.jsonSchema`) — the adapter enforces this at call
- * time with a `bad_request` LlmError.  Grounding is primarily used with
- * gemini-3.1-flash-lite and gemini-3.5-flash.
- */
 export const geminiModelDescriptors: ModelDescriptor[] = [
-  // ── Gemini 2.5 series — thinkingBudget API, tunable sampling ────────────
-  // caching minTokens: Gemini 2.5 series floor is 2048 (Gemini context-caching docs).
   {
     id: 'gemini-2.5-pro',
     provider: 'google',
@@ -356,20 +162,15 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       nativeStructuredOutput: true,
       vision: true,
       reasoningApi: 'budget',
-      admittedReasoningEfforts: ALL_REASONING_EFFORTS,
+      admittedReasoningEfforts: GEMINI_25_PRO_REASONING_EFFORTS,
       sampling: 'tunable',
       caching: { explicit: true, minTokens: 2048 },
       grounding: true,
       serviceTiers: ['flex', 'standard'],
     },
-    configJsonSchema: makeGeminiConfigSchema({
-      sampling: 'tunable',
-      reasoningEfforts: ALL_REASONING_EFFORTS,
-    }),
-    validateConfig: makeGeminiConfigValidator({
-      sampling: 'tunable',
-      reasoningEfforts: ALL_REASONING_EFFORTS,
-    }),
+    configSchema: Gemini25ProConfigSchema,
+    configJsonSchema: toConfigJsonSchema(Gemini25ProConfigSchema),
+    validateConfig: zodToStandardSchema(Gemini25ProConfigSchema),
   },
   {
     id: 'gemini-2.5-flash',
@@ -381,20 +182,15 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       nativeStructuredOutput: true,
       vision: true,
       reasoningApi: 'budget',
-      admittedReasoningEfforts: ALL_REASONING_EFFORTS,
+      admittedReasoningEfforts: GEMINI_25_FLASH_REASONING_EFFORTS,
       sampling: 'tunable',
       caching: { explicit: true, minTokens: 2048 },
       grounding: true,
       serviceTiers: ['flex', 'standard'],
     },
-    configJsonSchema: makeGeminiConfigSchema({
-      sampling: 'tunable',
-      reasoningEfforts: ALL_REASONING_EFFORTS,
-    }),
-    validateConfig: makeGeminiConfigValidator({
-      sampling: 'tunable',
-      reasoningEfforts: ALL_REASONING_EFFORTS,
-    }),
+    configSchema: Gemini25FlashConfigSchema,
+    configJsonSchema: toConfigJsonSchema(Gemini25FlashConfigSchema),
+    validateConfig: zodToStandardSchema(Gemini25FlashConfigSchema),
   },
   {
     id: 'gemini-2.5-flash-lite',
@@ -406,24 +202,16 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       nativeStructuredOutput: true,
       vision: true,
       reasoningApi: 'budget',
-      admittedReasoningEfforts: ALL_REASONING_EFFORTS,
+      admittedReasoningEfforts: GEMINI_25_FLASH_REASONING_EFFORTS,
       sampling: 'tunable',
       caching: { explicit: true, minTokens: 2048 },
       grounding: true,
       serviceTiers: ['flex', 'standard'],
     },
-    configJsonSchema: makeGeminiConfigSchema({
-      sampling: 'tunable',
-      reasoningEfforts: ALL_REASONING_EFFORTS,
-    }),
-    validateConfig: makeGeminiConfigValidator({
-      sampling: 'tunable',
-      reasoningEfforts: ALL_REASONING_EFFORTS,
-    }),
+    configSchema: Gemini25FlashLiteConfigSchema,
+    configJsonSchema: toConfigJsonSchema(Gemini25FlashLiteConfigSchema),
+    validateConfig: zodToStandardSchema(Gemini25FlashLiteConfigSchema),
   },
-
-  // ── Gemini 3.x series — thinkingLevel API, fixed sampling ───────────────
-  // caching minTokens: Gemini 3.x series floor is 2048 (Google explicit-cache docs).
   {
     id: 'gemini-3.5-flash',
     provider: 'google',
@@ -434,20 +222,15 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       nativeStructuredOutput: true,
       vision: true,
       reasoningApi: 'level',
-      admittedReasoningEfforts: ALL_REASONING_EFFORTS,
+      admittedReasoningEfforts: GEMINI_LEVEL_REASONING_EFFORTS,
       sampling: 'fixed',
       caching: { explicit: true, minTokens: 2048 },
       grounding: true,
       serviceTiers: ['flex', 'standard'],
     },
-    configJsonSchema: makeGeminiConfigSchema({
-      sampling: 'fixed',
-      reasoningEfforts: ALL_REASONING_EFFORTS,
-    }),
-    validateConfig: makeGeminiConfigValidator({
-      sampling: 'fixed',
-      reasoningEfforts: ALL_REASONING_EFFORTS,
-    }),
+    configSchema: Gemini35FlashConfigSchema,
+    configJsonSchema: toConfigJsonSchema(Gemini35FlashConfigSchema),
+    validateConfig: zodToStandardSchema(Gemini35FlashConfigSchema),
   },
   {
     id: 'gemini-3.1-flash-lite',
@@ -459,24 +242,17 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       nativeStructuredOutput: true,
       vision: true,
       reasoningApi: 'level',
-      admittedReasoningEfforts: ALL_REASONING_EFFORTS,
+      admittedReasoningEfforts: GEMINI_LEVEL_REASONING_EFFORTS,
       sampling: 'fixed',
       caching: { explicit: true, minTokens: 2048 },
       grounding: true,
       serviceTiers: ['flex', 'standard'],
     },
-    configJsonSchema: makeGeminiConfigSchema({
-      sampling: 'fixed',
-      reasoningEfforts: ALL_REASONING_EFFORTS,
-    }),
-    validateConfig: makeGeminiConfigValidator({
-      sampling: 'fixed',
-      reasoningEfforts: ALL_REASONING_EFFORTS,
-    }),
+    configSchema: Gemini31FlashLiteConfigSchema,
+    configJsonSchema: toConfigJsonSchema(Gemini31FlashLiteConfigSchema),
+    validateConfig: zodToStandardSchema(Gemini31FlashLiteConfigSchema),
   },
   {
-    // gemini-3.1-pro-preview cannot disable thinking: the model rejects thinkingLevel
-    // MINIMAL with HTTP 400, so effort: 'none' is rejected at validation time.
     id: 'gemini-3.1-pro-preview',
     provider: 'google',
     pricingFamily: 'gemini-3.1-pro-preview',
@@ -486,20 +262,15 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       nativeStructuredOutput: true,
       vision: true,
       reasoningApi: 'level',
-      admittedReasoningEfforts: PRO_PREVIEW_REASONING_EFFORTS,
+      admittedReasoningEfforts: GEMINI_LEVEL_PRO_PREVIEW_REASONING_EFFORTS,
       sampling: 'fixed',
       caching: { explicit: true, minTokens: 2048 },
       grounding: true,
       serviceTiers: ['flex', 'standard'],
     },
-    configJsonSchema: makeGeminiConfigSchema({
-      sampling: 'fixed',
-      reasoningEfforts: PRO_PREVIEW_REASONING_EFFORTS,
-    }),
-    validateConfig: makeGeminiConfigValidator({
-      sampling: 'fixed',
-      reasoningEfforts: PRO_PREVIEW_REASONING_EFFORTS,
-    }),
+    configSchema: Gemini31ProPreviewConfigSchema,
+    configJsonSchema: toConfigJsonSchema(Gemini31ProPreviewConfigSchema),
+    validateConfig: zodToStandardSchema(Gemini31ProPreviewConfigSchema),
   },
   {
     id: 'gemini-3-flash-preview',
@@ -511,47 +282,18 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
       nativeStructuredOutput: true,
       vision: true,
       reasoningApi: 'level',
-      admittedReasoningEfforts: ALL_REASONING_EFFORTS,
+      admittedReasoningEfforts: GEMINI_LEVEL_REASONING_EFFORTS,
       sampling: 'fixed',
       caching: { explicit: true, minTokens: 2048 },
       grounding: true,
       serviceTiers: ['flex', 'standard'],
     },
-    configJsonSchema: makeGeminiConfigSchema({
-      sampling: 'fixed',
-      reasoningEfforts: ALL_REASONING_EFFORTS,
-    }),
-    validateConfig: makeGeminiConfigValidator({
-      sampling: 'fixed',
-      reasoningEfforts: ALL_REASONING_EFFORTS,
-    }),
+    configSchema: Gemini3FlashPreviewConfigSchema,
+    configJsonSchema: toConfigJsonSchema(Gemini3FlashPreviewConfigSchema),
+    validateConfig: zodToStandardSchema(Gemini3FlashPreviewConfigSchema),
   },
 ]
 
-/**
- * API-verified Gemma 4 model descriptors.
- *
- * Only two Gemma 4 model IDs are confirmed to exist and be callable via the
- * Google Gemini API. All other IDs (e2b, e4b, 12b variants, google/ aliases)
- * return HTTP 404 and are omitted. This set matches verified live-API behaviour.
- *
- * Capabilities confirmed against the live API:
- * - `reasoning: true` with `reasoningApi: 'level'` — thinkingLevel works;
- *   thinkingBudget is rejected with HTTP 400.
- * - `structuredOutput: true` and `nativeStructuredOutput: true` — responseMimeType
- *   and responseSchema are accepted.
- * - `grounding: true` — tools:[{googleSearch:{}}] is accepted.
- * - `vision: true` — inline image input is accepted.
- * - `sampling: 'tunable'` — temperature, topP, topK are supported.
- *
- * Intentionally omitted (not verified): pricingFamily, serviceTiers, caching,
- * audioInput.
- *
- * Reasoning effort is binary on Gemma 4: only `effort: 'none'` (MINIMAL) and
- * `effort: 'high'` (HIGH) are accepted by the API; `effort: 'low'` and
- * `effort: 'medium'` are rejected at validation time with a `bad_request` error
- * because the model only supports MINIMAL and HIGH `thinkingLevel` values.
- */
 export const gemmaModelDescriptors: ModelDescriptor[] = [
   {
     id: 'gemma-4-31b-it',
@@ -566,14 +308,9 @@ export const gemmaModelDescriptors: ModelDescriptor[] = [
       vision: true,
       sampling: 'tunable',
     },
-    configJsonSchema: makeGeminiConfigSchema({
-      sampling: 'tunable',
-      reasoningEfforts: GEMMA_REASONING_EFFORTS,
-    }),
-    validateConfig: makeGeminiConfigValidator({
-      sampling: 'tunable',
-      reasoningEfforts: GEMMA_REASONING_EFFORTS,
-    }),
+    configSchema: Gemma431bItConfigSchema,
+    configJsonSchema: toConfigJsonSchema(Gemma431bItConfigSchema),
+    validateConfig: zodToStandardSchema(Gemma431bItConfigSchema),
   },
   {
     id: 'gemma-4-26b-a4b-it',
@@ -588,21 +325,12 @@ export const gemmaModelDescriptors: ModelDescriptor[] = [
       vision: true,
       sampling: 'tunable',
     },
-    configJsonSchema: makeGeminiConfigSchema({
-      sampling: 'tunable',
-      reasoningEfforts: GEMMA_REASONING_EFFORTS,
-    }),
-    validateConfig: makeGeminiConfigValidator({
-      sampling: 'tunable',
-      reasoningEfforts: GEMMA_REASONING_EFFORTS,
-    }),
+    configSchema: Gemma426bA4bItConfigSchema,
+    configJsonSchema: toConfigJsonSchema(Gemma426bA4bItConfigSchema),
+    validateConfig: zodToStandardSchema(Gemma426bA4bItConfigSchema),
   },
 ]
 
-/**
- * Pre-built registry for all known Google-hosted model descriptors.
- * Used by default in {@link createClient} when no `modelRegistry` is supplied.
- */
 export const defaultGeminiRegistry: ModelRegistry = createModelRegistry([
   ...geminiModelDescriptors,
   ...gemmaModelDescriptors,
