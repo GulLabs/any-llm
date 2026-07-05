@@ -1,12 +1,17 @@
 # Releasing
 
-This monorepo uses [Changesets](https://github.com/changesets/changesets) for version management and publishing to npm. npm provenance attestation is currently disabled (see note below) because it requires a public source repo; it will be re-enabled once this repo goes public.
+This monorepo uses [Changesets](https://github.com/changesets/changesets) for version management and publishing to npm. Publishing is normally done by GitHub Actions, not by running `npm publish` from a developer machine.
 
 ## How it works
 
 1. **Add a changeset** while you work — describe _what changed_ and _which packages_ are affected and at what semver bump level (major / minor / patch).
-2. **Merge to `main`** — the `Release` GitHub Actions workflow detects pending changesets and opens a "Version Packages" PR that bumps versions and updates CHANGELOG files.
-3. **Merge the "Version Packages" PR** — the same workflow publishes all bumped packages to npm using the `NPM_TOKEN` secret. Provenance attestation is not currently enabled (see note below).
+2. **Open and merge the feature PR to `main`** — feature branches and PR CI do not publish packages.
+3. **Let the `Release` workflow run after `main` CI succeeds** — `.github/workflows/release.yml` is triggered by a successful `CI` workflow run on `main`.
+4. **Changesets decides whether to version or publish**:
+   - If pending `.changeset/*.md` files are on `main`, `changesets/action` opens a "Version Packages" PR.
+   - If package versions and changelogs are already bumped and no pending changesets remain, `changesets/action` runs `pnpm release` and publishes unpublished versions to npm using the repo `NPM_TOKEN` secret.
+
+Do not block a normal CI release on local `npm whoami`. Local npm auth is only required for the emergency manual path.
 
 ## Day-to-day: adding a changeset
 
@@ -37,14 +42,28 @@ feature branch  →  PR + changeset file merged to main
                         ↓
               GitHub Actions: Release workflow
                         ↓
-         changesets/action publishes to npm (provenance disabled — see note below)
+         changesets/action publishes to npm
          GitHub Release tags are created automatically
 ```
 
-**Note on provenance:** npm rejects provenance attestation (`E422`) for packages built from a
-private source repo. The release workflow (`.github/workflows/release.yml`) currently omits
-`id-token: write` and `NPM_CONFIG_PROVENANCE`, publishing with the `NPM_TOKEN` secret only.
-Re-enable both once this repo goes public.
+There is also a valid fast path when the feature branch intentionally includes the version commit:
+
+```
+feature branch  →  PR with code + package.json/CHANGELOG version bumps merged to main
+                        ↓
+              GitHub Actions: CI succeeds on main
+                        ↓
+              GitHub Actions: Release workflow
+                        ↓
+         changesets/action publishes the already-versioned unpublished packages
+```
+
+Use only one path per release:
+
+- **Normal path:** commit `.changeset/*.md`, merge to `main`, then merge the generated "Version Packages" PR.
+- **Pre-versioned path:** run `pnpm version-packages` on the feature branch, commit package/changelog updates, and merge that PR directly to `main`; CI publishes after merge.
+
+Do not keep both a pending changeset file and a committed version bump for the same change.
 
 ## Packages published
 
@@ -56,6 +75,7 @@ All packages are published to the `@gullabs` scope and already have `publishConf
 | `@gullabs/core`    | https://www.npmjs.com/package/@gullabs/core    |
 | `@gullabs/google`  | https://www.npmjs.com/package/@gullabs/google  |
 | `@gullabs/drizzle` | https://www.npmjs.com/package/@gullabs/drizzle |
+| `@gullabs/quota`   | https://www.npmjs.com/package/@gullabs/quota   |
 | `@gullabs/testing` | https://www.npmjs.com/package/@gullabs/testing |
 
 ## Required repository secret
@@ -79,7 +99,7 @@ pnpm -r build
 # Bump versions from pending changesets
 pnpm version-packages
 
-# Publish (requires npm login)
+# Publish (requires npm login on the current machine)
 changeset publish
 ```
 
