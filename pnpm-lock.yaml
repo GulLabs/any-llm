@@ -74,6 +74,32 @@ importers:
         specifier: workspace:*
         version: link:../google
 
+  packages/claude-cli:
+    dependencies:
+      '@gullabs/core':
+        specifier: workspace:*
+        version: link:../core
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@gullabs/testing':
+        specifier: workspace:*
+        version: link:../testing
+
+  packages/codex-cli:
+    dependencies:
+      '@gullabs/core':
+        specifier: workspace:*
+        version: link:../core
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@gullabs/testing':
+        specifier: workspace:*
+        version: link:../testing
+
   packages/core:
     dependencies:
       zod:

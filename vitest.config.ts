@@ -12,6 +12,8 @@ export default defineConfig({
       '@gullabs/drizzle': src('drizzle'),
       '@gullabs/quota': src('quota'),
       '@gullabs/testing': src('testing'),
+      '@gullabs/claude-cli': src('claude-cli'),
+      '@gullabs/codex-cli': src('codex-cli'),
     },
   },
   test: {

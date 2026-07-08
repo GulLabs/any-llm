@@ -11,6 +11,8 @@
  */
 
 import type { AuthMaterial, Logger } from '@gullabs/core'
+
+import { requireApiKey } from './client.js'
 import { LlmError, classifyError, redactSecrets } from '@gullabs/core'
 
 // ---------------------------------------------------------------------------
@@ -96,7 +98,7 @@ const DEFAULT_EXTENSION_SECONDS = 3600
 async function buildCachesClient(auth: AuthMaterial): Promise<GeminiCachesClientLike> {
   const { GoogleGenAI } = await import('@google/genai')
 
-  const ai = new GoogleGenAI({ apiKey: auth.apiKey })
+  const ai = new GoogleGenAI({ apiKey: requireApiKey(auth) })
 
   return {
     async create(params) {

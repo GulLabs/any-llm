@@ -25,6 +25,7 @@ export type { GeminiAdapterOptions } from './adapter.js'
 export type { GeminiClientLike } from './client.js'
 export {
   buildGoogleClient,
+  requireApiKey,
   FLEX_DEFAULT_TIMEOUT_MS,
   STANDARD_DEFAULT_TIMEOUT_MS,
   TRANSPORT_TIMEOUT_BUFFER_MS,

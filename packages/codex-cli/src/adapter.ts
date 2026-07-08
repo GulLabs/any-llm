@@ -1,0 +1,716 @@
+/**
+ * codexCliAdapter — @gullabs/codex-cli provider adapter.
+ *
+ * Pure request⇄response mapping over a locally-authenticated `codex` CLI
+ * session (via {@link CodexCliRunner}).  Never persists, never computes
+ * cost, never loops, never validates structured output.
+ *
+ * DEV-ONLY: this adapter requires `ctx.auth = { cliSession: true }` and
+ * shells out to the `codex` binary on `PATH`.  It has no API-key code path
+ * whatsoever — see `packages/core/src/ports.ts` for the `AuthMaterial`
+ * union this narrows against.
+ *
+ * @module
+ */
+
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { LlmError, classifyError, classifyHttpStatus } from '@gullabs/core'
+import type {
+  ProviderAdapter,
+  ResolvedRequest,
+  AdapterCtx,
+  AdapterResult,
+  Usage,
+  Warning,
+  JsonValue,
+  Message,
+  Part,
+} from '@gullabs/core'
+import { createCodexCliRunner } from './runner.js'
+import type { CodexCliRunner } from './runner.js'
+
+// ---------------------------------------------------------------------------
+// Adapter options
+// ---------------------------------------------------------------------------
+
+export interface CodexCliAdapterOptions {
+  /**
+   * Inject a runner (real or fake).  When omitted, the real
+   * `node:child_process`-backed runner from {@link createCodexCliRunner} is
+   * used.  Committed tests ALWAYS inject a fake here — the real runner is
+   * never exercised by the test suite.
+   */
+  runner?: CodexCliRunner
+  /** Path (or bare command name resolved via `PATH`) to the `codex` binary. */
+  codexPath?: string
+  /** Maximum number of concurrent `runner.run` invocations. Defaults to 2. */
+  maxConcurrency?: number
+}
+
+// ---------------------------------------------------------------------------
+// In-file concurrency semaphore — no external dep, no core RateLimiter port.
+// ---------------------------------------------------------------------------
+
+function createSemaphore(maxConcurrency: number): {
+  acquire: () => Promise<() => void>
+} {
+  let active = 0
+  const queue: Array<() => void> = []
+
+  const release = (): void => {
+    active -= 1
+    const next = queue.shift()
+    if (next !== undefined) {
+      active += 1
+      next()
+    }
+  }
+
+  return {
+    acquire(): Promise<() => void> {
+      return new Promise((resolve) => {
+        if (active < maxConcurrency) {
+          active += 1
+          resolve(release)
+        } else {
+          queue.push(() => {
+            resolve(release)
+          })
+        }
+      })
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Invariant argv — adapter-owned, never caller-configurable.
+// ---------------------------------------------------------------------------
+
+const INVARIANT_ARGS = [
+  'exec',
+  '--json',
+  '--ephemeral',
+  '--skip-git-repo-check',
+  '--ignore-user-config',
+  '--ignore-rules',
+  '--sandbox',
+  'read-only',
+]
+
+// ---------------------------------------------------------------------------
+// Prompt serialization
+// ---------------------------------------------------------------------------
+
+/** Extracts the single text string from a text-only part list, else throws. */
+function requireTextOnly(parts: Part[]): string[] {
+  return parts.map((p) => {
+    if (p.kind !== 'text') {
+      throw new LlmError(
+        'codex-cli is text-only; non-text message parts (inline media, file URIs) are not supported — do not use -i images in v1',
+        { kind: 'bad_request', retryable: false, provider: 'codex-cli' },
+      )
+    }
+    return p.text
+  })
+}
+
+/**
+ * Serialize the conversation into a single prompt string.
+ *
+ * A single user message with a single text part is passed verbatim (matches
+ * the captured smoke-test invocation shape). Otherwise, messages are
+ * rendered as role-labelled `User:`/`Assistant:` blocks separated by blank
+ * lines.
+ */
+function serializeMessages(messages: Message[]): string {
+  if (messages.length === 1 && messages[0]?.role === 'user') {
+    const [text] = requireTextOnly(messages[0].parts)
+    if (messages[0].parts.length === 1 && text !== undefined) {
+      return text
+    }
+  }
+
+  return messages
+    .map((msg) => {
+      const label = msg.role === 'assistant' ? 'Assistant' : 'User'
+      const text = requireTextOnly(msg.parts).join('')
+      return `${label}:\n${text}`
+    })
+    .join('\n\n')
+}
+
+/**
+ * Fold the optional system instruction into the prompt as a delimited
+ * preamble block.
+ *
+ * This is TRANSPORT ENCODING, not capability mapping — `codex exec` has no
+ * system-prompt flag, so the content reaches the model verbatim as part of
+ * the user turn.  It is not a distinct system-role message the way
+ * Gemini/Claude support natively.  See the README for the same caveat.
+ */
+function buildPrompt(system: string | undefined, messages: Message[]): string {
+  const body = serializeMessages(messages)
+  if (system === undefined) return body
+  return `<system>\n${system}\n</system>\n\n${body}`
+}
+
+// ---------------------------------------------------------------------------
+// JSONL event shapes (structural — only the fields we read)
+// ---------------------------------------------------------------------------
+
+interface ThreadStartedEvent {
+  type: 'thread.started'
+  thread_id: string
+}
+
+interface ItemCompletedEvent {
+  type: 'item.completed'
+  item: { id: string; type: string; text?: string; message?: string }
+}
+
+interface TurnUsage {
+  input_tokens?: number
+  cached_input_tokens?: number
+  output_tokens?: number
+  reasoning_output_tokens?: number
+}
+
+interface TurnCompletedEvent {
+  type: 'turn.completed'
+  usage?: TurnUsage
+}
+
+interface StreamErrorEvent {
+  type: 'error'
+  message: string
+}
+
+interface TurnFailedEvent {
+  type: 'turn.failed'
+  error?: { message?: string }
+}
+
+type CodexJsonlEvent =
+  | ThreadStartedEvent
+  | ItemCompletedEvent
+  | TurnCompletedEvent
+  | StreamErrorEvent
+  | TurnFailedEvent
+  | { type: string; [k: string]: unknown }
+
+interface ParsedJsonlEvents {
+  events: CodexJsonlEvent[]
+  /** Number of non-blank lines that failed to parse as a recognized event. */
+  malformedCount: number
+}
+
+/**
+ * Defensively parse a JSONL stdout stream, skipping lines that fail to parse
+ * or don't match the expected `{ type: string, ... }` event shape.
+ *
+ * Malformed lines are still counted (not just silently dropped) so the
+ * caller can attach a `Warning` when any were skipped — see the
+ * `malformedCount` field.
+ */
+function parseJsonlEvents(stdout: string): ParsedJsonlEvents {
+  const events: CodexJsonlEvent[] = []
+  let malformedCount = 0
+  for (const line of stdout.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed.length === 0) continue
+    try {
+      const parsed: unknown = JSON.parse(trimmed)
+      if (
+        parsed !== null &&
+        typeof parsed === 'object' &&
+        typeof (parsed as { type?: unknown }).type === 'string'
+      ) {
+        events.push(parsed as CodexJsonlEvent)
+      } else {
+        malformedCount += 1
+      }
+    } catch {
+      // Stray non-JSON stdout is possible — count it, don't throw.
+      malformedCount += 1
+    }
+  }
+  return { events, malformedCount }
+}
+
+// ---------------------------------------------------------------------------
+// Nested error envelope (captured 400 shape)
+// ---------------------------------------------------------------------------
+
+interface NestedCodexErrorBody {
+  type?: string
+  error?: { type?: string; code?: string; message?: string; param?: string }
+  status?: number
+}
+
+/**
+ * Classify a fatal codex stream error message into an `LlmError`.
+ *
+ * `rawMessage` is either:
+ * - A JSON-encoded string (parse again) containing `{error:{...}, status}`.
+ * - A raw non-JSON string (stderr tail, or an unparseable error line).
+ */
+function classifyCodexStreamError(rawMessage: string): LlmError {
+  let nested: NestedCodexErrorBody | undefined
+  try {
+    const parsed: unknown = JSON.parse(rawMessage)
+    if (parsed !== null && typeof parsed === 'object') {
+      nested = parsed
+    }
+  } catch {
+    // Not JSON — fall through to text-based heuristics below.
+  }
+
+  if (nested?.status !== undefined) {
+    const cls = classifyHttpStatus(nested.status)
+    const message = nested.error?.message ?? rawMessage
+    return new LlmError(message, {
+      kind: cls.kind,
+      retryable: cls.retryable,
+      httpStatus: nested.status,
+      ...(cls.retryAfterMs !== undefined ? { retryAfterMs: cls.retryAfterMs } : {}),
+      provider: 'codex-cli',
+    })
+  }
+
+  // Text-based fallback — no numeric status found.
+  const lower = rawMessage.toLowerCase()
+  if (
+    lower.includes('login') ||
+    lower.includes('auth') ||
+    lower.includes('unauthorized')
+  ) {
+    return new LlmError(rawMessage, {
+      kind: 'invalid_auth',
+      retryable: false,
+      provider: 'codex-cli',
+    })
+  }
+  if (lower.includes('rate limit') || lower.includes('429')) {
+    return new LlmError(rawMessage, {
+      kind: 'rate_limited',
+      retryable: true,
+      provider: 'codex-cli',
+    })
+  }
+
+  // Generic non-classified bucket — deliberately non-retryable per spec,
+  // even though `server` is usually retryable.
+  return new LlmError(rawMessage, {
+    kind: 'server',
+    retryable: false,
+    provider: 'codex-cli',
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Usage mapping
+// ---------------------------------------------------------------------------
+
+/**
+ * Map codex's `turn.completed.usage` to our `Usage` type.
+ *
+ * **GROSS convention enforced here:**
+ * `reasoning_output_tokens` is a SUBSET of `output_tokens` per OpenAI's
+ * Responses API token accounting (mirrors Gemini's `thoughtsTokenCount`
+ * being a subset of `candidatesTokenCount` + `thoughtsTokenCount` GROSS
+ * total) — it is surfaced as `thinkingTokens` / `details.thinking` but is
+ * NOT added on top of `outputTokens`, since it is already inside
+ * `output_tokens`. Likewise `cached_input_tokens` is a subset of
+ * `input_tokens`. No `totalTokens` field is present in the captured
+ * envelope — omitted here rather than derived.
+ */
+function mapUsage(usage: TurnUsage | undefined): Usage {
+  const inputTokens = usage?.input_tokens ?? 0
+  const outputTokens = usage?.output_tokens ?? 0
+  const cachedInputTokens = usage?.cached_input_tokens
+  const thinkingTokens = usage?.reasoning_output_tokens
+
+  const details: Record<string, number> = {
+    input: inputTokens,
+    output: outputTokens,
+    ...(cachedInputTokens !== undefined ? { cached: cachedInputTokens } : {}),
+    ...(thinkingTokens !== undefined ? { thinking: thinkingTokens } : {}),
+  }
+
+  const raw: JsonValue = usage !== undefined ? (usage as unknown as JsonValue) : null
+
+  return {
+    inputTokens,
+    outputTokens,
+    details,
+    raw,
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(thinkingTokens !== undefined ? { thinkingTokens } : {}),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Structured-output schema validation
+// ---------------------------------------------------------------------------
+
+/**
+ * codex's Responses-API-backed schema mode REQUIRES `additionalProperties:
+ * false` on every object level or it 400s.
+ *
+ * Per the reject-don't-map convention, this adapter never silently mutates
+ * the caller-supplied JSON Schema — it walks the full schema tree and
+ * requires `additionalProperties: false` to be explicitly present on every
+ * object-schema node (root and nested), rejecting with `bad_request` and the
+ * JSON path to the first offending node otherwise. The schema is otherwise
+ * passed through byte-identical (same object reference) to `JSON.stringify`
+ * — this function only validates, it never clones or rewrites.
+ *
+ * Recurses into `properties` (each value), `items` (single-schema or
+ * tuple/array form), `prefixItems`, `$defs` / `definitions` (each value),
+ * and `anyOf` / `oneOf` / `allOf` (each member).
+ */
+function assertAdditionalPropertiesFalseDeep(schema: JsonValue, path = ''): void {
+  const isObjectSchema =
+    schema !== null && typeof schema === 'object' && !Array.isArray(schema)
+  if (!isObjectSchema) return
+
+  const node = schema as Record<string, JsonValue>
+  const looksLikeObjectSchema = node.type === 'object' || 'properties' in node
+  const displayPath = path.length > 0 ? path : '<root>'
+
+  if (looksLikeObjectSchema && node.additionalProperties !== false) {
+    throw new LlmError(
+      `codex-cli requires \`additionalProperties: false\` to be explicitly set on every object-schema node in outputJsonSchema — codex's --output-schema mode 400s without it, and this adapter will not silently inject or rewrite caller-provided schemas. Missing at \`${displayPath}\`. Set \`additionalProperties: false\` on that node and retry.`,
+      { kind: 'bad_request', retryable: false, provider: 'codex-cli' },
+    )
+  }
+
+  const withPrefix = (segment: string): string =>
+    path.length > 0 ? `${path}.${segment}` : segment
+
+  if (
+    node.properties !== null &&
+    typeof node.properties === 'object' &&
+    !Array.isArray(node.properties)
+  ) {
+    for (const [key, value] of Object.entries(
+      node.properties as Record<string, JsonValue>,
+    )) {
+      assertAdditionalPropertiesFalseDeep(value, withPrefix(`properties.${key}`))
+    }
+  }
+
+  if (node.items !== undefined) {
+    if (Array.isArray(node.items)) {
+      node.items.forEach((item, index) => {
+        assertAdditionalPropertiesFalseDeep(item, withPrefix(`items[${index}]`))
+      })
+    } else {
+      assertAdditionalPropertiesFalseDeep(node.items, withPrefix('items'))
+    }
+  }
+
+  if (Array.isArray(node.prefixItems)) {
+    node.prefixItems.forEach((item, index) => {
+      assertAdditionalPropertiesFalseDeep(item, withPrefix(`prefixItems[${index}]`))
+    })
+  }
+
+  for (const defsKey of ['$defs', 'definitions'] as const) {
+    const defs = node[defsKey]
+    if (defs !== null && typeof defs === 'object' && !Array.isArray(defs)) {
+      for (const [key, value] of Object.entries(defs as Record<string, JsonValue>)) {
+        assertAdditionalPropertiesFalseDeep(value, withPrefix(`${defsKey}.${key}`))
+      }
+    }
+  }
+
+  for (const combinatorKey of ['anyOf', 'oneOf', 'allOf'] as const) {
+    const combinator = node[combinatorKey]
+    if (Array.isArray(combinator)) {
+      combinator.forEach((member, index) => {
+        assertAdditionalPropertiesFalseDeep(
+          member,
+          withPrefix(`${combinatorKey}[${index}]`),
+        )
+      })
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// codexCliAdapter factory
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a Codex CLI provider adapter.
+ *
+ * @param opts.runner - Optional injected runner (fakes in tests; real
+ *   `createCodexCliRunner()` output in production dev usage).
+ */
+export function codexCliAdapter(opts?: CodexCliAdapterOptions): ProviderAdapter {
+  const runner = opts?.runner ?? createCodexCliRunner(opts?.codexPath)
+  const maxConcurrency = opts?.maxConcurrency ?? 2
+  const semaphore = createSemaphore(maxConcurrency)
+
+  return {
+    id: 'codex-cli',
+
+    async run(req: ResolvedRequest, ctx: AdapterCtx): Promise<AdapterResult> {
+      // ------------------------------------------------------------------
+      // 0. Auth — these providers only ever accept a CLI session opt-in.
+      // ------------------------------------------------------------------
+      const hasCliSession = 'cliSession' in ctx.auth && ctx.auth.cliSession
+      if (!hasCliSession) {
+        throw new LlmError(
+          '@gullabs/codex-cli requires auth: { cliSession: true } — these dev-only providers route through a locally-authenticated `codex` CLI session, not an API key',
+          { kind: 'invalid_auth', retryable: false, provider: 'codex-cli' },
+        )
+      }
+
+      const warnings: Warning[] = []
+      const model = req.model
+
+      // ------------------------------------------------------------------
+      // 1. Validate + serialize the prompt (throws bad_request on non-text
+      //    parts BEFORE invoking the runner).
+      // ------------------------------------------------------------------
+      const prompt = buildPrompt(req.system, req.messages)
+
+      // ------------------------------------------------------------------
+      // 2. Scratch dir — adapter-owned per call. Serves double duty: it is
+      //    both the runner's `cwd` AND the `-C <scratchDir>` argv value,
+      //    and it holds the --output-schema / -o temp files.
+      // ------------------------------------------------------------------
+      const scratchDir = await mkdtemp(join(tmpdir(), 'codex-cli-'))
+
+      try {
+        const release = await semaphore.acquire()
+        try {
+          // ----------------------------------------------------------------
+          // 3. Build argv.
+          // ----------------------------------------------------------------
+          const args: string[] = [
+            ...INVARIANT_ARGS,
+            '-C',
+            scratchDir,
+            '-c',
+            'approval_policy=never',
+            '--color',
+            'never',
+            '-m',
+            model,
+          ]
+
+          const effort = req.config.reasoning?.effort
+          if (effort !== undefined) {
+            args.push('-c', `model_reasoning_effort=${effort}`)
+          }
+
+          const structuredOutputRequested = req.outputJsonSchema !== undefined
+          if (structuredOutputRequested) {
+            const schema = req.outputJsonSchema as JsonValue
+            assertAdditionalPropertiesFalseDeep(schema)
+            const schemaPath = join(scratchDir, 'schema.json')
+            await writeFile(schemaPath, JSON.stringify(schema), 'utf-8')
+            args.push('--output-schema', schemaPath)
+          }
+
+          // -o is ALWAYS passed — plain-text calls also get a reliable
+          // final-text capture path, per spec.
+          const outputPath = join(scratchDir, 'output.json')
+          args.push('-o', outputPath)
+
+          // The fully-serialized prompt (with the optional <system> preamble
+          // folded in) is the FINAL POSITIONAL ARGUMENT — matching the
+          // captured smoke-test invocation shape (`codex exec ... 'Say
+          // exactly: hi'`). We still pass an empty string as the runner's
+          // `input` (stdin) to satisfy the shared CodexCliRunner interface
+          // shape; codex never reads stdin in this invocation form.
+          args.push(prompt)
+
+          // ----------------------------------------------------------------
+          // 4. Timeout — the runner owns timeout/abort enforcement
+          //    end-to-end: it only settles (resolve OR reject) once the
+          //    child process has actually exited (its 'close' event
+          //    fired). We deliberately do NOT race an independent timer
+          //    against `runner.run(...)` here — doing so could let this
+          //    adapter move on (and release the semaphore / rm the
+          //    scratch dir) while the real OS child process is still
+          //    alive and possibly still writing into `scratchDir`. We
+          //    simply await the runner promise and classify whatever it
+          //    settles with.
+          // ----------------------------------------------------------------
+          const timeoutMs = req.attemptTimeoutMs ?? req.config.timeoutMs
+
+          let result: Awaited<ReturnType<CodexCliRunner['run']>>
+          try {
+            result = await runner.run(args, '', {
+              cwd: scratchDir,
+              ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+              ...(req.signal !== undefined ? { signal: req.signal } : {}),
+            })
+          } catch (rawErr) {
+            if (
+              rawErr !== null &&
+              typeof rawErr === 'object' &&
+              (rawErr as { code?: unknown }).code === 'ENOENT'
+            ) {
+              throw new LlmError(
+                'codex CLI not found on PATH — install the OpenAI Codex CLI and authenticate (see `codex login`)',
+                { kind: 'unknown', retryable: false, provider: 'codex-cli' },
+              )
+            }
+            const classified = classifyError(rawErr)
+            throw new LlmError(classified.message, {
+              kind: classified.kind,
+              retryable: classified.retryable,
+              ...(classified.httpStatus !== undefined
+                ? { httpStatus: classified.httpStatus }
+                : {}),
+              ...(classified.retryAfterMs !== undefined
+                ? { retryAfterMs: classified.retryAfterMs }
+                : {}),
+              provider: 'codex-cli',
+              cause: classified.cause ?? rawErr,
+            })
+          }
+
+          const { stdout, exitCode } = result
+          const { events, malformedCount } = parseJsonlEvents(stdout)
+
+          // ----------------------------------------------------------------
+          // 5. Fatal stream-level errors.
+          // ----------------------------------------------------------------
+          for (const event of events) {
+            if (event.type === 'error') {
+              const message = (event as StreamErrorEvent).message
+              throw classifyCodexStreamError(message)
+            }
+            if (event.type === 'turn.failed') {
+              const failed = event as TurnFailedEvent
+              const message = failed.error?.message ?? 'codex turn failed'
+              throw classifyCodexStreamError(message)
+            }
+          }
+
+          if (exitCode !== 0 && exitCode !== null) {
+            const stderrTail = result.stderr.slice(-2000)
+            throw new LlmError(`codex exec exited with code ${exitCode}: ${stderrTail}`, {
+              kind: 'server',
+              retryable: false,
+              provider: 'codex-cli',
+            })
+          }
+
+          // ----------------------------------------------------------------
+          // 6. Final text/structured payload — PREFER the -o tmpfile,
+          //    FALLBACK to the last agent_message item.text.
+          // ----------------------------------------------------------------
+          let preferredText: string | undefined
+          try {
+            const fileContent = await readFile(outputPath, 'utf-8')
+            if (fileContent.trim().length > 0) {
+              preferredText = fileContent
+            }
+          } catch {
+            // -o file missing — fall through to the JSONL fallback.
+          }
+
+          if (preferredText === undefined) {
+            let lastAgentMessage: string | undefined
+            for (const event of events) {
+              if (event.type === 'item.completed') {
+                const item = (event as ItemCompletedEvent).item
+                if (item.type === 'agent_message' && item.text !== undefined) {
+                  lastAgentMessage = item.text
+                }
+              }
+            }
+            preferredText = lastAgentMessage
+          }
+
+          // exitCode === 0 with no final text (from the -o file or an
+          // item.completed agent_message) means codex produced nothing we
+          // can parse a result out of — treat this as a false success
+          // rather than silently returning an empty/zeroed AdapterResult.
+          // This can happen even when turn.completed IS present: a
+          // truncated stream can retain the turn.completed envelope while
+          // losing the answer payload itself.
+          if (preferredText === undefined) {
+            const stdoutTail = stdout.slice(-1000)
+            throw new LlmError(
+              `codex completed without a final message — truncated or incompatible output. stdout tail: ${stdoutTail}`,
+              { kind: 'server', retryable: false, provider: 'codex-cli' },
+            )
+          }
+
+          if (malformedCount > 0) {
+            warnings.push({
+              type: 'other',
+              message: `codex-cli: skipped ${malformedCount} malformed JSONL line${malformedCount === 1 ? '' : 's'} in the event stream`,
+            })
+          }
+
+          let rawStructured: unknown
+          if (structuredOutputRequested) {
+            try {
+              rawStructured = JSON.parse(preferredText)
+            } catch {
+              warnings.push({
+                type: 'other',
+                message: 'codex-cli: failed to JSON-parse structured output payload',
+              })
+            }
+          }
+
+          // ----------------------------------------------------------------
+          // 7. Usage + threadId.
+          // ----------------------------------------------------------------
+          let usageEvent: TurnUsage | undefined
+          let threadId: string | undefined
+          for (const event of events) {
+            if (event.type === 'turn.completed') {
+              usageEvent = (event as TurnCompletedEvent).usage
+            }
+            if (event.type === 'thread.started') {
+              threadId = (event as ThreadStartedEvent).thread_id
+            }
+          }
+
+          if (usageEvent === undefined) {
+            warnings.push({
+              type: 'other',
+              message:
+                'codex-cli: no usage data available for this call (missing turn.completed usage) — token counts are unavailable',
+            })
+          }
+
+          const usage = mapUsage(usageEvent)
+
+          const adapterResult: AdapterResult = {
+            model,
+            usage,
+            warnings,
+            // No explicit finish-reason signal is present in the captured
+            // envelope (no MAX_TOKENS/safety marker) — 'stop' is the only
+            // supportable value on a successful turn.completed.
+            finishReason: 'stop',
+            ...(preferredText.length > 0 ? { text: preferredText } : {}),
+            ...(rawStructured !== undefined ? { rawStructured } : {}),
+            ...(threadId !== undefined ? { providerMetadata: { threadId } } : {}),
+          }
+
+          return adapterResult
+        } finally {
+          release()
+        }
+      } finally {
+        await rm(scratchDir, { recursive: true, force: true })
+      }
+    },
+  }
+}

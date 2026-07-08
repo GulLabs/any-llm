@@ -1,0 +1,169 @@
+/**
+ * ClaudeCliRunner — the process-execution seam for @gullabs/claude-cli.
+ *
+ * Adapters depend on the {@link ClaudeCliRunner} interface only.
+ * {@link buildClaudeCliRunner} is the sole factory that touches
+ * `node:child_process`; committed tests inject a hand-written fake instead of
+ * exercising it, so no real `claude` subprocess is ever spawned in CI.
+ *
+ * @module
+ */
+
+import { spawn } from 'node:child_process'
+
+/**
+ * The result of a single `claude` CLI invocation.
+ */
+export interface ClaudeCliRunResult {
+  stdout: string
+  stderr: string
+  exitCode: number | null
+}
+
+/**
+ * Options accepted by {@link ClaudeCliRunner.run}.
+ */
+export interface ClaudeCliRunOptions {
+  /** Working directory for the subprocess (the adapter owns tmpdir lifecycle). */
+  cwd: string
+  /** Kill the subprocess if it has not exited within this many milliseconds. */
+  timeoutMs?: number
+  /** Kill the subprocess if this signal fires. */
+  signal?: AbortSignal
+}
+
+/**
+ * The process-execution seam consumed by {@link claudeCliAdapter}.
+ *
+ * Implementations run the `claude` binary with `args`, write `input` to its
+ * stdin (the rendered prompt), and resolve with captured stdout/stderr/exit
+ * code. Implementations must never throw for a non-zero exit code — that is
+ * the adapter's error-classification job; the one exception is a spawn-time
+ * failure (e.g. `ENOENT` when the binary is missing), which should reject.
+ */
+export interface ClaudeCliRunner {
+  run(
+    args: string[],
+    input: string,
+    opts: ClaudeCliRunOptions,
+  ): Promise<ClaudeCliRunResult>
+}
+
+/**
+ * Build the real {@link ClaudeCliRunner}, backed by `node:child_process`.
+ *
+ * Never exercised by committed tests — only the real dev workflow invokes
+ * this factory; tests inject a hand-written fake implementing
+ * {@link ClaudeCliRunner} instead.
+ *
+ * @param claudePath - Path or bare command name for the `claude` binary.
+ *   Defaults to `'claude'`, resolved via `PATH`.
+ */
+export function buildClaudeCliRunner(claudePath = 'claude'): ClaudeCliRunner {
+  return {
+    run(args, input, opts) {
+      return new Promise((resolve, reject) => {
+        if (opts.signal?.aborted === true) {
+          const err = new Error('claude-cli call aborted')
+          err.name = 'AbortError'
+          reject(err)
+          return
+        }
+
+        // NOTE: the argv itself (including the `--safe-mode` vs `--bare`
+        // choice) is owned by the adapter (see adapter.ts) — this runner is
+        // a dumb pipe. We repeat the rule here only as a pointer: never pass
+        // `--bare`, it disables OAuth/keychain auth.
+        const child = spawn(claudePath, args, {
+          cwd: opts.cwd,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        })
+
+        let stdout = ''
+        let stderr = ''
+        let settled = false
+        // Set once a timeout/abort has begun killing the child. The
+        // returned promise is NOT rejected with this until the child's
+        // 'close' event actually fires — the caller (the adapter) must
+        // never observe settlement while the OS process may still be
+        // alive and writing to its scratch cwd.
+        let pendingError: Error | undefined
+        let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+        let killTimeoutHandle: ReturnType<typeof setTimeout> | undefined
+
+        const cleanupTimers = (): void => {
+          if (timeoutHandle !== undefined) clearTimeout(timeoutHandle)
+          if (killTimeoutHandle !== undefined) clearTimeout(killTimeoutHandle)
+        }
+
+        const cleanup = (): void => {
+          cleanupTimers()
+          if (opts.signal !== undefined) {
+            opts.signal.removeEventListener('abort', onAbort)
+          }
+        }
+
+        const killChild = (): void => {
+          child.kill('SIGTERM')
+          killTimeoutHandle = setTimeout(() => {
+            child.kill('SIGKILL')
+          }, 5_000)
+        }
+
+        const beginReject = (err: Error): void => {
+          if (settled || pendingError !== undefined) return
+          pendingError = err
+          cleanupTimers()
+          killChild()
+        }
+
+        const onAbort = (): void => {
+          const err = new Error('claude-cli call aborted')
+          err.name = 'AbortError'
+          beginReject(err)
+        }
+
+        // The pre-aborted case is handled above, before `spawn` — by this
+        // point `opts.signal`, if present, is guaranteed not yet aborted.
+        if (opts.signal !== undefined) {
+          opts.signal.addEventListener('abort', onAbort, { once: true })
+        }
+
+        if (opts.timeoutMs !== undefined) {
+          timeoutHandle = setTimeout(() => {
+            const err = new Error(`claude-cli call exceeded ${opts.timeoutMs}ms timeout`)
+            err.name = 'TimeoutError'
+            beginReject(err)
+          }, opts.timeoutMs)
+        }
+
+        child.stdout.on('data', (chunk: Buffer) => {
+          stdout += chunk.toString('utf8')
+        })
+        child.stderr.on('data', (chunk: Buffer) => {
+          stderr += chunk.toString('utf8')
+        })
+
+        child.once('error', (err) => {
+          if (settled) return
+          settled = true
+          cleanup()
+          reject(pendingError ?? err)
+        })
+
+        child.once('close', (exitCode) => {
+          if (settled) return
+          settled = true
+          cleanup()
+          if (pendingError !== undefined) {
+            reject(pendingError)
+          } else {
+            resolve({ stdout, stderr, exitCode })
+          }
+        })
+
+        child.stdin.end(input, 'utf8')
+      })
+    },
+  }
+}

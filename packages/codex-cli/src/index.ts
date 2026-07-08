@@ -1,0 +1,39 @@
+/**
+ * @gullabs/codex-cli — dev-only OpenAI Codex CLI provider adapter.
+ *
+ * DEV-ONLY: routes calls through a locally-authenticated `codex` CLI
+ * session, never an API key.
+ *
+ * @example
+ * ```ts
+ * import { codexCliAdapter } from '@gullabs/codex-cli'
+ * import { createClient } from '@gullabs/core'
+ *
+ * const client = createClient({ adapters: [codexCliAdapter()] })
+ *
+ * const result = await client.generate(
+ *   { model: 'gpt-5.4-mini', messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hello' }] }] },
+ *   { auth: { cliSession: true } },
+ * )
+ * ```
+ *
+ * @module
+ */
+
+export { codexCliAdapter } from './adapter.js'
+export type { CodexCliAdapterOptions } from './adapter.js'
+
+export { createCodexCliRunner } from './runner.js'
+export type { CodexCliRunner, CodexCliRunResult } from './runner.js'
+
+export {
+  codexCliModelDescriptors,
+  codexCliRegistry,
+  CODEX_CLI_MODEL_IDS,
+  CODEX_CLI_REASONING_EFFORTS,
+  Gpt55ConfigSchema,
+  Gpt54ConfigSchema,
+  Gpt54MiniConfigSchema,
+  Gpt53CodexSparkConfigSchema,
+} from './models.js'
+export type { CodexCliModelId, CodexCliReasoningEffort } from './models.js'
