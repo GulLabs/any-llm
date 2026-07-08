@@ -76,6 +76,15 @@ export function createCodexCliRunner(codexPath = 'codex'): CodexCliRunner {
       opts: { cwd: string; timeoutMs?: number; signal?: AbortSignal },
     ): Promise<CodexCliRunResult> {
       return new Promise((resolve, reject) => {
+        // Mirror claude-cli's runner: never spawn a subprocess for a call
+        // whose signal is already aborted.
+        if (opts.signal?.aborted === true) {
+          const err = new Error('codex-cli call aborted')
+          err.name = 'AbortError'
+          reject(err)
+          return
+        }
+
         const child = spawn(codexPath, args, {
           cwd: opts.cwd,
           stdio: ['pipe', 'pipe', 'pipe'],
@@ -84,6 +93,12 @@ export function createCodexCliRunner(codexPath = 'codex'): CodexCliRunner {
         let stdout = ''
         let stderr = ''
         let settled = false
+        // Set once a timeout/abort has begun killing the child. The
+        // returned promise is NOT rejected with this until the child's
+        // 'close' event actually fires — the caller (the adapter) must
+        // never observe settlement while the OS process may still be
+        // alive and writing to its scratch cwd.
+        let pendingError: Error | undefined
         let killTimer: ReturnType<typeof setTimeout> | undefined
         let hardKillTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -100,12 +115,25 @@ export function createCodexCliRunner(codexPath = 'codex'): CodexCliRunner {
           }, SIGKILL_GRACE_MS)
         }
 
+        const beginReject = (err: Error): void => {
+          if (settled || pendingError !== undefined) return
+          pendingError = err
+          cleanupTimers()
+          terminate()
+        }
+
         if (opts.timeoutMs !== undefined) {
-          killTimer = setTimeout(terminate, opts.timeoutMs)
+          killTimer = setTimeout(() => {
+            const err = new Error(`codex-cli call exceeded ${opts.timeoutMs}ms timeout`)
+            err.name = 'TimeoutError'
+            beginReject(err)
+          }, opts.timeoutMs)
         }
 
         const onAbort = (): void => {
-          terminate()
+          const err = new Error('codex-cli call aborted')
+          err.name = 'AbortError'
+          beginReject(err)
         }
         if (opts.signal !== undefined) {
           opts.signal.addEventListener('abort', onAbort, { once: true })
@@ -125,7 +153,7 @@ export function createCodexCliRunner(codexPath = 'codex'): CodexCliRunner {
           if (opts.signal !== undefined) {
             opts.signal.removeEventListener('abort', onAbort)
           }
-          reject(err)
+          reject(pendingError ?? err)
         })
 
         child.on('close', (code) => {
@@ -135,7 +163,11 @@ export function createCodexCliRunner(codexPath = 'codex'): CodexCliRunner {
           if (opts.signal !== undefined) {
             opts.signal.removeEventListener('abort', onAbort)
           }
-          resolve({ stdout, stderr, exitCode: code })
+          if (pendingError !== undefined) {
+            reject(pendingError)
+          } else {
+            resolve({ stdout, stderr, exitCode: code })
+          }
         })
 
         child.stdin.write(input)

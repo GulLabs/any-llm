@@ -394,9 +394,23 @@ describe('error classification', () => {
 // ---------------------------------------------------------------------------
 
 describe('timeout and abort', () => {
-  it('throws kind:timeout, retryable:true when the call exceeds timeoutMs', async () => {
+  it('throws kind:timeout, retryable:true when the runner reports a timeout', async () => {
+    // The runner now owns timeout enforcement end-to-end (it only settles
+    // once the simulated child has "closed") — the adapter no longer races
+    // an independent timer, so the fake must itself honor opts.timeoutMs
+    // and reject with a TimeoutError-named Error, mirroring the real
+    // runner's contract.
     const { runner } = makeFakeRunner(
-      () => new Promise<ClaudeCliRunResult>(() => {}), // never resolves
+      (call) =>
+        new Promise<ClaudeCliRunResult>((_resolve, reject) => {
+          setTimeout(() => {
+            const err = new Error(
+              `claude-cli call exceeded ${call.opts.timeoutMs}ms timeout`,
+            )
+            err.name = 'TimeoutError'
+            reject(err)
+          }, call.opts.timeoutMs)
+        }),
     )
     const adapter = claudeCliAdapter({ runner })
 
@@ -428,6 +442,96 @@ describe('timeout and abort', () => {
     controller.abort()
 
     await expect(runPromise).rejects.toMatchObject({ kind: 'aborted' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Timeout/abort lifecycle — semaphore + scratch dir must outlive the child
+// ---------------------------------------------------------------------------
+
+describe('timeout/abort lifecycle: semaphore + scratch dir vs runner settlement', () => {
+  it('does not release the semaphore or rm the scratch dir until a late-settling runner promise settles', async () => {
+    const fs = await import('node:fs/promises')
+    let callCount = 0
+    let capturedCwd: string | undefined
+    let rejectFirst: ((err: Error) => void) | undefined
+
+    const { runner } = makeFakeRunner((call) => {
+      callCount += 1
+      if (callCount === 1) {
+        capturedCwd = call.opts.cwd
+        return new Promise<ClaudeCliRunResult>((_resolve, reject) => {
+          rejectFirst = reject
+        })
+      }
+      return envelopeResult(PLAIN_ENVELOPE)
+    })
+    const adapter = claudeCliAdapter({ runner, maxConcurrency: 1 })
+
+    const firstPromise = adapter
+      .run(makeResolvedReq({ config: { timeoutMs: 10 } }), CLI_SESSION_CTX)
+      .catch((e: unknown) => e)
+    await vi.waitFor(() => expect(capturedCwd).toBeDefined())
+
+    // A second call queues behind maxConcurrency:1 — it must NOT start
+    // while the first call's runner promise is still pending, even though
+    // the (simulated) timeout has long since fired on the caller side.
+    let secondStarted = false
+    const secondPromise = adapter.run(makeResolvedReq(), CLI_SESSION_CTX).then((r) => {
+      secondStarted = true
+      return r
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(secondStarted).toBe(false)
+    // The scratch dir must still be on disk — it must not be rm'd while the
+    // runner promise (standing in for "the real child process") is pending.
+    await expect(fs.access(capturedCwd as string)).resolves.toBeUndefined()
+
+    // Now the injected runner finally settles — simulating the child's
+    // 'close' event firing after the SIGTERM/SIGKILL escalation completes.
+    const timeoutErr = new Error('claude-cli call exceeded 10ms timeout')
+    timeoutErr.name = 'TimeoutError'
+    rejectFirst?.(timeoutErr)
+
+    const firstOutcome = await firstPromise
+    expect(firstOutcome).toMatchObject({ kind: 'timeout', retryable: true })
+
+    await secondPromise
+    expect(secondStarted).toBe(true)
+    // Only now should the first call's scratch dir have been removed.
+    await expect(fs.access(capturedCwd as string)).rejects.toThrow()
+  })
+
+  it('never admits more than maxConcurrency calls under a timeout storm', async () => {
+    let active = 0
+    let maxActive = 0
+
+    const { runner } = makeFakeRunner(
+      () =>
+        new Promise<ClaudeCliRunResult>((_resolve, reject) => {
+          active += 1
+          maxActive = Math.max(maxActive, active)
+          setTimeout(() => {
+            active -= 1
+            const err = new Error('claude-cli call exceeded 10ms timeout')
+            err.name = 'TimeoutError'
+            reject(err)
+          }, 15)
+        }),
+    )
+    const adapter = claudeCliAdapter({ runner, maxConcurrency: 2 })
+
+    const results = await Promise.allSettled([
+      adapter.run(makeResolvedReq({ config: { timeoutMs: 10 } }), CLI_SESSION_CTX),
+      adapter.run(makeResolvedReq({ config: { timeoutMs: 10 } }), CLI_SESSION_CTX),
+      adapter.run(makeResolvedReq({ config: { timeoutMs: 10 } }), CLI_SESSION_CTX),
+    ])
+
+    expect(maxActive).toBeLessThanOrEqual(2)
+    for (const r of results) {
+      expect(r.status).toBe('rejected')
+    }
   })
 })
 

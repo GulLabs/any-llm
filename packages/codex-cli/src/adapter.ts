@@ -201,9 +201,23 @@ type CodexJsonlEvent =
   | TurnFailedEvent
   | { type: string; [k: string]: unknown }
 
-/** Defensively parse a JSONL stdout stream, skipping lines that fail to parse. */
-function parseJsonlEvents(stdout: string): CodexJsonlEvent[] {
+interface ParsedJsonlEvents {
+  events: CodexJsonlEvent[]
+  /** Number of non-blank lines that failed to parse as a recognized event. */
+  malformedCount: number
+}
+
+/**
+ * Defensively parse a JSONL stdout stream, skipping lines that fail to parse
+ * or don't match the expected `{ type: string, ... }` event shape.
+ *
+ * Malformed lines are still counted (not just silently dropped) so the
+ * caller can attach a `Warning` when any were skipped — see the
+ * `malformedCount` field.
+ */
+function parseJsonlEvents(stdout: string): ParsedJsonlEvents {
   const events: CodexJsonlEvent[] = []
+  let malformedCount = 0
   for (const line of stdout.split('\n')) {
     const trimmed = line.trim()
     if (trimmed.length === 0) continue
@@ -215,12 +229,15 @@ function parseJsonlEvents(stdout: string): CodexJsonlEvent[] {
         typeof (parsed as { type?: unknown }).type === 'string'
       ) {
         events.push(parsed as CodexJsonlEvent)
+      } else {
+        malformedCount += 1
       }
     } catch {
-      // Stray non-JSON stdout is possible — skip rather than throw.
+      // Stray non-JSON stdout is possible — count it, don't throw.
+      malformedCount += 1
     }
   }
-  return events
+  return { events, malformedCount }
 }
 
 // ---------------------------------------------------------------------------
@@ -336,34 +353,38 @@ function mapUsage(usage: TurnUsage | undefined): Usage {
 }
 
 // ---------------------------------------------------------------------------
-// Structured-output schema shallow injection
+// Structured-output schema validation
 // ---------------------------------------------------------------------------
 
 /**
  * codex's Responses-API-backed schema mode REQUIRES `additionalProperties:
- * false` on every object level or it 400s.  We inject `additionalProperties:
- * false` into the TOP LEVEL of whatever JSON Schema object `req.
- * outputJsonSchema` is, when writing the temp schema file, if the caller's
- * schema doesn't already specify it.
+ * false` on every object level or it 400s.
  *
- * LIMITATION (documented, out of scope for v1): this is a SHALLOW,
- * top-level-only injection.  We do NOT deep-recurse into nested `properties`
- * / `items` / `$defs` rewriting every nested object schema — deep
- * JSON-Schema rewriting is a much larger surface and is deliberately out of
- * scope. Callers with nested object schemas must set `additionalProperties:
- * false` themselves at every nested level, or codex will 400 on those
- * nested schemas.
+ * Per the reject-don't-map convention, this adapter never silently mutates
+ * the caller-supplied JSON Schema — it requires `additionalProperties:
+ * false` to be explicitly present at the TOP LEVEL and rejects with
+ * `bad_request` otherwise. The schema is otherwise passed through
+ * byte-identical (same object reference) to `JSON.stringify` — no clone, no
+ * rewrite.
+ *
+ * LIMITATION (documented, out of scope for v1): this only validates the
+ * top-level schema. We do NOT deep-recurse into nested `properties` /
+ * `items` / `$defs` — callers with nested object schemas must set
+ * `additionalProperties: false` themselves at every nested level, or codex
+ * will 400 on those nested schemas.
  */
-function withTopLevelAdditionalPropertiesFalse(schema: JsonValue): JsonValue {
-  if (
-    schema !== null &&
-    typeof schema === 'object' &&
-    !Array.isArray(schema) &&
-    !('additionalProperties' in schema)
-  ) {
-    return { ...schema, additionalProperties: false }
+function assertTopLevelAdditionalPropertiesFalse(schema: JsonValue): void {
+  const isObjectSchema =
+    schema !== null && typeof schema === 'object' && !Array.isArray(schema)
+  if (!isObjectSchema) return
+
+  const additionalProperties = (schema as Record<string, JsonValue>).additionalProperties
+  if (additionalProperties !== false) {
+    throw new LlmError(
+      "codex-cli requires outputJsonSchema to have a top-level `additionalProperties: false` set explicitly — codex's --output-schema mode 400s without it, and this adapter will not silently inject or rewrite caller-provided schemas. Set `additionalProperties: false` on your schema and retry.",
+      { kind: 'bad_request', retryable: false, provider: 'codex-cli' },
+    )
   }
-  return schema
 }
 
 // ---------------------------------------------------------------------------
@@ -437,15 +458,10 @@ export function codexCliAdapter(opts?: CodexCliAdapterOptions): ProviderAdapter 
 
           const structuredOutputRequested = req.outputJsonSchema !== undefined
           if (structuredOutputRequested) {
+            const schema = req.outputJsonSchema as JsonValue
+            assertTopLevelAdditionalPropertiesFalse(schema)
             const schemaPath = join(scratchDir, 'schema.json')
-            const schemaWithAdditionalProps = withTopLevelAdditionalPropertiesFalse(
-              req.outputJsonSchema as JsonValue,
-            )
-            await writeFile(
-              schemaPath,
-              JSON.stringify(schemaWithAdditionalProps),
-              'utf-8',
-            )
+            await writeFile(schemaPath, JSON.stringify(schema), 'utf-8')
             args.push('--output-schema', schemaPath)
           }
 
@@ -463,39 +479,26 @@ export function codexCliAdapter(opts?: CodexCliAdapterOptions): ProviderAdapter 
           args.push(prompt)
 
           // ----------------------------------------------------------------
-          // 4. Timeout — the adapter passes timeoutMs down to the runner
-          //    (so it can SIGTERM/SIGKILL the subprocess) AND independently
-          //    races its own timer against the runner's promise, so a
-          //    misbehaving/fake runner that never settles still surfaces a
-          //    clean kind:'timeout' error rather than hanging the caller.
+          // 4. Timeout — the runner owns timeout/abort enforcement
+          //    end-to-end: it only settles (resolve OR reject) once the
+          //    child process has actually exited (its 'close' event
+          //    fired). We deliberately do NOT race an independent timer
+          //    against `runner.run(...)` here — doing so could let this
+          //    adapter move on (and release the semaphore / rm the
+          //    scratch dir) while the real OS child process is still
+          //    alive and possibly still writing into `scratchDir`. We
+          //    simply await the runner promise and classify whatever it
+          //    settles with.
           // ----------------------------------------------------------------
           const timeoutMs = req.attemptTimeoutMs ?? req.config.timeoutMs
 
-          const runPromise = runner.run(args, '', {
-            cwd: scratchDir,
-            ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-            ...(req.signal !== undefined ? { signal: req.signal } : {}),
-          })
-
           let result: Awaited<ReturnType<CodexCliRunner['run']>>
           try {
-            if (timeoutMs !== undefined) {
-              result = await Promise.race([
-                runPromise,
-                new Promise<never>((_resolve, reject) => {
-                  setTimeout(() => {
-                    reject(
-                      new DOMException(
-                        `codex-cli call exceeded ${timeoutMs}ms timeout`,
-                        'TimeoutError',
-                      ),
-                    )
-                  }, timeoutMs)
-                }),
-              ])
-            } else {
-              result = await runPromise
-            }
+            result = await runner.run(args, '', {
+              cwd: scratchDir,
+              ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+              ...(req.signal !== undefined ? { signal: req.signal } : {}),
+            })
           } catch (rawErr) {
             if (
               rawErr !== null &&
@@ -523,7 +526,7 @@ export function codexCliAdapter(opts?: CodexCliAdapterOptions): ProviderAdapter 
           }
 
           const { stdout, exitCode } = result
-          const events = parseJsonlEvents(stdout)
+          const { events, malformedCount } = parseJsonlEvents(stdout)
 
           // ----------------------------------------------------------------
           // 5. Fatal stream-level errors.
@@ -576,6 +579,28 @@ export function codexCliAdapter(opts?: CodexCliAdapterOptions): ProviderAdapter 
             preferredText = lastAgentMessage
           }
 
+          const hasTurnCompleted = events.some((event) => event.type === 'turn.completed')
+
+          // exitCode === 0 with neither a turn.completed event nor any
+          // final text (from the -o file or an item.completed agent_message)
+          // means codex produced nothing we can parse a result out of —
+          // treat this as a false success rather than silently returning an
+          // empty/zeroed AdapterResult.
+          if (!hasTurnCompleted && preferredText === undefined) {
+            const stdoutTail = stdout.slice(-1000)
+            throw new LlmError(
+              `codex produced no parseable result — protocol/version mismatch? stdout tail: ${stdoutTail}`,
+              { kind: 'server', retryable: false, provider: 'codex-cli' },
+            )
+          }
+
+          if (malformedCount > 0) {
+            warnings.push({
+              type: 'other',
+              message: `codex-cli: skipped ${malformedCount} malformed JSONL line${malformedCount === 1 ? '' : 's'} in the event stream`,
+            })
+          }
+
           let rawStructured: unknown
           if (structuredOutputRequested && preferredText !== undefined) {
             try {
@@ -601,6 +626,15 @@ export function codexCliAdapter(opts?: CodexCliAdapterOptions): ProviderAdapter 
               threadId = (event as ThreadStartedEvent).thread_id
             }
           }
+
+          if (usageEvent === undefined) {
+            warnings.push({
+              type: 'other',
+              message:
+                'codex-cli: no usage data available for this call (missing turn.completed usage) — token counts are unavailable',
+            })
+          }
+
           const usage = mapUsage(usageEvent)
 
           const adapterResult: AdapterResult = {

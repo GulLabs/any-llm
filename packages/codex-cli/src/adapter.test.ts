@@ -7,7 +7,7 @@
  * @module
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { writeFile } from 'node:fs/promises'
 import { LlmError } from '@gullabs/core'
 import type { ResolvedRequest, AdapterCtx, Message } from '@gullabs/core'
@@ -152,6 +152,7 @@ describe('structured output', () => {
           type: 'object',
           properties: { greeting: { type: 'string' } },
           required: ['greeting'],
+          additionalProperties: false,
         },
       }),
       FAKE_CTX,
@@ -162,34 +163,65 @@ describe('structured output', () => {
     expect(calls[0]?.opts.cwd).toBeDefined()
   })
 
-  it('injects top-level additionalProperties:false when the caller schema omits it', async () => {
-    let writtenSchema: unknown
-    const { runner } = makeFakeRunner(async (call) => {
-      const schemaFlagIndex = call.args.indexOf('--output-schema')
-      const schemaPath = call.args[schemaFlagIndex + 1] as string
-      const fs = await import('node:fs/promises')
-      writtenSchema = JSON.parse(await fs.readFile(schemaPath, 'utf-8'))
+  it('rejects with bad_request when the caller schema omits top-level additionalProperties:false', async () => {
+    const { runner, calls } = makeFakeRunner(async (call) => {
       const outputPath = call.args[call.args.indexOf('-o') + 1] as string
-      await fs.writeFile(outputPath, '{"greeting":"hi"}', 'utf-8')
+      await writeFile(outputPath, '{"greeting":"hi"}', 'utf-8')
       return { stdout: STRUCTURED_JSONL, stderr: '', exitCode: 0 }
     })
     const adapter = codexCliAdapter({ runner })
-    await adapter.run(
-      makeResolvedReq({
-        outputJsonSchema: {
-          type: 'object',
-          properties: { greeting: { type: 'string' } },
-          required: ['greeting'],
-        },
-      }),
-      FAKE_CTX,
-    )
 
-    expect(writtenSchema).toMatchObject({ additionalProperties: false })
+    try {
+      await adapter.run(
+        makeResolvedReq({
+          outputJsonSchema: {
+            type: 'object',
+            properties: { greeting: { type: 'string' } },
+            required: ['greeting'],
+          },
+        }),
+        FAKE_CTX,
+      )
+      expect.unreachable('should have thrown')
+    } catch (e) {
+      expect(e).toBeInstanceOf(LlmError)
+      expect((e as LlmError).kind).toBe('bad_request')
+      expect((e as LlmError).retryable).toBe(false)
+    }
+    expect(calls).toHaveLength(0)
   })
 
-  it('does not override a caller-supplied top-level additionalProperties', async () => {
+  it('rejects with bad_request when the caller schema sets additionalProperties:true', async () => {
+    const { runner, calls } = makeFakeRunner(async (call) => {
+      const outputPath = call.args[call.args.indexOf('-o') + 1] as string
+      await writeFile(outputPath, '{"greeting":"hi"}', 'utf-8')
+      return { stdout: STRUCTURED_JSONL, stderr: '', exitCode: 0 }
+    })
+    const adapter = codexCliAdapter({ runner })
+
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          outputJsonSchema: {
+            type: 'object',
+            properties: { greeting: { type: 'string' } },
+            additionalProperties: true,
+          },
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request', retryable: false })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('passes a schema with explicit additionalProperties:false through byte-identical', async () => {
     let writtenSchema: unknown
+    const inputSchema = {
+      type: 'object',
+      properties: { greeting: { type: 'string' } },
+      required: ['greeting'],
+      additionalProperties: false,
+    }
     const { runner } = makeFakeRunner(async (call) => {
       const schemaFlagIndex = call.args.indexOf('--output-schema')
       const schemaPath = call.args[schemaFlagIndex + 1] as string
@@ -200,18 +232,9 @@ describe('structured output', () => {
       return { stdout: STRUCTURED_JSONL, stderr: '', exitCode: 0 }
     })
     const adapter = codexCliAdapter({ runner })
-    await adapter.run(
-      makeResolvedReq({
-        outputJsonSchema: {
-          type: 'object',
-          properties: { greeting: { type: 'string' } },
-          additionalProperties: true,
-        },
-      }),
-      FAKE_CTX,
-    )
+    await adapter.run(makeResolvedReq({ outputJsonSchema: inputSchema }), FAKE_CTX)
 
-    expect(writtenSchema).toMatchObject({ additionalProperties: true })
+    expect(writtenSchema).toEqual(inputSchema)
   })
 
   it('pushes a warning and leaves rawStructured undefined on unparseable -o content', async () => {
@@ -222,7 +245,9 @@ describe('structured output', () => {
     })
     const adapter = codexCliAdapter({ runner })
     const result = await adapter.run(
-      makeResolvedReq({ outputJsonSchema: { type: 'object' } }),
+      makeResolvedReq({
+        outputJsonSchema: { type: 'object', additionalProperties: false },
+      }),
       FAKE_CTX,
     )
 
@@ -325,7 +350,7 @@ describe('argv construction', () => {
     await adapter.run(
       makeResolvedReq({
         config: { reasoning: { effort: 'high' } },
-        outputJsonSchema: { type: 'object', properties: {} },
+        outputJsonSchema: { type: 'object', properties: {}, additionalProperties: false },
       }),
       FAKE_CTX,
     )
@@ -594,12 +619,123 @@ describe('fatal stream error classification', () => {
 })
 
 // ---------------------------------------------------------------------------
+// 9b. False success on empty/truncated/malformed JSONL (exitCode 0)
+// ---------------------------------------------------------------------------
+
+describe('false success on empty/truncated/malformed JSONL', () => {
+  it('throws kind:"server" on empty stdout with exitCode 0', async () => {
+    const { runner } = makeFakeRunner(async () => ({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+    }))
+    const adapter = codexCliAdapter({ runner })
+
+    try {
+      await adapter.run(makeResolvedReq(), FAKE_CTX)
+      expect.unreachable('should have thrown')
+    } catch (e) {
+      expect(e).toBeInstanceOf(LlmError)
+      expect((e as LlmError).kind).toBe('server')
+      expect((e as LlmError).retryable).toBe(false)
+    }
+  })
+
+  it('throws kind:"server" on a truncated stream with only thread.started (no turn.completed, no text)', async () => {
+    const { runner } = makeFakeRunner(async () => ({
+      stdout:
+        '{"type":"thread.started","thread_id":"019f435f-0000-0000-0000-000000000abc"}',
+      stderr: '',
+      exitCode: 0,
+    }))
+    const adapter = codexCliAdapter({ runner })
+
+    try {
+      await adapter.run(makeResolvedReq(), FAKE_CTX)
+      expect.unreachable('should have thrown')
+    } catch (e) {
+      expect(e).toBeInstanceOf(LlmError)
+      expect((e as LlmError).kind).toBe('server')
+      expect((e as LlmError).retryable).toBe(false)
+      expect((e as LlmError).message).toContain('no parseable result')
+    }
+  })
+
+  it('succeeds with a warning when malformed lines are interleaved with a valid, complete turn', async () => {
+    const stream = [
+      'not json at all',
+      '{"type":"thread.started","thread_id":"019f435f-4756-7242-98ab-d536aa30e739"}',
+      '{this is also not valid json}',
+      '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"hi"}}',
+      '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}',
+    ].join('\n')
+    const { runner } = makeFakeRunner(async () => ({
+      stdout: stream,
+      stderr: '',
+      exitCode: 0,
+    }))
+    const adapter = codexCliAdapter({ runner })
+    const result = await adapter.run(makeResolvedReq(), FAKE_CTX)
+
+    expect(result.text).toBe('hi')
+    expect(result.usage.inputTokens).toBe(10)
+    expect(result.usage.outputTokens).toBe(5)
+    expect(result.warnings).toContainEqual(
+      expect.objectContaining({
+        type: 'other',
+        message: expect.stringContaining('malformed') as unknown as string,
+      }),
+    )
+  })
+
+  it('succeeds with a warning when turn.completed carries no usage but final text is present', async () => {
+    const stream = [
+      '{"type":"thread.started","thread_id":"019f435f-4756-7242-98ab-d536aa30e739"}',
+      '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"hi"}}',
+      '{"type":"turn.completed"}',
+    ].join('\n')
+    const { runner } = makeFakeRunner(async () => ({
+      stdout: stream,
+      stderr: '',
+      exitCode: 0,
+    }))
+    const adapter = codexCliAdapter({ runner })
+    const result = await adapter.run(makeResolvedReq(), FAKE_CTX)
+
+    expect(result.text).toBe('hi')
+    expect(result.usage.inputTokens).toBe(0)
+    expect(result.warnings).toContainEqual(
+      expect.objectContaining({
+        type: 'other',
+        message: expect.stringContaining('usage') as unknown as string,
+      }),
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
 // 10. Timeout
 // ---------------------------------------------------------------------------
 
 describe('timeout', () => {
-  it('races a hanging runner and throws kind:"timeout", retryable:true', async () => {
-    const { runner } = makeFakeRunner(() => new Promise<CodexCliRunResult>(() => {}))
+  it('throws kind:"timeout", retryable:true when the runner reports a timeout', async () => {
+    // The runner now owns timeout enforcement end-to-end (it only settles
+    // once the simulated child has "closed") — the adapter no longer races
+    // an independent timer, so the fake must itself honor opts.timeoutMs
+    // and reject with a TimeoutError-named Error, mirroring the real
+    // runner's contract.
+    const { runner } = makeFakeRunner(
+      (call) =>
+        new Promise<CodexCliRunResult>((_resolve, reject) => {
+          setTimeout(() => {
+            const err = new Error(
+              `codex-cli call exceeded ${call.opts.timeoutMs}ms timeout`,
+            )
+            err.name = 'TimeoutError'
+            reject(err)
+          }, call.opts.timeoutMs)
+        }),
+    )
     const adapter = codexCliAdapter({ runner })
 
     try {
@@ -660,6 +796,96 @@ describe('AbortSignal', () => {
     } catch (e) {
       expect(e).toBeInstanceOf(LlmError)
       expect((e as LlmError).kind).toBe('aborted')
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 11b. Timeout/abort lifecycle — semaphore + scratch dir vs runner settlement
+// ---------------------------------------------------------------------------
+
+describe('timeout/abort lifecycle: semaphore + scratch dir vs runner settlement', () => {
+  it('does not release the semaphore or rm the scratch dir until a late-settling runner promise settles', async () => {
+    const fs = await import('node:fs/promises')
+    let callCount = 0
+    let capturedCwd: string | undefined
+    let rejectFirst: ((err: Error) => void) | undefined
+
+    const { runner } = makeFakeRunner((call) => {
+      callCount += 1
+      if (callCount === 1) {
+        capturedCwd = call.opts.cwd
+        return new Promise<CodexCliRunResult>((_resolve, reject) => {
+          rejectFirst = reject
+        })
+      }
+      return { stdout: PLAIN_JSONL, stderr: '', exitCode: 0 }
+    })
+    const adapter = codexCliAdapter({ runner, maxConcurrency: 1 })
+
+    const firstPromise = adapter
+      .run(makeResolvedReq({ config: { timeoutMs: 10 } }), FAKE_CTX)
+      .catch((e: unknown) => e)
+    await vi.waitFor(() => expect(capturedCwd).toBeDefined())
+
+    // A second call queues behind maxConcurrency:1 — it must NOT start
+    // while the first call's runner promise is still pending, even though
+    // the (simulated) timeout has long since fired on the caller side.
+    let secondStarted = false
+    const secondPromise = adapter.run(makeResolvedReq(), FAKE_CTX).then((r) => {
+      secondStarted = true
+      return r
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(secondStarted).toBe(false)
+    // The scratch dir must still be on disk — it must not be rm'd while the
+    // runner promise (standing in for "the real child process") is pending.
+    await expect(fs.access(capturedCwd as string)).resolves.toBeUndefined()
+
+    // Now the injected runner finally settles — simulating the child's
+    // 'close' event firing after the SIGTERM/SIGKILL escalation completes.
+    const timeoutErr = new Error('codex-cli call exceeded 10ms timeout')
+    timeoutErr.name = 'TimeoutError'
+    rejectFirst?.(timeoutErr)
+
+    const firstOutcome = await firstPromise
+    expect(firstOutcome).toMatchObject({ kind: 'timeout', retryable: true })
+
+    await secondPromise
+    expect(secondStarted).toBe(true)
+    // Only now should the first call's scratch dir have been removed.
+    await expect(fs.access(capturedCwd as string)).rejects.toThrow()
+  })
+
+  it('never admits more than maxConcurrency calls under a timeout storm', async () => {
+    let active = 0
+    let maxActive = 0
+
+    const { runner } = makeFakeRunner(
+      () =>
+        new Promise<CodexCliRunResult>((_resolve, reject) => {
+          active += 1
+          maxActive = Math.max(maxActive, active)
+          setTimeout(() => {
+            active -= 1
+            const err = new Error('codex-cli call exceeded 10ms timeout')
+            err.name = 'TimeoutError'
+            reject(err)
+          }, 15)
+        }),
+    )
+    const adapter = codexCliAdapter({ runner, maxConcurrency: 2 })
+
+    const results = await Promise.allSettled([
+      adapter.run(makeResolvedReq({ config: { timeoutMs: 10 } }), FAKE_CTX),
+      adapter.run(makeResolvedReq({ config: { timeoutMs: 10 } }), FAKE_CTX),
+      adapter.run(makeResolvedReq({ config: { timeoutMs: 10 } }), FAKE_CTX),
+    ])
+
+    expect(maxActive).toBeLessThanOrEqual(2)
+    for (const r of results) {
+      expect(r.status).toBe('rejected')
     }
   })
 })

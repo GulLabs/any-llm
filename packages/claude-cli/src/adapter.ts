@@ -334,37 +334,23 @@ export function claudeCliAdapter(opts?: ClaudeCliAdapterOptions): ProviderAdapte
       // ------------------------------------------------------------------
       const timeoutMs = req.attemptTimeoutMs ?? config.timeoutMs
 
+      // The runner owns timeout/abort enforcement end-to-end: it only
+      // settles (resolve OR reject) once the child process has actually
+      // exited (its 'close' event fired). We deliberately do NOT race an
+      // independent timer against `runner.run(...)` here — doing so could
+      // let this adapter move on (and release the semaphore / rm the
+      // scratch dir) while the real OS child process is still alive and
+      // possibly still writing into `cwd`. We simply await the runner
+      // promise and classify whatever it settles with.
       const cwd = await mkdtemp(join(tmpdir(), 'claude-cli-'))
       const release = await semaphore.acquire()
       let result: ClaudeCliRunResult
       try {
-        const runPromise = runner.run(args, prompt, {
+        result = await runner.run(args, prompt, {
           cwd,
           ...(timeoutMs !== undefined ? { timeoutMs } : {}),
           ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}),
         })
-
-        if (timeoutMs !== undefined) {
-          let timeoutHandle: ReturnType<typeof setTimeout> | undefined
-          const timeoutPromise = new Promise<never>((_resolve, reject) => {
-            timeoutHandle = setTimeout(() => {
-              reject(
-                new LlmError(`claude-cli call exceeded ${timeoutMs}ms timeout`, {
-                  kind: 'timeout',
-                  retryable: true,
-                  provider: 'claude-cli',
-                }),
-              )
-            }, timeoutMs)
-          })
-          try {
-            result = await Promise.race([runPromise, timeoutPromise])
-          } finally {
-            if (timeoutHandle !== undefined) clearTimeout(timeoutHandle)
-          }
-        } else {
-          result = await runPromise
-        }
       } catch (rawErr) {
         release()
         await rm(cwd, { recursive: true, force: true })

@@ -63,6 +63,13 @@ export function buildClaudeCliRunner(claudePath = 'claude'): ClaudeCliRunner {
   return {
     run(args, input, opts) {
       return new Promise((resolve, reject) => {
+        if (opts.signal?.aborted === true) {
+          const err = new Error('claude-cli call aborted')
+          err.name = 'AbortError'
+          reject(err)
+          return
+        }
+
         // NOTE: the argv itself (including the `--safe-mode` vs `--bare`
         // choice) is owned by the adapter (see adapter.ts) — this runner is
         // a dumb pipe. We repeat the rule here only as a pointer: never pass
@@ -75,12 +82,22 @@ export function buildClaudeCliRunner(claudePath = 'claude'): ClaudeCliRunner {
         let stdout = ''
         let stderr = ''
         let settled = false
+        // Set once a timeout/abort has begun killing the child. The
+        // returned promise is NOT rejected with this until the child's
+        // 'close' event actually fires — the caller (the adapter) must
+        // never observe settlement while the OS process may still be
+        // alive and writing to its scratch cwd.
+        let pendingError: Error | undefined
         let timeoutHandle: ReturnType<typeof setTimeout> | undefined
         let killTimeoutHandle: ReturnType<typeof setTimeout> | undefined
 
-        const cleanup = (): void => {
+        const cleanupTimers = (): void => {
           if (timeoutHandle !== undefined) clearTimeout(timeoutHandle)
           if (killTimeoutHandle !== undefined) clearTimeout(killTimeoutHandle)
+        }
+
+        const cleanup = (): void => {
+          cleanupTimers()
           if (opts.signal !== undefined) {
             opts.signal.removeEventListener('abort', onAbort)
           }
@@ -93,33 +110,30 @@ export function buildClaudeCliRunner(claudePath = 'claude'): ClaudeCliRunner {
           }, 5_000)
         }
 
-        const settleReject = (err: Error): void => {
-          if (settled) return
-          settled = true
-          cleanup()
+        const beginReject = (err: Error): void => {
+          if (settled || pendingError !== undefined) return
+          pendingError = err
+          cleanupTimers()
           killChild()
-          reject(err)
         }
 
         const onAbort = (): void => {
           const err = new Error('claude-cli call aborted')
           err.name = 'AbortError'
-          settleReject(err)
+          beginReject(err)
         }
 
+        // The pre-aborted case is handled above, before `spawn` — by this
+        // point `opts.signal`, if present, is guaranteed not yet aborted.
         if (opts.signal !== undefined) {
-          if (opts.signal.aborted) {
-            onAbort()
-          } else {
-            opts.signal.addEventListener('abort', onAbort, { once: true })
-          }
+          opts.signal.addEventListener('abort', onAbort, { once: true })
         }
 
         if (opts.timeoutMs !== undefined) {
           timeoutHandle = setTimeout(() => {
             const err = new Error(`claude-cli call exceeded ${opts.timeoutMs}ms timeout`)
             err.name = 'TimeoutError'
-            settleReject(err)
+            beginReject(err)
           }, opts.timeoutMs)
         }
 
@@ -134,14 +148,18 @@ export function buildClaudeCliRunner(claudePath = 'claude'): ClaudeCliRunner {
           if (settled) return
           settled = true
           cleanup()
-          reject(err)
+          reject(pendingError ?? err)
         })
 
         child.once('close', (exitCode) => {
           if (settled) return
           settled = true
           cleanup()
-          resolve({ stdout, stderr, exitCode })
+          if (pendingError !== undefined) {
+            reject(pendingError)
+          } else {
+            resolve({ stdout, stderr, exitCode })
+          }
         })
 
         child.stdin.end(input, 'utf8')
