@@ -8,7 +8,9 @@
       "@gullabs/google": ["./packages/google/src/index.ts"],
       "@gullabs/drizzle": ["./packages/drizzle/src/index.ts"],
       "@gullabs/quota": ["./packages/quota/src/index.ts"],
-      "@gullabs/testing": ["./packages/testing/src/index.ts"]
+      "@gullabs/testing": ["./packages/testing/src/index.ts"],
+      "@gullabs/claude-cli": ["./packages/claude-cli/src/index.ts"],
+      "@gullabs/codex-cli": ["./packages/codex-cli/src/index.ts"]
     }
   },
   "include": ["packages/*/src/**/*.ts"]

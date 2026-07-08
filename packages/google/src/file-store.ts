@@ -10,6 +10,8 @@
 import type { AuthMaterial, Logger } from '@gullabs/core'
 import { LlmError, classifyError, redactSecrets } from '@gullabs/core'
 
+import { requireApiKey } from './client.js'
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -83,7 +85,7 @@ const realSleep = (ms: number): Promise<void> =>
 async function buildFilesClient(auth: AuthMaterial): Promise<GeminiFilesClientLike> {
   const { GoogleGenAI } = await import('@google/genai')
 
-  const ai = new GoogleGenAI({ apiKey: auth.apiKey })
+  const ai = new GoogleGenAI({ apiKey: requireApiKey(auth) })
 
   return {
     async upload(params) {

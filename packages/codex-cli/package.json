@@ -1,0 +1,53 @@
+{
+  "name": "@gullabs/codex-cli",
+  "version": "0.1.0",
+  "description": "Dev-only OpenAI Codex CLI provider adapter for any-llm — routes calls through a locally-authenticated `codex` CLI session for $0 API spend during workflow iteration. NOT for production use.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gullabs/any-llm.git",
+    "directory": "packages/codex-cli"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup"
+  },
+  "dependencies": {
+    "@gullabs/core": "workspace:*",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@gullabs/testing": "workspace:*"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "sideEffects": false,
+  "keywords": [
+    "llm",
+    "dev-only",
+    "cli",
+    "codex",
+    "openai",
+    "testing",
+    "typescript"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://github.com/gullabs/any-llm/tree/main/packages/codex-cli#readme",
+  "bugs": "https://github.com/gullabs/any-llm/issues"
+}

@@ -284,31 +284,45 @@ export interface PricingSource {
 // ---------------------------------------------------------------------------
 
 /**
+ * API-key credential material. Used by production API providers (e.g.
+ * Google). The caller supplies `{ apiKey }` on every `generate` /
+ * `runStructured` call; the library never reads credentials from the
+ * environment or any ambient source (see ADR-019).
+ */
+export type ApiKeyAuth = { apiKey: string }
+
+/**
+ * Explicit opt-in to a locally-authenticated CLI session (dev-only providers,
+ * e.g. `@gullabs/claude-cli`, `@gullabs/codex-cli`). The adapter shells out to
+ * a CLI binary that owns its own login/session state (OAuth, subscription
+ * auth, etc.) — the library never reads or forwards any credential material
+ * for this variant. Passing `{ cliSession: true }` is a deliberate, explicit
+ * caller choice; it is never inferred or defaulted.
+ */
+export type CliSessionAuth = { cliSession: true }
+
+/**
  * Credential material passed to the adapter per call.
  *
- * API-key only today, by design. The caller supplies `{ apiKey }` on every
- * `generate` / `runStructured` call; the library never reads credentials from
- * the environment or any ambient source (see ADR-019).
+ * A discriminated-by-shape union: API-key providers narrow to
+ * {@link ApiKeyAuth}; dev-only CLI providers narrow to {@link CliSessionAuth}.
+ * The library never reads credentials from the environment or any ambient
+ * source (see ADR-019) — this includes the CLI variant, where the CLI binary
+ * (not this library) owns its own local auth.
  *
  * **Adding a future credential kind** (e.g. explicit Vertex service-account
- * material, or an OAuth/STS bearer token): turn this into a discriminated
- * union —
- * ```ts
- * type AuthMaterial =
- *   | { kind: 'api-key'; apiKey: string }
- *   | { kind: 'bearer'; token: string; ... }
- * ```
- * — and update exactly these sites:
+ * material, or an OAuth/STS bearer token): extend the union with a new
+ * member and update exactly these sites:
  * - `requireAuth()` in `packages/core/src/engine.ts`
  * - `buildGoogleClient` in `packages/google/src/adapter.ts`
  * - `buildCachesClient` in `packages/google/src/cache-store.ts`
  * - `buildFilesClient` in `packages/google/src/file-store.ts`
+ * - `packages/claude-cli/src/adapter.ts`
+ * - `packages/codex-cli/src/adapter.ts`
  *
  * TypeScript exhaustiveness will flag every narrowing site automatically.
- * Deliberately deferred until a second credential kind has a concrete need
- * (see ADR-020 in DECISIONS.md).
  */
-export type AuthMaterial = { apiKey: string }
+export type AuthMaterial = ApiKeyAuth | CliSessionAuth
 
 // ---------------------------------------------------------------------------
 // Infrastructure ports

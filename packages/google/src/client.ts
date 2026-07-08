@@ -8,7 +8,35 @@
  * @module
  */
 
+import { LlmError } from '@gullabs/core'
 import type { AuthMaterial } from '@gullabs/core'
+
+// ---------------------------------------------------------------------------
+// Auth narrowing — Google only accepts ApiKeyAuth
+// ---------------------------------------------------------------------------
+
+/**
+ * Narrows {@link AuthMaterial} to its `apiKey` string, rejecting the
+ * dev-only `CliSessionAuth` variant.
+ *
+ * Google is a production API provider and only ever accepts API-key
+ * credentials; `{ cliSession: true }` is reserved for the dev-only CLI
+ * provider packages (`@gullabs/claude-cli`, `@gullabs/codex-cli`).
+ */
+export function requireApiKey(auth: AuthMaterial): string {
+  if (
+    !('apiKey' in auth) ||
+    typeof auth.apiKey !== 'string' ||
+    auth.apiKey.trim() === ''
+  ) {
+    throw new LlmError('@gullabs/google requires auth.apiKey', {
+      kind: 'invalid_auth',
+      retryable: false,
+      provider: 'google',
+    })
+  }
+  return auth.apiKey
+}
 
 // ---------------------------------------------------------------------------
 // Transport timeout defaults
@@ -293,7 +321,7 @@ export async function buildGoogleClient(auth: AuthMaterial): Promise<GeminiClien
   // GenerateContentResponse.
   const { GoogleGenAI } = await import('@google/genai')
 
-  const ai = new GoogleGenAI({ apiKey: auth.apiKey })
+  const ai = new GoogleGenAI({ apiKey: requireApiKey(auth) })
 
   return {
     models: {

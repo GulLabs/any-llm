@@ -276,9 +276,106 @@ to avoid duplicate instances in the host's dependency tree.
 
 Packages:
 
-| Package            | Role                                                                                                      |
-| ------------------ | --------------------------------------------------------------------------------------------------------- |
-| `@gullabs/core`    | Engine, types, ports, retry middleware, model registry, record builder, pricing. No provider SDK imports. |
-| `@gullabs/google`  | Gemini adapter over `@google/genai`.                                                                      |
-| `@gullabs/drizzle` | Reference Postgres schema (`llm_calls` table) and `drizzleUsageSink`.                                     |
-| `@gullabs/testing` | `FakeClock`, `FakeIds`, `RecordingSink`, `makeFakeGemini`. No network in tests.                           |
+| Package               | Role                                                                                                      |
+| --------------------- | --------------------------------------------------------------------------------------------------------- |
+| `@gullabs/core`       | Engine, types, ports, retry middleware, model registry, record builder, pricing. No provider SDK imports. |
+| `@gullabs/google`     | Gemini adapter over `@google/genai`.                                                                      |
+| `@gullabs/drizzle`    | Reference Postgres schema (`llm_calls` table) and `drizzleUsageSink`.                                     |
+| `@gullabs/testing`    | `FakeClock`, `FakeIds`, `RecordingSink`, `makeFakeGemini`. No network in tests.                           |
+| `@gullabs/claude-cli` | **Dev-only.** Adapter over the local `claude` CLI. Not published to prod consumers' deps.                 |
+| `@gullabs/codex-cli`  | **Dev-only.** Adapter over the local `codex` CLI. Not published to prod consumers' deps.                  |
+
+---
+
+## CLI dev providers (claude-cli, codex-cli)
+
+### Purpose
+
+Temporal workflows with dozens of LLM-call activities are expensive to iterate on against a real
+API. `@gullabs/claude-cli` and `@gullabs/codex-cli` route calls through a locally-authenticated
+`claude` or `codex` CLI instead, at $0 marginal cost. Two-phase testing story: phase 1 runs the
+workflow against a CLI provider to shake out pipeline/activity/schema bugs, using that provider's
+own config shape; phase 2 re-qualifies end-to-end against real Gemini before deploy. These
+packages are **not fallback paths for API providers** and must never be framed or wired as one.
+They are impossible to run in production by construction: both require an interactive local CLI
+login (`claude auth login` / `codex login`) that does not exist on a server.
+
+### Auth
+
+`AuthMaterial` becomes a union:
+
+```ts
+type AuthMaterial = { apiKey: string } | { cliSession: true }
+```
+
+This is the union anticipated by the "Additional providers" planned seam (see above), realized
+here instead of for OAuth/bearer tokens. It preserves P1: the caller still declares auth
+explicitly on every call, and the library still never reads `process.env` or a keychain — the
+CLI binary owns and resolves its own credentials out of band. The Google adapter narrows to
+`{ apiKey }` and throws `invalid_auth` if absent; the CLI adapters narrow to `{ cliSession: true }`
+and throw `invalid_auth` (with a message pointing at the CLI login command) otherwise.
+
+### Model config: deliberately outside core
+
+Model descriptors and config schemas for both packages live in `packages/claude-cli/src` and
+`packages/codex-cli/src`, not `packages/core/src/model-config/`. This is a deliberate deviation
+from the Gemini precedent: dev-only models must never appear on the production core surface, so a
+host importing only `@gullabs/core` + `@gullabs/google` never sees `claude-fable-5` or
+`gpt-5.4-mini` in its registry. Each package still satisfies the same onboarding invariants
+(strict zod config schema, `configJsonSchema`, `validateConfig`) as core's own descriptors.
+
+Config schemas are `z.strictObject`, per the reject-don't-map rule: no `temperature`, `topP`,
+`topK`, or `stopSequences` fields exist at all, because CLIs don't accept sampling params — an
+unknown key is rejected outright, never silently dropped or clamped.
+
+- **claude-cli** models: `claude-fable-5`, `claude-opus-4-8`, `claude-sonnet-5`,
+  `claude-haiku-4-5-20251001`. `reasoning.effort`: `low | medium | high | xhigh | max`.
+- **codex-cli** models: `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.3-codex-spark`.
+  `reasoning.effort`: `low | medium | high | xhigh`.
+
+### Adapter-owned invariant flags
+
+Both CLIs are invoked with a fixed argv the caller cannot override, to keep the subprocess
+non-interactive and isolated from the host's other CLI state:
+
+- **claude**: `-p --output-format json --safe-mode --tools "" --disable-slash-commands
+--no-session-persistence`. `--safe-mode`, not `--bare` — `--bare` also disables OAuth/keychain
+  auth, which would break subscription login; `--safe-mode` isolates context/tool access while
+  leaving auth intact.
+- **codex**: `exec --json --ephemeral --skip-git-repo-check --ignore-user-config --ignore-rules
+--sandbox read-only -C <scratchDir> -c approval_policy=never`.
+
+Each call runs in a fresh temp `cwd` (`fs.mkdtemp`), spawned per call rather than as a persistent
+process (see Scope exclusions below).
+
+### Structured output
+
+Both CLIs support native schema-constrained output (`--json-schema` for claude, `--output-schema`
+for codex). The adapter parses the CLI's result text into `AdapterResult.rawStructured` and does
+**not** validate it against the schema — per P3, that stays the engine's job, unchanged from the
+Gemini adapter's behavior.
+
+### Usage and cost
+
+Token usage reported by the CLI is mapped into `Usage` under the GROSS convention, same as every
+other adapter, with `Usage.raw` holding the verbatim CLI usage object. Neither `claude-cli` nor
+`codex-cli` models have `PricingSource` entries, so `Cost.microUsd` resolves to `null` through the
+existing unpriced-model path — no special-casing needed. Where the CLI itself reports a cost
+(claude's `total_cost_usd`), it is copied into `providerMetadata` only; it never becomes `Cost`,
+since that field is reserved for the engine's own priced computation.
+
+### Scope exclusions (v1)
+
+No streaming, caching, grounding, or multimodal input — non-text `Part`s are rejected as
+`bad_request`. No persistent stdio process: each call spawns and tears down a fresh CLI process,
+which is simpler and matches the low call-rate dev-loop use case; a long-lived stdio bridge is a
+possible future optimization if per-call spawn overhead becomes the bottleneck. Both adapters cap
+internal concurrency (default 2, configurable) with a semaphore, because subscription-plan CLIs
+throttle parallel sessions regardless of what the caller requests.
+
+### Version policy
+
+A CLI's JSON output envelope is far less stable across versions than a versioned HTTP API. Each
+package documents the CLI version range it was smoke-tested against in its README, and the
+adapter fails with a typed `LlmError` (rather than a raw parse exception) when it encounters an
+envelope shape it doesn't recognize.

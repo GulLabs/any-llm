@@ -887,19 +887,32 @@ function attachCallContext(
  *   the adapter entirely, or allow retry? (Current proposal: `invalid_auth`,
  *   non-retryable — same as a missing key.)
  *
- * Throws `LlmError('invalid_auth')` when auth is missing or contains an
- * empty/non-string apiKey.
+ * Throws `LlmError('invalid_auth')` when auth is missing, or when it is
+ * neither a well-formed {@link ApiKeyAuth} (non-empty `apiKey` string) nor a
+ * {@link CliSessionAuth} (`cliSession: true`).
+ *
+ * This function only validates that *some* recognised auth shape was
+ * supplied — it does not know which provider will consume it. Adapters own
+ * the further narrowing (e.g. the Google adapter rejects `CliSessionAuth`,
+ * the CLI adapters reject `ApiKeyAuth`).
  */
 function requireAuth(auth: AuthMaterial | undefined): AuthMaterial {
-  if (
-    auth === undefined ||
-    typeof auth.apiKey !== 'string' ||
-    auth.apiKey.trim() === ''
-  ) {
-    throw new LlmError('Missing or invalid auth; pass { auth: { apiKey } } per call', {
-      kind: 'invalid_auth',
-      retryable: false,
-    })
+  if (auth === undefined) {
+    throw new LlmError(
+      'Missing or invalid auth; pass { auth: { apiKey } } or { auth: { cliSession: true } } per call',
+      { kind: 'invalid_auth', retryable: false },
+    )
+  }
+
+  const isValidApiKeyAuth =
+    'apiKey' in auth && typeof auth.apiKey === 'string' && auth.apiKey.trim() !== ''
+  const isValidCliSessionAuth = 'cliSession' in auth && auth.cliSession
+
+  if (!isValidApiKeyAuth && !isValidCliSessionAuth) {
+    throw new LlmError(
+      'Missing or invalid auth; pass { auth: { apiKey } } or { auth: { cliSession: true } } per call',
+      { kind: 'invalid_auth', retryable: false },
+    )
   }
   return auth
 }

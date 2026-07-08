@@ -48,6 +48,8 @@ export type {
   UsageSink,
   PricingSource,
   AuthMaterial,
+  ApiKeyAuth,
+  CliSessionAuth,
   Clock,
   IdGenerator,
   Logger,

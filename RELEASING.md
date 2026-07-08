@@ -76,14 +76,16 @@ Do not keep both a pending changeset file and a committed version bump for the s
 
 All packages are published to the `@gullabs` scope and already have `publishConfig.access = "public"`:
 
-| Package            | npm                                            |
-| ------------------ | ---------------------------------------------- |
-| `@gullabs/any-llm` | https://www.npmjs.com/package/@gullabs/any-llm |
-| `@gullabs/core`    | https://www.npmjs.com/package/@gullabs/core    |
-| `@gullabs/google`  | https://www.npmjs.com/package/@gullabs/google  |
-| `@gullabs/drizzle` | https://www.npmjs.com/package/@gullabs/drizzle |
-| `@gullabs/quota`   | https://www.npmjs.com/package/@gullabs/quota   |
-| `@gullabs/testing` | https://www.npmjs.com/package/@gullabs/testing |
+| Package               | npm                                               |
+| --------------------- | ------------------------------------------------- |
+| `@gullabs/any-llm`    | https://www.npmjs.com/package/@gullabs/any-llm    |
+| `@gullabs/core`       | https://www.npmjs.com/package/@gullabs/core       |
+| `@gullabs/google`     | https://www.npmjs.com/package/@gullabs/google     |
+| `@gullabs/drizzle`    | https://www.npmjs.com/package/@gullabs/drizzle    |
+| `@gullabs/quota`      | https://www.npmjs.com/package/@gullabs/quota      |
+| `@gullabs/testing`    | https://www.npmjs.com/package/@gullabs/testing    |
+| `@gullabs/claude-cli` | https://www.npmjs.com/package/@gullabs/claude-cli |
+| `@gullabs/codex-cli`  | https://www.npmjs.com/package/@gullabs/codex-cli  |
 
 ## Required repository secret
 
