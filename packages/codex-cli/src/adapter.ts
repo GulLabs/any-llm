@@ -361,29 +361,83 @@ function mapUsage(usage: TurnUsage | undefined): Usage {
  * false` on every object level or it 400s.
  *
  * Per the reject-don't-map convention, this adapter never silently mutates
- * the caller-supplied JSON Schema — it requires `additionalProperties:
- * false` to be explicitly present at the TOP LEVEL and rejects with
- * `bad_request` otherwise. The schema is otherwise passed through
- * byte-identical (same object reference) to `JSON.stringify` — no clone, no
- * rewrite.
+ * the caller-supplied JSON Schema — it walks the full schema tree and
+ * requires `additionalProperties: false` to be explicitly present on every
+ * object-schema node (root and nested), rejecting with `bad_request` and the
+ * JSON path to the first offending node otherwise. The schema is otherwise
+ * passed through byte-identical (same object reference) to `JSON.stringify`
+ * — this function only validates, it never clones or rewrites.
  *
- * LIMITATION (documented, out of scope for v1): this only validates the
- * top-level schema. We do NOT deep-recurse into nested `properties` /
- * `items` / `$defs` — callers with nested object schemas must set
- * `additionalProperties: false` themselves at every nested level, or codex
- * will 400 on those nested schemas.
+ * Recurses into `properties` (each value), `items` (single-schema or
+ * tuple/array form), `prefixItems`, `$defs` / `definitions` (each value),
+ * and `anyOf` / `oneOf` / `allOf` (each member).
  */
-function assertTopLevelAdditionalPropertiesFalse(schema: JsonValue): void {
+function assertAdditionalPropertiesFalseDeep(schema: JsonValue, path = ''): void {
   const isObjectSchema =
     schema !== null && typeof schema === 'object' && !Array.isArray(schema)
   if (!isObjectSchema) return
 
-  const additionalProperties = (schema as Record<string, JsonValue>).additionalProperties
-  if (additionalProperties !== false) {
+  const node = schema as Record<string, JsonValue>
+  const looksLikeObjectSchema = node.type === 'object' || 'properties' in node
+  const displayPath = path.length > 0 ? path : '<root>'
+
+  if (looksLikeObjectSchema && node.additionalProperties !== false) {
     throw new LlmError(
-      "codex-cli requires outputJsonSchema to have a top-level `additionalProperties: false` set explicitly — codex's --output-schema mode 400s without it, and this adapter will not silently inject or rewrite caller-provided schemas. Set `additionalProperties: false` on your schema and retry.",
+      `codex-cli requires \`additionalProperties: false\` to be explicitly set on every object-schema node in outputJsonSchema — codex's --output-schema mode 400s without it, and this adapter will not silently inject or rewrite caller-provided schemas. Missing at \`${displayPath}\`. Set \`additionalProperties: false\` on that node and retry.`,
       { kind: 'bad_request', retryable: false, provider: 'codex-cli' },
     )
+  }
+
+  const withPrefix = (segment: string): string =>
+    path.length > 0 ? `${path}.${segment}` : segment
+
+  if (
+    node.properties !== null &&
+    typeof node.properties === 'object' &&
+    !Array.isArray(node.properties)
+  ) {
+    for (const [key, value] of Object.entries(
+      node.properties as Record<string, JsonValue>,
+    )) {
+      assertAdditionalPropertiesFalseDeep(value, withPrefix(`properties.${key}`))
+    }
+  }
+
+  if (node.items !== undefined) {
+    if (Array.isArray(node.items)) {
+      node.items.forEach((item, index) => {
+        assertAdditionalPropertiesFalseDeep(item, withPrefix(`items[${index}]`))
+      })
+    } else {
+      assertAdditionalPropertiesFalseDeep(node.items, withPrefix('items'))
+    }
+  }
+
+  if (Array.isArray(node.prefixItems)) {
+    node.prefixItems.forEach((item, index) => {
+      assertAdditionalPropertiesFalseDeep(item, withPrefix(`prefixItems[${index}]`))
+    })
+  }
+
+  for (const defsKey of ['$defs', 'definitions'] as const) {
+    const defs = node[defsKey]
+    if (defs !== null && typeof defs === 'object' && !Array.isArray(defs)) {
+      for (const [key, value] of Object.entries(defs as Record<string, JsonValue>)) {
+        assertAdditionalPropertiesFalseDeep(value, withPrefix(`${defsKey}.${key}`))
+      }
+    }
+  }
+
+  for (const combinatorKey of ['anyOf', 'oneOf', 'allOf'] as const) {
+    const combinator = node[combinatorKey]
+    if (Array.isArray(combinator)) {
+      combinator.forEach((member, index) => {
+        assertAdditionalPropertiesFalseDeep(
+          member,
+          withPrefix(`${combinatorKey}[${index}]`),
+        )
+      })
+    }
   }
 }
 
@@ -459,7 +513,7 @@ export function codexCliAdapter(opts?: CodexCliAdapterOptions): ProviderAdapter 
           const structuredOutputRequested = req.outputJsonSchema !== undefined
           if (structuredOutputRequested) {
             const schema = req.outputJsonSchema as JsonValue
-            assertTopLevelAdditionalPropertiesFalse(schema)
+            assertAdditionalPropertiesFalseDeep(schema)
             const schemaPath = join(scratchDir, 'schema.json')
             await writeFile(schemaPath, JSON.stringify(schema), 'utf-8')
             args.push('--output-schema', schemaPath)
@@ -579,17 +633,17 @@ export function codexCliAdapter(opts?: CodexCliAdapterOptions): ProviderAdapter 
             preferredText = lastAgentMessage
           }
 
-          const hasTurnCompleted = events.some((event) => event.type === 'turn.completed')
-
-          // exitCode === 0 with neither a turn.completed event nor any
-          // final text (from the -o file or an item.completed agent_message)
-          // means codex produced nothing we can parse a result out of —
-          // treat this as a false success rather than silently returning an
-          // empty/zeroed AdapterResult.
-          if (!hasTurnCompleted && preferredText === undefined) {
+          // exitCode === 0 with no final text (from the -o file or an
+          // item.completed agent_message) means codex produced nothing we
+          // can parse a result out of — treat this as a false success
+          // rather than silently returning an empty/zeroed AdapterResult.
+          // This can happen even when turn.completed IS present: a
+          // truncated stream can retain the turn.completed envelope while
+          // losing the answer payload itself.
+          if (preferredText === undefined) {
             const stdoutTail = stdout.slice(-1000)
             throw new LlmError(
-              `codex produced no parseable result — protocol/version mismatch? stdout tail: ${stdoutTail}`,
+              `codex completed without a final message — truncated or incompatible output. stdout tail: ${stdoutTail}`,
               { kind: 'server', retryable: false, provider: 'codex-cli' },
             )
           }
@@ -602,7 +656,7 @@ export function codexCliAdapter(opts?: CodexCliAdapterOptions): ProviderAdapter 
           }
 
           let rawStructured: unknown
-          if (structuredOutputRequested && preferredText !== undefined) {
+          if (structuredOutputRequested) {
             try {
               rawStructured = JSON.parse(preferredText)
             } catch {
@@ -645,9 +699,7 @@ export function codexCliAdapter(opts?: CodexCliAdapterOptions): ProviderAdapter 
             // envelope (no MAX_TOKENS/safety marker) — 'stop' is the only
             // supportable value on a successful turn.completed.
             finishReason: 'stop',
-            ...(preferredText !== undefined && preferredText.length > 0
-              ? { text: preferredText }
-              : {}),
+            ...(preferredText.length > 0 ? { text: preferredText } : {}),
             ...(rawStructured !== undefined ? { rawStructured } : {}),
             ...(threadId !== undefined ? { providerMetadata: { threadId } } : {}),
           }

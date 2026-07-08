@@ -237,6 +237,154 @@ describe('structured output', () => {
     expect(writtenSchema).toEqual(inputSchema)
   })
 
+  it('rejects with bad_request when a nested object schema omits additionalProperties:false, and the message includes the JSON path', async () => {
+    const { runner, calls } = makeFakeRunner(async (call) => {
+      const outputPath = call.args[call.args.indexOf('-o') + 1] as string
+      await writeFile(outputPath, '{"greeting":"hi"}', 'utf-8')
+      return { stdout: STRUCTURED_JSONL, stderr: '', exitCode: 0 }
+    })
+    const adapter = codexCliAdapter({ runner })
+
+    try {
+      await adapter.run(
+        makeResolvedReq({
+          outputJsonSchema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              nested: {
+                type: 'object',
+                properties: { a: { type: 'string' } },
+              },
+            },
+          },
+        }),
+        FAKE_CTX,
+      )
+      expect.unreachable('should have thrown')
+    } catch (e) {
+      expect(e).toBeInstanceOf(LlmError)
+      expect((e as LlmError).kind).toBe('bad_request')
+      expect((e as LlmError).retryable).toBe(false)
+      expect((e as LlmError).message).toContain('properties.nested')
+    }
+    expect(calls).toHaveLength(0)
+  })
+
+  it('passes a deeply compliant schema (nested objects, array items, tuple items, prefixItems, $defs/definitions, anyOf/oneOf/allOf) through byte-identical', async () => {
+    let writtenSchema: unknown
+    const inputSchema = {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        nested: {
+          type: 'object',
+          additionalProperties: false,
+          properties: { a: { type: 'string' } },
+        },
+        list: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            properties: { b: { type: 'number' } },
+          },
+        },
+        tuple: {
+          type: 'array',
+          items: [
+            {
+              type: 'object',
+              additionalProperties: false,
+              properties: { x: { type: 'string' } },
+            },
+            { type: 'string' },
+          ],
+        },
+        prefixed: {
+          type: 'array',
+          prefixItems: [
+            {
+              type: 'object',
+              additionalProperties: false,
+              properties: { y: { type: 'number' } },
+            },
+          ],
+        },
+        variant: {
+          anyOf: [
+            {
+              type: 'object',
+              additionalProperties: false,
+              properties: { c: { type: 'string' } },
+            },
+            { type: 'string' },
+          ],
+        },
+        variantOne: {
+          oneOf: [
+            {
+              type: 'object',
+              additionalProperties: false,
+              properties: { d: { type: 'string' } },
+            },
+            { type: 'number' },
+          ],
+        },
+        variantAll: {
+          allOf: [
+            {
+              type: 'object',
+              additionalProperties: false,
+              properties: { e: { type: 'string' } },
+            },
+          ],
+        },
+      },
+      $defs: {
+        Foo: {
+          type: 'object',
+          additionalProperties: false,
+          properties: { z: { type: 'string' } },
+        },
+      },
+      definitions: {
+        Bar: {
+          type: 'object',
+          additionalProperties: false,
+          properties: { w: { type: 'string' } },
+        },
+      },
+    }
+    const { runner } = makeFakeRunner(async (call) => {
+      const schemaFlagIndex = call.args.indexOf('--output-schema')
+      const schemaPath = call.args[schemaFlagIndex + 1] as string
+      const fs = await import('node:fs/promises')
+      writtenSchema = JSON.parse(await fs.readFile(schemaPath, 'utf-8'))
+      const outputPath = call.args[call.args.indexOf('-o') + 1] as string
+      await fs.writeFile(outputPath, '{"greeting":"hi"}', 'utf-8')
+      return { stdout: STRUCTURED_JSONL, stderr: '', exitCode: 0 }
+    })
+    const adapter = codexCliAdapter({ runner })
+    await adapter.run(makeResolvedReq({ outputJsonSchema: inputSchema }), FAKE_CTX)
+
+    expect(writtenSchema).toEqual(inputSchema)
+  })
+
+  it('leaves a non-object root schema unaffected (no throw)', async () => {
+    const { runner, calls } = makeFakeRunner(async (call) => {
+      const outputPath = call.args[call.args.indexOf('-o') + 1] as string
+      await writeFile(outputPath, '"hi"', 'utf-8')
+      return { stdout: STRUCTURED_JSONL, stderr: '', exitCode: 0 }
+    })
+    const adapter = codexCliAdapter({ runner })
+
+    await expect(
+      adapter.run(makeResolvedReq({ outputJsonSchema: { type: 'string' } }), FAKE_CTX),
+    ).resolves.toBeDefined()
+    expect(calls).toHaveLength(1)
+  })
+
   it('pushes a warning and leaves rawStructured undefined on unparseable -o content', async () => {
     const { runner } = makeFakeRunner(async (call) => {
       const outputPath = call.args[call.args.indexOf('-o') + 1] as string
@@ -657,7 +805,7 @@ describe('false success on empty/truncated/malformed JSONL', () => {
       expect(e).toBeInstanceOf(LlmError)
       expect((e as LlmError).kind).toBe('server')
       expect((e as LlmError).retryable).toBe(false)
-      expect((e as LlmError).message).toContain('no parseable result')
+      expect((e as LlmError).message).toContain('codex completed without a final message')
     }
   })
 
@@ -710,6 +858,47 @@ describe('false success on empty/truncated/malformed JSONL', () => {
         message: expect.stringContaining('usage') as unknown as string,
       }),
     )
+  })
+
+  it('throws kind:"server" when turn.completed is present but no -o file and no agent_message text exist', async () => {
+    const stream = [
+      '{"type":"thread.started","thread_id":"019f435f-4756-7242-98ab-d536aa30e739"}',
+      '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":0}}',
+    ].join('\n')
+    const { runner } = makeFakeRunner(async () => ({
+      stdout: stream,
+      stderr: '',
+      exitCode: 0,
+    }))
+    const adapter = codexCliAdapter({ runner })
+
+    try {
+      await adapter.run(makeResolvedReq(), FAKE_CTX)
+      expect.unreachable('should have thrown')
+    } catch (e) {
+      expect(e).toBeInstanceOf(LlmError)
+      expect((e as LlmError).kind).toBe('server')
+      expect((e as LlmError).retryable).toBe(false)
+      expect((e as LlmError).message).toContain('codex completed without a final message')
+    }
+  })
+
+  it('succeeds (does not throw) when the final agent_message text is an empty string', async () => {
+    const stream = [
+      '{"type":"thread.started","thread_id":"019f435f-4756-7242-98ab-d536aa30e739"}',
+      '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":""}}',
+      '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":0}}',
+    ].join('\n')
+    const { runner } = makeFakeRunner(async () => ({
+      stdout: stream,
+      stderr: '',
+      exitCode: 0,
+    }))
+    const adapter = codexCliAdapter({ runner })
+    const result = await adapter.run(makeResolvedReq(), FAKE_CTX)
+
+    expect(result.text).toBeUndefined()
+    expect(result.finishReason).toBe('stop')
   })
 })
 
