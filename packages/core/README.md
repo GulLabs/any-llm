@@ -31,12 +31,13 @@ import { createClient, geminiPricingSource, defineCallSite } from '@gullabs/core
 
 const client = createClient({
   adapters: [myAdapter],
-  pricing: geminiPricingSource(),
+  pricingSources: { google: geminiPricingSource() },
   sink: mySink,
 })
 
 const callSite = defineCallSite({
   id: 'summarise',
+  provider: 'google',
   model: 'gemini-2.5-flash',
   jsonSchema: {
     type: 'object',
@@ -74,7 +75,7 @@ Built-in descriptors own the model-config contract:
 ```ts
 import { defaultGeminiRegistry } from '@gullabs/core'
 
-const descriptor = defaultGeminiRegistry.resolve('gemini-3.5-flash')
+const descriptor = defaultGeminiRegistry.resolve('google', 'gemini-3.5-flash')
 if (!descriptor) throw new Error('unknown model')
 
 // Derived JSON Schema for UI/forms.
@@ -122,7 +123,7 @@ import pino from 'pino'
 
 const client = createClient({
   adapters: [myAdapter],
-  pricing: geminiPricingSource(),
+  pricingSources: { google: geminiPricingSource() },
   logger: pino(),
 })
 ```

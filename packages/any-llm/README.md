@@ -28,11 +28,12 @@ import {
 
 const client = createClient({
   adapters: [geminiAdapter()],
-  pricing: geminiPricingSource(),
+  pricingSources: { google: geminiPricingSource() },
 })
 
 const summarize = defineCallSite({
   id: 'summarize',
+  provider: 'google',
   model: 'gemini-2.5-flash',
   jsonSchema: {
     type: 'object',
@@ -52,7 +53,7 @@ const result = await client.runStructured(
   { auth: { apiKey: process.env.GEMINI_API_KEY! } },
 )
 
-const descriptor = defaultGeminiRegistry.resolve('gemini-3.5-flash')
+const descriptor = defaultGeminiRegistry.resolve('google', 'gemini-3.5-flash')
 if (!descriptor) throw new Error('unknown model')
 
 const parsedConfig = descriptor.configSchema.parse({

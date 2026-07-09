@@ -35,12 +35,13 @@ import {
 // 1. Wire up the client — no auth here; the library never reads credentials
 const client = createClient({
   adapters: [geminiAdapter()],
-  pricing: geminiPricingSource(),
+  pricingSources: { google: geminiPricingSource() },
 })
 
 // 2. Define a reusable call site with a structured output schema
 const codeReview = defineCallSite({
   id: 'code-review',
+  provider: 'google',
   model: 'gemini-2.5-flash',
   jsonSchema: {
     type: 'object',
@@ -113,7 +114,7 @@ Strict model config is descriptor-owned. The runtime boundary is
 ```ts
 import { defaultGeminiRegistry } from '@gullabs/core'
 
-const descriptor = defaultGeminiRegistry.resolve('gemini-3.5-flash')
+const descriptor = defaultGeminiRegistry.resolve('google', 'gemini-3.5-flash')
 if (!descriptor) throw new Error('unknown model')
 
 // 1. Build forms from the descriptor's derived JSON Schema.
@@ -127,7 +128,8 @@ const parsedConfig = descriptor.configSchema.parse({
 
 await client.generate(
   {
-    model: descriptor.id,
+    provider: descriptor.provider,
+    model: descriptor.model,
     messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Summarize this PR.' }] }],
     config: parsedConfig,
   },
@@ -156,7 +158,7 @@ Every call — whether `generate()` or `runStructured()` — goes through the pi
 generate() / runStructured()
   → resolveConfig()               [libDefaults → callSite → opts; deep-merge]
   → validateModelConfig()         [Standard Schema pre-dispatch check; terminal on failure]
-  → route(model, adapters)        → ProviderAdapter
+  → route(provider, model, adapters) → ProviderAdapter
   → opts.auth                     → AuthMaterial  [required per-call; never read from env]
   → rateLimiter.acquire("provider:model")    [pre-send pacing; propagates on reject]
   → adapter.run(resolved, ctx)    ← provider SDK (anti-corruption layer)
@@ -187,6 +189,7 @@ The design is **Ports & Adapters (hexagonal)**: the core engine depends only on 
 // Inline image (base64, no data: prefix)
 const result = await client.generate(
   {
+    provider: 'google',
     model: 'gemini-2.5-flash',
     messages: [
       {
@@ -209,6 +212,7 @@ const result = await client.generate(
 // File already uploaded to Gemini Files API
 const result2 = await client.generate(
   {
+    provider: 'google',
     model: 'gemini-2.5-flash',
     messages: [
       {
@@ -234,6 +238,7 @@ API-verified Gemma 4 models: `gemma-4-31b-it` and `gemma-4-26b-a4b-it`:
 ```ts
 const qa = await client.generate(
   {
+    provider: 'google',
     model: 'gemma-4-26b-a4b-it',
     messages: [
       {
@@ -296,6 +301,7 @@ const handle = await store.upload(pdfBytes, 'application/pdf', {
 // handle.uri → FileUriPart.uri
 const result = await client.generate(
   {
+    provider: 'google',
     model: 'gemini-2.5-pro',
     messages: [
       {
@@ -335,6 +341,7 @@ const cacheHandle = await cacheStore.getOrCreate(
 // Pass the cache name through the allowlisted Google provider-options lane
 const result = await client.generate(
   {
+    provider: 'google',
     model: 'gemini-2.5-pro',
     messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Summarise section 3.' }] }],
     config: {
@@ -363,6 +370,7 @@ automatically. To set an explicit per-call deadline on top of that:
 ```ts
 const result = await client.generate(
   {
+    provider: 'google',
     model: 'gemini-2.5-pro',
     messages: [
       {
@@ -415,7 +423,7 @@ calculations and aggregation, use `microUsd` from the persisted record.
 
 ```ts
 const result = await client.generate(
-  { model: 'gemini-2.5-flash', messages },
+  { provider: 'google', model: 'gemini-2.5-flash', messages },
   { auth: { apiKey: process.env.GEMINI_API_KEY! } },
 )
 if (result.cost) {
@@ -435,7 +443,7 @@ Do not treat it as an override lane for descriptor-owned fields like
 ```ts
 import { defaultGeminiRegistry } from '@gullabs/core'
 
-const descriptor = defaultGeminiRegistry.resolve('gemini-2.5-pro')
+const descriptor = defaultGeminiRegistry.resolve('google', 'gemini-2.5-pro')
 if (!descriptor) throw new Error('unknown model')
 
 // Parse the exact provider extension shape through the descriptor schema.
@@ -447,7 +455,8 @@ const config = descriptor.configSchema.parse({
 
 const result = await client.generate(
   {
-    model: descriptor.id,
+    provider: descriptor.provider,
+    model: descriptor.model,
     messages: [...],
     config,
   },
@@ -461,6 +470,7 @@ lane when the descriptor admits them:
 ```ts
 await client.generate(
   {
+    provider: 'google',
     model: 'gemini-2.5-flash',
     messages: [...],
     config: {
@@ -491,11 +501,12 @@ retry attempts and back-off sleep periods, when the retry middleware is installe
 ```ts
 const client = createClient({
   adapters: [geminiAdapter()],
-  pricing: geminiPricingSource(),
+  pricingSources: { google: geminiPricingSource() },
   middleware: [retryMiddleware({ maxAttempts: 3 })],
 })
 
 const result = await client.generate({
+  provider: 'google',
   model: 'gemini-2.5-flash',
   messages: [...],
   config: {
@@ -527,7 +538,7 @@ const logger = pino()
 
 const client = createClient({
   adapters: [geminiAdapter()],
-  pricing: geminiPricingSource(),
+  pricingSources: { google: geminiPricingSource() },
   sink: drizzleUsageSink(db, llmCalls),
   logger, // inject your logger here
 })
@@ -560,16 +571,16 @@ const client = createClient({
   // …
   telemetry: {
     onStart(e) {
-      // e: { callId, model, callSiteId?, metadata }
+      // e: { callId, provider, model, callSiteId?, metadata }
       return myTracer.startSpan('llm.call', { attributes: { model: e.model } })
     },
     onSuccess(e, span) {
-      // e: { callId, attemptId, model, latencyMs, usage, cost?, metadata }
+      // e: { callId, attemptId, provider, model, latencyMs, usage, cost?, metadata }
       span?.setStatus({ code: SpanStatusCode.OK })
       span?.end()
     },
     onError(e, span) {
-      // e: { callId, attemptId?, model, latencyMs, errorKind, retryable, metadata }
+      // e: { callId, attemptId?, provider, model, latencyMs, errorKind, retryable, metadata }
       span?.setStatus({ code: SpanStatusCode.ERROR })
       span?.end()
     },

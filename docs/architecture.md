@@ -36,16 +36,16 @@ Concrete implementations live outside the engine, in separate packages or in hos
 
 ### Ports
 
-| Port              | Who implements                                           | Notes                                                                                                                                  |
-| ----------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `ProviderAdapter` | `@gullabs/google`, future provider packages              | Translates `ResolvedRequest` ↔ raw SDK. Never validates, costs, or persists.                                                           |
-| `UsageSink`       | Host app, `@gullabs/drizzle`                             | Receives completed `LlmCallRecord`. Called fail-open.                                                                                  |
-| `PricingSource`   | `@gullabs/core` (built-in Gemini snapshot), or custom    | Returns `Cost` for a model + usage; exposes `hasModel`/`listModels` for strict construction-time checks. Runtime pricing is fail-open. |
-| `RateLimiter`     | Host app, `@gullabs/quota`, or another companion package | Pre-send backpressure. `acquire` is fail-closed. Default is a no-op; wait time is recorded as `queueDelayMs`.                          |
-| `Telemetry`       | Host app (Sentry / PostHog / OTel hook)                  | Optional; all callbacks are optional. Called fail-open.                                                                                |
-| `Logger`          | Host app                                                 | Structured logger (`info`, `warn`, `error`). Defaults to no-op.                                                                        |
-| `Clock`           | `@gullabs/testing` (`FakeClock`) or default              | `Date.now()` abstraction for deterministic latency in tests.                                                                           |
-| `IdGenerator`     | `@gullabs/testing` (`FakeIds`) or default                | `crypto.randomUUID()` abstraction for deterministic records in tests.                                                                  |
+| Port              | Who implements                                           | Notes                                                                                                                                                                                |
+| ----------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ProviderAdapter` | `@gullabs/google`, future provider packages              | Translates `ResolvedRequest` ↔ raw SDK. Never validates, costs, or persists.                                                                                                         |
+| `UsageSink`       | Host app, `@gullabs/drizzle`                             | Receives completed `LlmCallRecord`. Called fail-open.                                                                                                                                |
+| `PricingSource`   | `@gullabs/core` (built-in Gemini snapshot), or custom    | Provider-scoped source configured per provider via `ClientConfig.pricingSources`; exposes `hasModel`/`listModels` for strict construction-time checks. Runtime pricing is fail-open. |
+| `RateLimiter`     | Host app, `@gullabs/quota`, or another companion package | Pre-send backpressure. `acquire` is fail-closed. Default is a no-op; wait time is recorded as `queueDelayMs`.                                                                        |
+| `Telemetry`       | Host app (Sentry / PostHog / OTel hook)                  | Optional; all callbacks are optional. Called fail-open.                                                                                                                              |
+| `Logger`          | Host app                                                 | Structured logger (`info`, `warn`, `error`). Defaults to no-op.                                                                                                                      |
+| `Clock`           | `@gullabs/testing` (`FakeClock`) or default              | `Date.now()` abstraction for deterministic latency in tests.                                                                                                                         |
+| `IdGenerator`     | `@gullabs/testing` (`FakeIds`) or default                | `crypto.randomUUID()` abstraction for deterministic records in tests.                                                                                                                |
 
 ### Component Diagram
 
@@ -112,9 +112,11 @@ interpolation and config-layer merging before handing off to the shared core.
 4. **callId assignment.** One UUID per logical call, stable across all retry attempts. Emitted
    in `llm.call.start` log and forwarded to `telemetry.onStart`.
 
-5. **ModelDescriptor resolution.** The registry resolves the model string (exact-ID, then
-   longest-prefix). The resolved descriptor is attached to `ResolvedRequest` for the adapter's
-   use (`reasoningApi` variant, capability flags).
+5. **ModelDescriptor resolution.** The registry resolves the explicit
+   (`req.provider`, `req.model`) pair — exact match first, then longest-prefix within that
+   provider only. An unregistered pair throws `LlmError('bad_request')` at the public API
+   boundary (reject, don't map). The resolved descriptor is attached to `ResolvedRequest` for
+   the adapter's use (`reasoningApi` variant, capability flags).
 
 6. **Middleware chain construction.** `config.middleware` (outermost-first) is folded right-to-left
    around `runAttempt` using `reduceRight`. The resulting `Handler` is a single function that
@@ -140,10 +142,12 @@ attempt. Steps:
    resolved model config. Failure throws `LlmError('bad_request', retryable: false)` before any
    network I/O.
 
-2. **Route.** `routeFn(model, adapters)` selects the `ProviderAdapter`. With a single adapter,
-   it is used unconditionally. With multiple adapters, the default router reads `adapter.id`
-   against the derived provider (from registry, then slash convention). A custom `route` function
-   can override entirely.
+2. **Route.** `routeFn(provider, model, adapters)` selects the `ProviderAdapter`. The default
+   router is a direct `adapterMap.get(req.provider)` lookup — there is no derivation from
+   `model`, no slash-convention parsing, and no single-adapter bypass. A custom `route`
+   function can pick among same-provider adapters, but after any router returns, the engine
+   asserts `adapter.id === req.provider` and throws `LlmError('bad_request')` on mismatch —
+   routing can never cross providers.
 
 3. **Cancellation scaffolding.** Two independent `Promise<never>` rejection promises are built:
    one fires when the caller's `AbortSignal` fires, one fires after `timeoutMs`. The timeout
@@ -169,9 +173,10 @@ attempt. Steps:
    provider text into `rawStructured` when possible. The engine returns `output` and
    `outputParsed`; it never validates shape. Callers own validation, retry, and acceptance policy.
 
-8. **Cost computation.** `pricing.price(pricingKey, usage, serviceTier)` is called inside a
-   try/catch. Failure appends an `'other'` warning and logs `llm.call.cost.failed`; the call
-   succeeds without a `cost` field (fail-open).
+8. **Cost computation.** The engine selects the provider-scoped source
+   `pricingSources[req.provider]` and calls `source.price(pricingKey, usage, serviceTier)`
+   inside a try/catch. No source for the provider, or a failure, appends an `'other'` warning
+   and logs `llm.call.cost.failed`; the call succeeds without a `cost` field (fail-open).
 
 9. **Record assembly.** `buildRecord` assembles an `LlmCallRecord` from all collected fields.
    This is a pure function with no I/O. Token hot fields (`inputTokens`, `outputTokens`, etc.)
@@ -348,8 +353,11 @@ not survive restarts.
 
 Each descriptor carries:
 
-- `id` — the base model string (used as exact-match key and prefix).
-- `provider` — matches the `ProviderAdapter.id` used for routing.
+- `model` — the bare provider-native model string (used as exact-match key and prefix).
+  Identity is the pair (`provider`, `model`); the same bare `model` may exist under multiple
+  providers with different config schemas.
+- `provider` — matches the `ProviderAdapter.id` used for routing. `createClient` verifies at
+  construction that every registry descriptor's `provider` matches a configured adapter's `id`.
 - `pricingFamily` — the key into the pricing table (e.g., `"gemini-2.5-pro"` for
   `"gemini-2.5-pro-001"`).
 - `capabilities.reasoningApi` — `'budget'` (Gemini 2.5 series, `thinkingBudget`) or
@@ -364,16 +372,17 @@ Each descriptor carries:
 
 ### Resolution Order
 
-`ModelRegistry.resolve(model)`:
+`ModelRegistry.resolve(provider, model)`:
 
-1. Exact match on `descriptor.id` — O(1) hash lookup.
-2. Longest-prefix match — linear scan; first candidate with `model.startsWith(id)` and longest
-   `id` wins.
+1. Exact match on the (`provider`, `model`) pair — O(1) hash lookup.
+2. Longest-prefix match — linear scan **within that provider only**; the candidate with
+   `model.startsWith(descriptor.model)` and the longest `descriptor.model` wins. Prefix
+   matching never crosses providers.
 3. `undefined` — no descriptor found.
 
-When `undefined`, the engine derives the provider by the `provider/model` slash convention, then
-falls back to `'unknown'`. With a single adapter configured, routing succeeds regardless;
-with multiple adapters, an unknown provider throws `LlmError('bad_request')`.
+When `undefined`, the engine throws `LlmError('bad_request')` at the public API boundary.
+There is no provider derivation, no `provider/model` slash convention, and no `'unknown'`
+fallback — `req.provider` is explicit and authoritative on every request.
 
 ### Default Registry
 
@@ -423,7 +432,14 @@ Register model descriptors with a custom `ModelRegistry`:
 import { createModelRegistry } from '@gullabs/core'
 
 const registry = createModelRegistry([
-  { id: 'my-model-v1', provider: 'myprovider', pricingFamily: 'my-model-v1' },
+  {
+    model: 'my-model-v1', // bare provider-native string; identity is (provider, model)
+    provider: 'myprovider',
+    pricingFamily: 'my-model-v1',
+    configSchema: MyModelConfigSchema, // strict Zod schema — required
+    configJsonSchema: toConfigJsonSchema(MyModelConfigSchema),
+    validateConfig: zodToStandardSchema(MyModelConfigSchema),
+  },
 ])
 
 const client = createClient({ adapters: [myAdapter], modelRegistry: registry, ... })
@@ -535,8 +551,9 @@ foundation needs to be solid before the surface expands.
 breaking change to the engine.
 
 **Additional providers.** The `ProviderAdapter` port and routing infrastructure are in place for
-Anthropic, OpenAI, and others. v1 ships the Google adapter for Gemini and Gemma. Multi-adapter setups work today
-with the custom `route` option; the default router handles the single-adapter case.
+Anthropic, OpenAI, and others. v1 ships the Google adapter for Gemini and Gemma. Multi-adapter
+setups work today: the default router matches `req.provider` against adapter ids directly, one
+adapter configured or ten.
 
 **Function calling / tool use.** `LlmRequest` does not yet carry a `tools` field. The `Part`
 union's `kind` discriminant is reserved for future `tool-call` and `tool-result` variants.

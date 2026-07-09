@@ -283,6 +283,13 @@ export function claudeCliAdapter(opts?: ClaudeCliAdapterOptions): ProviderAdapte
         )
       }
 
+      if (req.provider !== 'claude-cli') {
+        throw new LlmError(
+          `@gullabs/claude-cli received a request routed for provider "${req.provider}" — this adapter only serves "claude-cli"`,
+          { kind: 'bad_request', retryable: false, provider: 'claude-cli' },
+        )
+      }
+
       const warnings: Warning[] = []
       const model = req.model
       const config = req.config

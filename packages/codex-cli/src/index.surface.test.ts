@@ -13,6 +13,6 @@ describe('@gullabs/codex-cli package surface', () => {
   })
 
   it('codexCliRegistry.resolve("gpt-5.4-mini") is defined', () => {
-    expect(codexCliRegistry.resolve('gpt-5.4-mini')).toBeDefined()
+    expect(codexCliRegistry.resolve('codex-cli', 'gpt-5.4-mini')).toBeDefined()
   })
 })

@@ -240,8 +240,17 @@ export interface GenConfig {
  */
 export interface LlmRequest {
   /**
-   * Routing key — the engine maps this to a provider adapter.
-   * v1 resolves `gemini-*`; unknown models throw `LlmError('bad_request')`.
+   * Explicit provider identifier — the engine routes by this field directly
+   * (`adapterMap.get(provider)`), never by deriving it from `model`.
+   * Must match a configured adapter's `id`; otherwise the engine throws
+   * `LlmError('bad_request')`.
+   */
+  provider: string
+  /**
+   * Provider-native model string, forwarded verbatim to the adapter/SDK.
+   * Identity for registry/pricing/routing purposes is the pair
+   * (`provider`, `model`) — the bare string alone is not unique across
+   * providers.
    */
   model: string
   /** Optional system instruction prepended to the conversation. */

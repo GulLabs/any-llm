@@ -77,6 +77,8 @@ function normalizeEntry(entry: FakeAdapterEntry): QueueEntry {
  * @example
  * ```ts
  * const adapter = new FakeAdapter('google', successResult)
+ * const client = createClient({ adapters: [adapter] })
+ * await client.generate({ provider: 'google', model: 'gemini-2.5-pro', messages })
  *
  * const adapter2 = new FakeAdapter('google', [
  *   successResult,

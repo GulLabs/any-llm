@@ -35,7 +35,13 @@ import type { ModelDescriptor } from './registry.js'
  * rendered prompts, and merged config.
  */
 export interface ResolvedRequest {
-  /** Final model identifier (after any alias resolution). */
+  /**
+   * Provider identifier — authoritative for routing.  Adapters MAY assert
+   * `req.provider === adapter.id` defensively; the engine already guarantees
+   * this post-route.
+   */
+  provider: string
+  /** Final model identifier (after any alias resolution). Forwarded verbatim to the SDK/CLI. */
   model: string
   /** Rendered system instruction, if any. */
   system?: string
@@ -183,7 +189,8 @@ export type Release = () => void
  * may wait arbitrarily long inside `acquire`.
  *
  * ## Key format
- * The engine builds keys as `"${provider}:${model}"` (e.g. `"google:gemini-2.5-pro"`).
+ * The engine builds keys as `"${provider}:${model}"` (e.g. `"google:gemini-2.5-pro"`),
+ * with `provider` sourced directly from `req.provider` (never derived).
  * Rate limits are per-provider+model because providers enforce quotas per model,
  * and a single instance may call multiple models concurrently.
  *
@@ -259,8 +266,13 @@ export interface UsageSink {
 /**
  * Looks up cost for a given model and usage.
  *
- * v1 ships a built-in Gemini pricing table; hosts can supply a custom source
- * to override or extend it.
+ * A `PricingSource` is **provider-scoped**: its `price`/`hasModel`/`listModels`
+ * methods operate on bare provider-native model keys for exactly one
+ * provider. Cross-provider composition happens at the client config level via
+ * `ClientConfig.pricingSources` (keyed by provider), not inside this port.
+ *
+ * v1 ships a built-in Gemini (google-scoped) pricing table; hosts can supply
+ * a custom source per provider to override or extend it.
  */
 export interface PricingSource {
   /** Identifies the pricing snapshot (e.g. `"gemini-2026-06-27"`). */
@@ -376,6 +388,8 @@ export interface Logger {
 export interface CallStartEvent {
   /** Stable call identifier (matches persisted record). */
   callId: string
+  /** Provider identifier, sourced from `req.provider`. */
+  provider: string
   /** Model string as supplied by the caller. */
   model: string
   /** Call-site identifier, if the call was made via `runStructured`. */
@@ -397,6 +411,8 @@ export interface CallSuccessEvent {
   callId: string
   /** Attempt identifier of the successful attempt. */
   attemptId: string
+  /** Provider identifier, sourced from `req.provider`. */
+  provider: string
   /** Model string as supplied by the caller. */
   model: string
   /** Call-site identifier, if the call was made via `runStructured`. */
@@ -430,6 +446,8 @@ export interface CallErrorEvent {
    * write failed.
    */
   attemptId?: string
+  /** Provider identifier, sourced from `req.provider`. */
+  provider: string
   /** Model string as supplied by the caller. */
   model: string
   /** Call-site identifier, if the call was made via `runStructured`. */

@@ -44,6 +44,7 @@ const client = createClient({ adapters: [codexCliAdapter()] })
 
 const result = await client.generate(
   {
+    provider: 'codex-cli',
     model: 'gpt-5.4-mini',
     messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hello' }] }],
   },

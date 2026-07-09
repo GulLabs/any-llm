@@ -32,6 +32,7 @@ const operationId = 'op-2026-01-research'
 
 const research = await client.generate(
   {
+    provider: 'google',
     model: 'gemini-2.5-pro',
     system: 'Research the topic and quote only grounded findings.',
     messages: [
@@ -114,6 +115,7 @@ const grounding = extractGroundingArtifacts(research.providerMetadata)
 
 const structured = await client.generate(
   {
+    provider: 'google',
     model: 'gemini-2.5-flash',
     system: 'Convert grounded research into a structured summary.',
     messages: [

@@ -104,7 +104,7 @@ describe('engine — middleware ordering (onion model)', () => {
 
     const client = createClient({
       adapters: [capturingAdapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       clock: new FakeClock(),
       ids: new FakeIds(),
       middleware: [mw1, mw2, mw3],
@@ -112,6 +112,7 @@ describe('engine — middleware ordering (onion model)', () => {
 
     await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-flash',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       },
@@ -175,7 +176,7 @@ describe('engine — retry + rate-limiter integration', () => {
 
     const client = createClient({
       adapters: [adapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       clock: new FakeClock(),
       ids,
       sink,
@@ -191,6 +192,7 @@ describe('engine — retry + rate-limiter integration', () => {
 
     const result = await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-flash',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       },

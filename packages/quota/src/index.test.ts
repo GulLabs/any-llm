@@ -32,8 +32,9 @@ function makeCtx(nowMs: number): EngineCtx {
   }
 }
 
-function makeReq(model: string): ResolvedRequest {
+function makeReq(provider: string, model: string): ResolvedRequest {
   return {
+    provider,
     model,
     messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
     config: { serviceTier: 'flex' },
@@ -362,7 +363,6 @@ describe('@gullabs/quota', () => {
     })
 
     const middleware = providerQuotaMiddleware({
-      provider: 'google',
       policy: quotaPolicyForGemini({
         models: {
           'gemini-2.5-flash': { rpm: -5 },
@@ -374,7 +374,7 @@ describe('@gullabs/quota', () => {
 
     const error = await middleware
       .intercept(
-        makeReq('gemini-2.5-flash'),
+        makeReq('google', 'gemini-2.5-flash'),
         makeCtx(Date.UTC(2026, 5, 30, 12, 0, 0)),
         next,
       )

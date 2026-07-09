@@ -22,6 +22,7 @@ import type { GenConfig, JsonValue } from './types.js'
  * ```ts
  * const summarise = defineCallSite({
  *   id: 'summarise-article',
+ *   provider: 'google',
  *   model: 'gemini-2.5-pro',
  *   system: 'You are a concise summariser.',
  *   userTemplate: 'Summarise this article in 3 sentences:\n\n{{article}}',
@@ -35,6 +36,11 @@ export interface CallSite {
    * Persisted as `callSiteId` on every record for grouping/attribution.
    */
   id: string
+  /**
+   * Provider identifier — must match a configured adapter's `id`.
+   * Routing is by (`provider`, `model`); no derivation from `model`.
+   */
+  provider: string
   /**
    * Model to use for this call site.
    * A plain string — change it here to reroute the entire call site.
@@ -82,6 +88,7 @@ export interface CallSite {
  * import { defineCallSite } from '@gullabs/core'
  * const classify = defineCallSite({
  *   id: 'classify-sentiment',
+ *   provider: 'google',
  *   model: 'gemini-2.5-flash',
  *   jsonSchema: {
  *     type: 'object',

@@ -60,6 +60,7 @@ function makeCtx(): EngineCtx {
  */
 function makeReq(timeoutMs?: number): ResolvedRequest {
   return {
+    provider: 'google',
     model: 'gemini-2.5-pro',
     messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
     config: {

@@ -91,7 +91,7 @@ describe('attemptId reconcile — middleware throws before next()', () => {
 
     const client = createClient({
       adapters: [successAdapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -101,7 +101,10 @@ describe('attemptId reconcile — middleware throws before next()', () => {
 
     let caughtErr: unknown
     try {
-      await client.generate({ model: MODEL, messages: MESSAGES }, { auth: TEST_AUTH })
+      await client.generate(
+        { provider: 'google', model: MODEL, messages: MESSAGES },
+        { auth: TEST_AUTH },
+      )
     } catch (e) {
       caughtErr = e
     }
@@ -154,7 +157,7 @@ describe('attemptId reconcile — normal success', () => {
 
     const client = createClient({
       adapters: [adapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -162,7 +165,7 @@ describe('attemptId reconcile — normal success', () => {
     })
 
     const result = await client.generate(
-      { model: MODEL, messages: MESSAGES },
+      { provider: 'google', model: MODEL, messages: MESSAGES },
       { auth: TEST_AUTH },
     )
 
@@ -203,7 +206,7 @@ describe('attemptId reconcile — retry-then-success', () => {
 
     const client = createClient({
       adapters: [adapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -211,7 +214,7 @@ describe('attemptId reconcile — retry-then-success', () => {
     })
 
     const result = await client.generate(
-      { model: MODEL, messages: MESSAGES },
+      { provider: 'google', model: MODEL, messages: MESSAGES },
       { auth: TEST_AUTH },
     )
 
@@ -255,7 +258,7 @@ describe('attemptId reconcile — retries exhausted', () => {
 
     const client = createClient({
       adapters: [adapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -265,7 +268,10 @@ describe('attemptId reconcile — retries exhausted', () => {
 
     let caughtErr: unknown
     try {
-      await client.generate({ model: MODEL, messages: MESSAGES }, { auth: TEST_AUTH })
+      await client.generate(
+        { provider: 'google', model: MODEL, messages: MESSAGES },
+        { auth: TEST_AUTH },
+      )
     } catch (e) {
       caughtErr = e
     }

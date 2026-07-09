@@ -58,7 +58,8 @@ export type JsonValue =
 
 // ---- request ----
 export interface LlmRequest {
-  model: string // routing key; v1 only resolves gemini-* (seam: provider map)
+  provider: string // explicit routing key; must match a configured adapter id
+  model: string // bare provider-native string; identity is the (provider, model) pair
   system?: string
   messages: Message[] // v1: text parts only (seam: image/file/audio parts later)
   output?: { jsonSchema: JsonValue } // forward-only hint; adapter forwards it, engine never validates
@@ -165,6 +166,7 @@ export interface ProviderAdapter {
 }
 export interface ResolvedRequest {
   // engine-built: defaults merged, prompts rendered
+  provider: string
   model: string
   system?: string
   messages: Message[]
@@ -234,7 +236,7 @@ runStructured(callSite, vars?, opts?)  /  generate(request)
   2. render prompts   (non-recursive interpolation; var values are NOT re-interpolated — anti-injection)
   3. ids              callId + attemptId
   4. telemetry.onStart + log 'llm.call.start'
-  5. resolve adapter  (model→provider map; v1: gemini-* → google adapter; unknown → LlmError 'bad_request')
+  5. resolve adapter  (direct req.provider → adapter map; no derivation; unknown → LlmError 'bad_request')
   6. require per-call auth material ({ apiKey })
   7. rateLimiter.acquire("${provider}:${model}")  [queueDelayMs measured separately]
   8. adapter.run(resolved, ctx)   with timeout + AbortSignal
@@ -252,7 +254,7 @@ Canonical log events (identical across hosts): `llm.call.start` / `.success` / `
 ### Config resolution & call sites (`callsite.ts`)
 
 ```ts
-defineCallSite({ id, model, schema, system, userTemplate, config }) // model is a plain string (one-line swap)
+defineCallSite({ id, provider, model, schema, system, userTemplate, config }) // (provider, model) — one-line swap
 // resolution: libDefaults → callSite.config → opts.config  (deep-merge; per-call wins)
 // v1 keeps this runtime-validated (no compile-time ConfigFor<M> — that machinery was cut).
 ```

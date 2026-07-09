@@ -46,10 +46,9 @@ const quotaPolicy = quotaPolicyForGemini({
 
 const client = createClient({
   adapters: [geminiAdapter()],
-  pricing: geminiPricingSource(),
+  pricingSources: { google: geminiPricingSource() },
   middleware: [
     providerQuotaMiddleware({
-      provider: 'google',
       store: quotaStore,
       policy: quotaPolicy,
     }),

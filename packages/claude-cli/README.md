@@ -41,6 +41,7 @@ const client = createClient({ adapters: [claudeCliAdapter()] })
 
 const result = await client.generate(
   {
+    provider: 'claude-cli',
     model: 'claude-haiku-4-5-20251001',
     messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hello' }] }],
   },

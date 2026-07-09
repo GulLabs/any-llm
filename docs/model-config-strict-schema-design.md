@@ -238,11 +238,11 @@ missing.
 Consumers should do exactly this:
 
 ```ts
-const descriptor = registry.resolve(model)
-if (!descriptor) throw new Error(`Unknown model: ${model}`)
+const descriptor = registry.resolve(provider, model)
+if (!descriptor) throw new Error(`Unknown model: ${provider}/${model}`)
 
 const config = descriptor.configSchema.parse(persistedConfig)
-await client.generate({ model, messages, config }, { auth })
+await client.generate({ provider, model, messages, config }, { auth })
 ```
 
 They should not call the deleted public reasoning helper, `normalizeConfigForModel`,

@@ -40,7 +40,7 @@ explicitly. `createClient()` itself takes no credentials.
 // bypassed with `as any` it throws LlmError({ kind: 'invalid_auth' }) before any I/O.
 const client = createClient({
   adapters: [geminiAdapter()],
-  pricing: geminiPricingSource(),
+  pricingSources: { google: geminiPricingSource() },
 })
 await client.generate(request, {} as GenerateOptions)
 
@@ -54,6 +54,18 @@ before any network call is made. Vertex AI (ADC/service-account auth) is **not
 supported** — it was removed and is a roadmap item only; do not write code assuming
 `{ vertex: { project, location } }` works.
 
+## #2 gotcha: identity is `(provider, model)`, not a bare `model` string
+
+Every `generate()`/`runStructured()` request and every `defineCallSite()` requires an
+explicit top-level `provider` (e.g. `'google'`, `'claude-cli'`, `'codex-cli'`) alongside
+the bare, provider-native `model` string. The engine routes by `req.provider` directly
+— it never derives, parses, or guesses a provider from `model`, and it never accepts a
+slash-joined string like `'google/gemini-2.5-flash'`. A request with no `provider`, an
+unconfigured `provider`, or a `(provider, model)` pair the registry doesn't recognize is
+rejected with `LlmError({ kind: 'bad_request' })` before any I/O. This also means the
+same bare model id can exist under multiple providers with different config schemas —
+`resolve()` always takes both.
+
 ## Quickstart
 
 ```ts
@@ -62,11 +74,12 @@ import { createClient, geminiPricingSource, geminiAdapter } from '@gullabs/any-l
 
 const client = createClient({
   adapters: [geminiAdapter()],
-  pricing: geminiPricingSource(),
+  pricingSources: { google: geminiPricingSource() },
 })
 
 const result = await client.generate(
   {
+    provider: 'google',
     model: 'gemini-2.5-flash',
     messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hello!' }] }],
   },
@@ -89,6 +102,7 @@ import { defineCallSite } from '@gullabs/core'
 
 const summarize = defineCallSite({
   id: 'summarize-article', // persisted as callSiteId on every record
+  provider: 'google',
   model: 'gemini-2.5-flash',
   system: 'You are a concise summarizer.',
   userTemplate: 'Summarize this article in 3 sentences:\n\n{{article}}',
@@ -113,7 +127,7 @@ Treat model config as descriptor-owned:
 ```ts
 import { defaultGeminiRegistry } from '@gullabs/core'
 
-const descriptor = defaultGeminiRegistry.resolve('gemini-3.5-flash')
+const descriptor = defaultGeminiRegistry.resolve('google', 'gemini-3.5-flash')
 if (!descriptor) throw new Error('unknown model')
 
 // UI/forms:
@@ -147,11 +161,12 @@ import type { StandardSchemaV1 } from '@gullabs/core'
 
 const client = createClient({
   adapters: [geminiAdapter()],
-  pricing: geminiPricingSource(),
+  pricingSources: { google: geminiPricingSource() },
 })
 
 const result = await client.generate(
   {
+    provider: 'google',
     model: 'gemini-2.5-flash',
     messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Rate this PR 1-10.' }] }],
     output: {
@@ -222,11 +237,13 @@ try {
 
 Bad input or config throws `bad_request` (or `invalid_auth`) **before any I/O** —
 nothing is silently clamped, coerced, or defaulted around a typo. Examples already
-enforced by the engine/adapter: an unrouteable `model` string, a config value that
-fails the selected descriptor schema, a `reasoning.budgetTokens` set on a model whose
-API only supports `reasoning.effort`, duplicate adapter/middleware `id`s, and a
-grounding + structured-output combination outside the exact documented Gemini support
-set.
+enforced by the engine/adapter: a request or call site with no `provider`, a `provider`
+that doesn't match any configured adapter, a `(provider, model)` pair absent from the
+registry (including a bare model string with a slash, like `'google/gemini-2.5-flash'`
+— slash strings are never parsed), a config value that fails the selected descriptor
+schema, a `reasoning.budgetTokens` set on a model whose API only supports
+`reasoning.effort`, duplicate adapter/middleware `id`s, and a grounding +
+structured-output combination outside the exact documented Gemini support set.
 
 **Do not add defensive fallback/clamping code around this library.** If a call throws
 `bad_request`, fix the input — do not catch-and-retry with a "safer" guessed value; the
@@ -272,6 +289,8 @@ Exact model reminders:
 
 - Forgetting `opts.auth` on a `generate()`/`runStructured()` call — it is required on
   every call, not just once at `createClient()` time.
+- Omitting `provider` (or writing a slash-joined `'provider/model'` string) on a request
+  or call site — `provider` is a required top-level field; the engine never derives it.
 - Assuming `process.env.GEMINI_API_KEY` (or similar) is read automatically — it is
   never read by this library; the host must resolve and pass the key itself.
 - Assuming `result.output`'s shape is validated — it is `unknown`; validate it yourself

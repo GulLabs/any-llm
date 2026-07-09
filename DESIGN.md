@@ -50,10 +50,14 @@ maps (`tokenDetails`, `rawUsage`, `providerMetadata`, `generationConfig`). New f
 provider land in the JSONB lanes immediately; typed columns are added only when aggregation or
 indexing requires them.
 
-**P7 — Routing is a function of `model`, not of code wiring.**
-A call site's provider is derived from the resolved model's descriptor, not hard-coded in source.
-This is what makes a model swap from a UI or DB flag actually work rather than requiring a code
-change.
+**P7 — Routing is a function of explicit `(provider, model)`, not of code wiring.**
+Every request and call site carries an explicit top-level `provider` alongside the bare,
+provider-native `model` string — the engine routes by `req.provider` directly and never derives
+it from `model`. A request or call site naming an unconfigured provider, or a `(provider, model)`
+pair absent from the registry, is rejected with `LlmError('bad_request')` rather than silently
+falling through. This is what makes a model swap from a UI or DB flag actually work rather than
+requiring a code change, while still letting the same bare model id exist under multiple
+providers with different config schemas.
 
 ---
 

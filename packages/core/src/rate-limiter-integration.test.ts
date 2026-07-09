@@ -77,7 +77,7 @@ function makeClientWithSpy(spy: SpyLimiter) {
   const adapter = new FakeAdapter('google', makeSuccessResult())
   const client = createClient({
     adapters: [adapter],
-    pricing: PRICING,
+    pricingSources: { google: PRICING },
     clock,
     ids,
     rateLimiter: spy,
@@ -105,6 +105,7 @@ describe('engine — rateLimiter integration', () => {
 
     await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-flash',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
       },
@@ -122,6 +123,7 @@ describe('engine — rateLimiter integration', () => {
 
     await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-flash',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
       },
@@ -138,7 +140,7 @@ describe('engine — rateLimiter integration', () => {
     const adapter = new FakeAdapter('google', { status: 500 })
     const client = createClient({
       adapters: [adapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       clock,
       ids,
       rateLimiter: spy,
@@ -147,6 +149,7 @@ describe('engine — rateLimiter integration', () => {
     await expect(
       client.generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-flash',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
         },
@@ -172,7 +175,7 @@ describe('engine — rateLimiter integration', () => {
 
     const client = createClient({
       adapters: [adapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock,
       ids: new FakeIds(),
@@ -189,6 +192,7 @@ describe('engine — rateLimiter integration', () => {
 
     const result = await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-flash',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
       },
@@ -218,7 +222,7 @@ describe('engine — rateLimiter integration', () => {
 
     const client = createClient({
       adapters: [adapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock,
       ids: new FakeIds(),
@@ -228,6 +232,7 @@ describe('engine — rateLimiter integration', () => {
     await expect(
       client.generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-flash',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
         },
@@ -244,7 +249,7 @@ describe('engine — rateLimiter integration', () => {
     const sink = new RecordingSink()
     const client = createClient({
       adapters: [new FakeAdapter('google', makeSuccessResult())],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock,
       ids: new FakeIds(),
@@ -252,6 +257,7 @@ describe('engine — rateLimiter integration', () => {
 
     const result = await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-flash',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
       },
@@ -283,7 +289,7 @@ describe('engine — rateLimiter integration', () => {
 
     const client = createClient({
       adapters: [adapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock,
       ids: new FakeIds(),
@@ -293,6 +299,7 @@ describe('engine — rateLimiter integration', () => {
     const err = await client
       .generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-flash',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
         },
@@ -323,7 +330,7 @@ describe('engine — rateLimiter integration', () => {
     const adapter = new FakeAdapter('google', makeSuccessResult())
     const client = createClient({
       adapters: [adapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       clock,
       ids,
       rateLimiter: spy,
@@ -332,6 +339,7 @@ describe('engine — rateLimiter integration', () => {
     const err = await client
       .generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-flash',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
         },
@@ -383,7 +391,7 @@ describe('engine — rateLimiter integration', () => {
 
     const client = createClient({
       adapters: [adapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       clock,
       ids,
       rateLimiter: blockingLimiter,
@@ -392,6 +400,7 @@ describe('engine — rateLimiter integration', () => {
     const err = await client
       .generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-flash',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
           config: { timeoutMs: 20 },
@@ -439,7 +448,7 @@ describe('engine — rateLimiter integration', () => {
 
     const client = createClient({
       adapters: [adapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       clock,
       ids,
       rateLimiter: blockingLimiter,
@@ -452,6 +461,7 @@ describe('engine — rateLimiter integration', () => {
     const err = await client
       .generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-flash',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
         },

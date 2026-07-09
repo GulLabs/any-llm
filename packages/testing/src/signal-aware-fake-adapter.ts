@@ -63,7 +63,12 @@ export interface SignalAwareFakeAdapterOptions {
  * const ctrl = new AbortController()
  * setTimeout(() => ctrl.abort(), 50)
  * await expect(
- *   client.generate({ model: 'gemini-2.5-pro', messages, signal: ctrl.signal }),
+ *   client.generate({
+ *     provider: 'google',
+ *     model: 'gemini-2.5-pro',
+ *     messages,
+ *     signal: ctrl.signal,
+ *   }),
  * ).rejects.toMatchObject({ kind: 'aborted' })
  * expect(adapter.abortObserved).toBe(true)
  * ```

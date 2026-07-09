@@ -177,7 +177,7 @@ describe('surface-stress: only LlmErrors escape + record always written', () => 
 
       const client = createClient({
         adapters: [adapter],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         sink,
         clock: new FakeClock(1_000 + i),
         ids: new FakeIds(),
@@ -189,7 +189,7 @@ describe('surface-stress: only LlmErrors escape + record always written', () => 
 
       try {
         await client.generate(
-          { model: 'gemini-2.5-pro', messages: MESSAGES },
+          { provider: 'google', model: 'gemini-2.5-pro', messages: MESSAGES },
           { auth: TEST_AUTH },
         )
         resolved = true
@@ -281,14 +281,14 @@ describe('surface-stress: malformed usage', () => {
       const sink = new RecordingSink()
       const client = createClient({
         adapters: [adapter],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
       })
 
       const result = await client.generate(
-        { model: 'gemini-2.5-pro', messages: MESSAGES },
+        { provider: 'google', model: 'gemini-2.5-pro', messages: MESSAGES },
         { auth: TEST_AUTH },
       )
 
@@ -344,14 +344,14 @@ describe('surface-stress: malformed usage', () => {
       const sink = new RecordingSink()
       const client = createClient({
         adapters: [adapter],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
       })
 
       const result = await client.generate(
-        { model: 'gemini-2.5-pro', messages: MESSAGES },
+        { provider: 'google', model: 'gemini-2.5-pro', messages: MESSAGES },
         { auth: TEST_AUTH },
       )
 
@@ -423,7 +423,7 @@ describe('surface-stress: malformed usage', () => {
       const sink = new RecordingSink()
       const client = createClient({
         adapters: [adapter],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -432,7 +432,7 @@ describe('surface-stress: malformed usage', () => {
       // Engine must resolve (not throw) for malformed usage — fail-open per spec.
       // Use direct await: if generate() rejects, Vitest will catch and fail the test.
       const result = await client.generate(
-        { model: 'gemini-2.5-pro', messages: MESSAGES },
+        { provider: 'google', model: 'gemini-2.5-pro', messages: MESSAGES },
         { auth: TEST_AUTH },
       )
 
@@ -511,14 +511,14 @@ describe('surface-stress: malformed usage', () => {
       const sink = new RecordingSink()
       const client = createClient({
         adapters: [adapter],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
       })
 
       const result = await client.generate(
-        { model: 'gemini-2.5-pro', messages: MESSAGES },
+        { provider: 'google', model: 'gemini-2.5-pro', messages: MESSAGES },
         { auth: TEST_AUTH },
       )
 
@@ -571,14 +571,14 @@ describe('surface-stress: non-finite values in usage.details and usage.raw', () 
       const sink = new RecordingSink()
       const client = createClient({
         adapters: [adapter],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
       })
 
       await client.generate(
-        { model: 'gemini-2.5-pro', messages: MESSAGES },
+        { provider: 'google', model: 'gemini-2.5-pro', messages: MESSAGES },
         { auth: TEST_AUTH },
       )
 
@@ -632,14 +632,14 @@ describe('surface-stress: non-finite values in usage.details and usage.raw', () 
       const sink = new RecordingSink()
       const client = createClient({
         adapters: [adapter],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
       })
 
       await client.generate(
-        { model: 'gemini-2.5-pro', messages: MESSAGES },
+        { provider: 'google', model: 'gemini-2.5-pro', messages: MESSAGES },
         { auth: TEST_AUTH },
       )
 
@@ -711,7 +711,7 @@ describe('surface-stress: non-finite values in usage.details and usage.raw', () 
       const sink = new RecordingSink()
       const client = createClient({
         adapters: [adapter],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -719,7 +719,7 @@ describe('surface-stress: non-finite values in usage.details and usage.raw', () 
 
       // Must resolve (never throw) for malformed usage — fail-open per SPEC.
       await client.generate(
-        { model: 'gemini-2.5-pro', messages: MESSAGES },
+        { provider: 'google', model: 'gemini-2.5-pro', messages: MESSAGES },
         { auth: TEST_AUTH },
       )
 
@@ -877,14 +877,14 @@ describe('surface-stress: cost property', () => {
       const sink = new RecordingSink()
       const client = createClient({
         adapters: [adapter],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
       })
 
       const result = await client.generate(
-        { model, messages: MESSAGES },
+        { provider: 'google', model, messages: MESSAGES },
         { auth: TEST_AUTH },
       )
 
@@ -916,7 +916,7 @@ describe('surface-stress: fail-open', () => {
       const sink = new RecordingSink({ failOnRecord: failSpec })
       const client = createClient({
         adapters: [new FakeAdapter('google', makeOkResult())],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -924,7 +924,7 @@ describe('surface-stress: fail-open', () => {
 
       // Should NOT throw despite the sink failing
       const result = await client.generate(
-        { model: 'gemini-2.5-pro', messages: MESSAGES },
+        { provider: 'google', model: 'gemini-2.5-pro', messages: MESSAGES },
         { auth: TEST_AUTH },
       )
       expect(result.text).toBe('ok')
@@ -939,7 +939,7 @@ describe('surface-stress: fail-open', () => {
 
     const client = createClient({
       adapters: [adapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -947,7 +947,7 @@ describe('surface-stress: fail-open', () => {
 
     await expect(
       client.generate(
-        { model: 'gemini-2.5-pro', messages: MESSAGES },
+        { provider: 'google', model: 'gemini-2.5-pro', messages: MESSAGES },
         { auth: TEST_AUTH },
       ),
     ).rejects.toMatchObject({ kind: 'server' })
@@ -969,13 +969,13 @@ describe('surface-stress: fail-open', () => {
     // Success path — telemetry throws in onStart + onSuccess
     const successClient = createClient({
       adapters: [new FakeAdapter('google', makeOkResult())],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       telemetry: throwingTelemetry,
       clock: new FakeClock(),
       ids: new FakeIds(),
     })
     const result = await successClient.generate(
-      { model: 'gemini-2.5-pro', messages: MESSAGES },
+      { provider: 'google', model: 'gemini-2.5-pro', messages: MESSAGES },
       { auth: TEST_AUTH },
     )
     expect(result.text).toBe('ok')
@@ -983,14 +983,14 @@ describe('surface-stress: fail-open', () => {
     // Error path — telemetry throws in onStart + onError, error still rethrown
     const failClient = createClient({
       adapters: [new FakeAdapter('google', { status: 503 })],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       telemetry: throwingTelemetry,
       clock: new FakeClock(),
       ids: new FakeIds(),
     })
     await expect(
       failClient.generate(
-        { model: 'gemini-2.5-pro', messages: MESSAGES },
+        { provider: 'google', model: 'gemini-2.5-pro', messages: MESSAGES },
         { auth: TEST_AUTH },
       ),
     ).rejects.toMatchObject({ kind: 'server' })
@@ -1013,14 +1013,14 @@ describe('surface-stress: fail-open', () => {
     const sink = new RecordingSink()
     const client = createClient({
       adapters: [new FakeAdapter('google', makeOkResult())],
-      pricing: throwingPricing,
+      pricingSources: { google: throwingPricing },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
     })
 
     const result = await client.generate(
-      { model: 'gemini-2.5-pro', messages: MESSAGES },
+      { provider: 'google', model: 'gemini-2.5-pro', messages: MESSAGES },
       { auth: TEST_AUTH },
     )
     // Cost is absent (pricing failed, fail-open)
@@ -1056,7 +1056,7 @@ describe('surface-stress: cancellation', () => {
       const sink = new RecordingSink()
       const client = createClient({
         adapters: [adapter],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -1065,6 +1065,7 @@ describe('surface-stress: cancellation', () => {
       await expect(
         client.generate(
           {
+            provider: 'google',
             model: 'gemini-2.5-pro',
             messages: MESSAGES,
             config: { timeoutMs },
@@ -1091,7 +1092,7 @@ describe('surface-stress: cancellation', () => {
       const sink = new RecordingSink()
       const client = createClient({
         adapters: [adapter],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -1103,7 +1104,7 @@ describe('surface-stress: cancellation', () => {
       try {
         await expect(
           client.generate(
-            { model: 'gemini-2.5-pro', messages: MESSAGES },
+            { provider: 'google', model: 'gemini-2.5-pro', messages: MESSAGES },
             { auth: TEST_AUTH, signal: ctrl.signal },
           ),
         ).rejects.toMatchObject({ kind: 'aborted', retryable: false })
@@ -1129,7 +1130,7 @@ describe('surface-stress: cancellation', () => {
       const sink = new RecordingSink()
       const client = createClient({
         adapters: [adapter],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -1138,6 +1139,7 @@ describe('surface-stress: cancellation', () => {
       await expect(
         client.generate(
           {
+            provider: 'google',
             model: 'gemini-2.5-pro',
             messages: MESSAGES,
             config: { timeoutMs },
@@ -1159,7 +1161,7 @@ describe('surface-stress: cancellation', () => {
     const sink = new RecordingSink()
     const client = createClient({
       adapters: [adapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -1167,7 +1169,7 @@ describe('surface-stress: cancellation', () => {
 
     await expect(
       client.generate(
-        { model: 'gemini-2.5-pro', messages: MESSAGES },
+        { provider: 'google', model: 'gemini-2.5-pro', messages: MESSAGES },
         { auth: TEST_AUTH, signal: ctrl.signal },
       ),
     ).rejects.toMatchObject({ kind: 'aborted' })
@@ -1225,7 +1227,7 @@ describe('surface-stress: structured output parse-only', () => {
 
       const client = createClient({
         adapters: [adapter],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -1233,6 +1235,7 @@ describe('surface-stress: structured output parse-only', () => {
 
       const result = await client.generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-pro',
           messages: MESSAGES,
           output: { jsonSchema },
@@ -1260,7 +1263,7 @@ describe('surface-stress: structured output parse-only', () => {
       const sink = new RecordingSink()
       const client = createClient({
         adapters: [adapter],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -1268,6 +1271,7 @@ describe('surface-stress: structured output parse-only', () => {
 
       const result = await client.generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-pro',
           messages: MESSAGES,
           output: { jsonSchema },
@@ -1304,7 +1308,7 @@ describe('surface-stress: providerOptions.google strict allowlist', () => {
 
       const client = createClient({
         adapters: [captureAdapter],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         clock: new FakeClock(),
         ids: new FakeIds(),
         defaults: {
@@ -1319,6 +1323,7 @@ describe('surface-stress: providerOptions.google strict allowlist', () => {
 
       await client.generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-pro',
           messages: MESSAGES,
           config: {
@@ -1366,7 +1371,7 @@ describe('surface-stress: providerOptions.google strict allowlist', () => {
 
       const client = createClient({
         adapters: [captureAdapter],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         clock: new FakeClock(),
         ids: new FakeIds(),
       })
@@ -1374,6 +1379,7 @@ describe('surface-stress: providerOptions.google strict allowlist', () => {
       await expect(
         client.generate(
           {
+            provider: 'google',
             model: 'gemini-2.5-pro',
             messages: MESSAGES,
             config: {

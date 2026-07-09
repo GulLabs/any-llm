@@ -125,7 +125,7 @@ export const codexCliModelDescriptors: ModelDescriptor[] = CODEX_CLI_MODEL_IDS.m
   (id): ModelDescriptor => {
     const configSchema = CONFIG_SCHEMA_BY_ID[id]
     return {
-      id,
+      model: id,
       provider: 'codex-cli',
       capabilities: {
         structuredOutput: true,

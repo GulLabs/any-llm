@@ -28,12 +28,13 @@ import { createClient, geminiPricingSource } from '@gullabs/core'
 
 const client = createClient({
   adapters: [geminiAdapter()],
-  pricing: geminiPricingSource(),
+  pricingSources: { google: geminiPricingSource() },
 })
 
 // Auth is required per call — the library never reads environment variables.
 const result = await client.generate(
   {
+    provider: 'google',
     model: 'gemini-2.5-flash',
     messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hello' }] }],
   },

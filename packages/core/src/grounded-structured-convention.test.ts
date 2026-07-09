@@ -43,7 +43,7 @@ describe('grounded-structured correlation convention', () => {
           makeSuccessResult({ rawStructured: { summary: 'ok' } }),
         ]),
       ],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -53,6 +53,7 @@ describe('grounded-structured correlation convention', () => {
 
     await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Research sources' }] }],
         metadata: {
@@ -69,6 +70,7 @@ describe('grounded-structured correlation convention', () => {
 
     await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-flash',
         messages: [
           {
