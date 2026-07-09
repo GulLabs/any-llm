@@ -911,6 +911,62 @@ describe('engine — routing', () => {
     expect(google.calls).toHaveLength(0)
   })
 
+  it('generate: custom registry resolving to a mismatched-provider descriptor → bad_request', async () => {
+    const google = new FakeAdapter('google', makeSuccessResult())
+    // Resolve-only registry (no listDescriptors) that always answers with an
+    // 'anthropic' descriptor, regardless of the provider requested.
+    const wrongProviderRegistry: ModelRegistry = {
+      resolve: () =>
+        makeTestDescriptor({ model: 'claude-sonnet-5', provider: 'anthropic' }),
+    }
+
+    const client = createClient({
+      adapters: [google],
+      pricingSources: { google: PRICING },
+      modelRegistry: wrongProviderRegistry,
+      clock: new FakeClock(),
+      ids: new FakeIds(),
+    })
+
+    await expect(
+      client.generate(
+        { provider: 'google', model: 'gemini-2.5-pro', messages: HI_MESSAGES },
+        { auth: TEST_AUTH },
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request', retryable: false })
+    expect(google.calls).toHaveLength(0)
+  })
+
+  it('runStructured: custom registry resolving to a mismatched-provider descriptor → bad_request', async () => {
+    const google = new FakeAdapter('google', makeSuccessResult())
+    const wrongProviderRegistry: ModelRegistry = {
+      resolve: () =>
+        makeTestDescriptor({ model: 'claude-sonnet-5', provider: 'anthropic' }),
+    }
+
+    const client = createClient({
+      adapters: [google],
+      pricingSources: { google: PRICING },
+      modelRegistry: wrongProviderRegistry,
+      clock: new FakeClock(),
+      ids: new FakeIds(),
+    })
+
+    await expect(
+      client.runStructured(
+        {
+          id: 'callsite-mismatch',
+          provider: 'google',
+          model: 'gemini-2.5-pro',
+          userTemplate: 'Hi',
+        },
+        {},
+        { auth: TEST_AUTH },
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request', retryable: false })
+    expect(google.calls).toHaveLength(0)
+  })
+
   it('createClient throws when a registry descriptor has no matching adapter', () => {
     const registry = createModelRegistry([
       makeTestDescriptor({ model: 'claude-sonnet-5', provider: 'anthropic' }),
@@ -922,6 +978,54 @@ describe('engine — routing', () => {
         modelRegistry: registry,
       }),
     ).toThrow(/no matching configured adapter/)
+  })
+})
+
+describe('engine — missing provider validation', () => {
+  const HI_MESSAGES = [
+    { role: 'user' as const, parts: [{ kind: 'text' as const, text: 'Hi' }] },
+  ]
+
+  it('generate: omitted request.provider → bad_request naming (provider, model) identity', async () => {
+    const { client, adapter } = makeClient()
+
+    await expect(
+      client.generate(
+        {
+          provider: undefined as unknown as string,
+          model: 'gemini-2.5-pro',
+          messages: HI_MESSAGES,
+        },
+        { auth: TEST_AUTH },
+      ),
+    ).rejects.toMatchObject({
+      kind: 'bad_request',
+      retryable: false,
+      message: expect.stringContaining('request.provider is required'),
+    })
+    expect(adapter.calls).toHaveLength(0)
+  })
+
+  it('runStructured: omitted callSite.provider → bad_request naming (provider, model) identity', async () => {
+    const { client, adapter } = makeClient()
+
+    await expect(
+      client.runStructured(
+        {
+          id: 'callsite-missing-provider',
+          provider: undefined as unknown as string,
+          model: 'gemini-2.5-pro',
+          userTemplate: 'Hi',
+        },
+        {},
+        { auth: TEST_AUTH },
+      ),
+    ).rejects.toMatchObject({
+      kind: 'bad_request',
+      retryable: false,
+      message: expect.stringContaining('request.provider is required'),
+    })
+    expect(adapter.calls).toHaveLength(0)
   })
 })
 

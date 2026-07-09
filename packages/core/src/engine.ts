@@ -1497,6 +1497,12 @@ export function createClient(config: ClientConfig): Client {
 
   return {
     async generate(request: LlmRequest, opts: GenerateOptions): Promise<LlmResult> {
+      if (typeof request.provider !== 'string' || request.provider.length === 0) {
+        throw new LlmError(
+          'request.provider is required — model identity is (provider, model).',
+          { kind: 'bad_request', retryable: false },
+        )
+      }
       const runtimeOpts = opts as GenerateOptions | undefined
       const callAuth = requireAuth(runtimeOpts?.auth)
       // Config resolution: libDefaults → request.config
@@ -1504,6 +1510,12 @@ export function createClient(config: ClientConfig): Client {
       if (descriptor === undefined) {
         throw new LlmError(
           `No registered model for provider "${request.provider}" model "${request.model}".`,
+          { kind: 'bad_request', retryable: false },
+        )
+      }
+      if (descriptor.provider !== request.provider) {
+        throw new LlmError(
+          `Registry returned a descriptor for provider "${descriptor.provider}" when provider "${request.provider}" (model "${request.model}") was requested — refusing to validate against a mismatched provider.`,
           { kind: 'bad_request', retryable: false },
         )
       }
@@ -1541,6 +1553,13 @@ export function createClient(config: ClientConfig): Client {
         resolvedOpts = varsOrOpts as RunStructuredOptions
       }
 
+      if (typeof callSite.provider !== 'string' || callSite.provider.length === 0) {
+        throw new LlmError(
+          'request.provider is required — model identity is (provider, model).',
+          { kind: 'bad_request', retryable: false },
+        )
+      }
+
       const runtimeOpts = resolvedOpts as RunStructuredOptions | undefined
       const callAuth = requireAuth(runtimeOpts?.auth)
 
@@ -1549,6 +1568,12 @@ export function createClient(config: ClientConfig): Client {
       if (descriptor === undefined) {
         throw new LlmError(
           `No registered model for provider "${callSite.provider}" model "${callSite.model}".`,
+          { kind: 'bad_request', retryable: false },
+        )
+      }
+      if (descriptor.provider !== callSite.provider) {
+        throw new LlmError(
+          `Registry returned a descriptor for provider "${descriptor.provider}" when provider "${callSite.provider}" (model "${callSite.model}") was requested — refusing to validate against a mismatched provider.`,
           { kind: 'bad_request', retryable: false },
         )
       }
