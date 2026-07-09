@@ -20,6 +20,11 @@
  * @module
  */
 
+export type {
+  GoogleSafetySetting,
+  GoogleSearchTool,
+  GoogleProviderOptions,
+} from './types.js'
 export { geminiAdapter } from './adapter.js'
 export type { GeminiAdapterOptions } from './adapter.js'
 export type { GeminiClientLike } from './client.js'

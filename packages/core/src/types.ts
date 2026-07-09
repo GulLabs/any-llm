@@ -161,32 +161,24 @@ export interface ReasoningIntent {
   includeThoughts?: boolean
 }
 
-export type GoogleSafetySetting = {
-  category: string
-  threshold: string
-}
+/**
+ * Open, augmentable map of per-provider option shapes.
+ *
+ * Empty by default — provider packages extend it via declaration merging:
+ * ```ts
+ * declare module '@gullabs/core' {
+ *   interface ProviderOptionsMap {
+ *     google?: GoogleProviderOptions
+ *   }
+ * }
+ * ```
+ * See `packages/google/src/types.ts` for the reference implementation. A key
+ * only appears here once its owning provider package is imported.
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- augmentable via declaration merging; intentionally empty by default
+export interface ProviderOptionsMap {}
 
-export type GoogleSearchTool = {
-  googleSearch: Record<string, never>
-}
-
-export type GoogleProviderOptions = {
-  /** Google cached content resource name. */
-  cachedContent?: string
-  /** Allowlisted Google safety settings. */
-  safetySettings?: GoogleSafetySetting[]
-  /** Exact Google tool declarations admitted by the selected model schema. */
-  tools?: GoogleSearchTool[]
-  /** Allowlisted Google transport options. */
-  httpOptions?: {
-    /** Per-request Google transport timeout in milliseconds. */
-    timeout?: number
-  }
-}
-
-export type ProviderOptions = {
-  google?: GoogleProviderOptions
-}
+export type ProviderOptions = ProviderOptionsMap
 
 /** Common generation knobs plus schema-admitted provider extension lanes. */
 export interface GenConfig {

@@ -33,6 +33,7 @@ import type {
   Telemetry,
   Warning,
   JsonValue,
+  ProviderOptions,
 } from './index.js'
 import {
   FakeAdapter,
@@ -1297,7 +1298,7 @@ describe('surface-stress: providerOptions.google strict allowlist', () => {
       const uniqueVal = Math.floor(rand() * 100_000)
 
       // Capture adapter calls
-      const capturedOptions: Array<Record<string, unknown> | undefined> = []
+      const capturedOptions: Array<ProviderOptions | undefined> = []
       const captureAdapter: ProviderAdapter = {
         id: 'google',
         async run(req: ResolvedRequest, _ctx: AdapterCtx): Promise<AdapterResult> {

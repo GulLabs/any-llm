@@ -21,6 +21,7 @@ import type {
   Message,
   GenConfig,
   ProviderOptions,
+  ProviderOptionsMap,
   ReasoningIntent,
 } from './types.js'
 import type { ResolvedRequest } from './ports.js'
@@ -250,6 +251,20 @@ describe('GenConfig type shape', () => {
     expectTypeOf<GenConfig['providerOptions']>().toEqualTypeOf<
       ProviderOptions | undefined
     >()
+  })
+})
+
+describe('ProviderOptionsMap type shape', () => {
+  it('ProviderOptions is a plain alias for the augmentable ProviderOptionsMap', () => {
+    // Note: this repo's root tsconfig.json includes all packages/*/src/**/*.ts
+    // in one compilation, so packages/google/src/types.ts's `declare module
+    // '@gullabs/core'` augmentation is always part of the program graph here —
+    // ambient module augmentations apply to the whole compilation unit once
+    // the declaring file is included, not just where it's imported from. So
+    // `ProviderOptionsMap` cannot be asserted "empty" in *this* typecheck; a
+    // real downstream consumer that only depends on @gullabs/core (and never
+    // imports @gullabs/google) would see it empty, per the module's doc comment.
+    expectTypeOf<ProviderOptions>().toEqualTypeOf<ProviderOptionsMap>()
   })
 })
 
