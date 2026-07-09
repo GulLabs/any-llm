@@ -57,6 +57,7 @@ const MESSAGES = [
 /** Minimal resolved request for direct adapter.run() tests. */
 function makeReq(overrides: Partial<ResolvedRequest> = {}): ResolvedRequest {
   return {
+    provider: 'google',
     model: 'gemini-2.5-pro',
     messages: MESSAGES,
     config: { serviceTier: 'flex' },
@@ -589,7 +590,7 @@ describe('adapter-stress: non-JSON text + structured output → outputParsed fal
       const sink = new RecordingSink()
       const client = createClient({
         adapters: [geminiAdapter({ client: fakeClient })],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -597,6 +598,7 @@ describe('adapter-stress: non-JSON text + structured output → outputParsed fal
 
       const result = await client.generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-pro',
           messages: MESSAGES,
           output: { jsonSchema: { type: 'object', additionalProperties: true } },
@@ -657,7 +659,7 @@ describe('adapter-stress: non-JSON text + structured output → outputParsed fal
       const sink = new RecordingSink()
       const client = createClient({
         adapters: [geminiAdapter({ client: fakeClient })],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -665,6 +667,7 @@ describe('adapter-stress: non-JSON text + structured output → outputParsed fal
 
       const result = await client.generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-pro',
           messages: MESSAGES,
           output: { jsonSchema: { type: 'object', additionalProperties: true } },
@@ -811,14 +814,17 @@ describe('adapter-stress: injected HTTP errors → correct classification', () =
       const sink = new RecordingSink()
       const client = createClient({
         adapters: [geminiAdapter({ client: fakeClient })],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
       })
 
       const caught = await client
-        .generate({ model: 'gemini-2.5-pro', messages: MESSAGES }, { auth: TEST_AUTH })
+        .generate(
+          { provider: 'google', model: 'gemini-2.5-pro', messages: MESSAGES },
+          { auth: TEST_AUTH },
+        )
         .then(
           () => null,
           (e: unknown) => e,

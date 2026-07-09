@@ -94,7 +94,6 @@ export interface EnforceProviderQuotaOptions extends CheckProviderQuotaOptions {
 
 export interface ProviderQuotaMiddlewareOptions {
   id?: string
-  provider: string
   policy: ProviderQuotaPolicy
   store: QuotaStore
   onEvent?: QuotaEventHandler
@@ -264,10 +263,10 @@ export function providerQuotaMiddleware(
   opts: ProviderQuotaMiddlewareOptions,
 ): Middleware {
   return {
-    id: opts.id ?? `provider-quota:${opts.provider}`,
+    id: opts.id ?? 'provider-quota',
     async intercept(req, ctx, next) {
       const enforceOptions: EnforceProviderQuotaOptions = {
-        provider: opts.provider,
+        provider: req.provider,
         model: req.model,
         policy: opts.policy,
         store: opts.store,

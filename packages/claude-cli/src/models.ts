@@ -103,7 +103,7 @@ export const claudeCliModelDescriptors: ModelDescriptor[] = CLAUDE_CLI_MODEL_IDS
   (id): ModelDescriptor => {
     const configSchema = CONFIG_SCHEMAS[id]
     return {
-      id,
+      model: id,
       provider: 'claude-cli',
       capabilities: {
         structuredOutput: true,

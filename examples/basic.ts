@@ -11,6 +11,7 @@
  */
 
 import { createClient, geminiPricingSource, defineCallSite } from '@gullabs/core'
+import type { JsonValue } from '@gullabs/core'
 import { geminiAdapter } from '@gullabs/google'
 import {
   FakeClock,
@@ -24,14 +25,14 @@ import {
 // 1. Define the output JSON Schema hint
 // ---------------------------------------------------------------------------
 
-const ReviewJsonSchema = {
+const ReviewJsonSchema: JsonValue = {
   type: 'object',
   properties: {
     rating: { type: 'number' },
     summary: { type: 'string' },
   },
   required: ['rating', 'summary'],
-} as const
+}
 
 // ---------------------------------------------------------------------------
 // 2. Build a fake Gemini client (no network — scripted response)
@@ -73,7 +74,7 @@ const ids = new FakeIds()
 
 const client = createClient({
   adapters: [geminiAdapter({ client: fakeClient })],
-  pricing: geminiPricingSource(),
+  pricingSources: { google: geminiPricingSource() },
   sink,
   clock,
   ids,
@@ -85,6 +86,7 @@ const client = createClient({
 
 const codeReview = defineCallSite({
   id: 'code-review',
+  provider: 'google',
   model: 'gemini-2.5-flash',
   jsonSchema: ReviewJsonSchema,
   system: 'You are a senior code reviewer. Be concise and fair.',
@@ -167,7 +169,7 @@ console.log('\n========================================\n')
 //
 // const realClient = createClient({
 //   adapters: [geminiAdapter()],          // uses real @google/genai SDK
-//   pricing: geminiPricingSource(),
+//   pricingSources: { google: geminiPricingSource() },
 //   sink: drizzleUsageSink(db, llmCalls), // writes to your llm_calls table
 // })
 //

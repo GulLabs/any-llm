@@ -31,7 +31,7 @@ const db = drizzle(new pg.Pool({ connectionString: process.env.DATABASE_URL }))
 
 const client = createClient({
   adapters: [geminiAdapter()],
-  pricing: geminiPricingSource(),
+  pricingSources: { google: geminiPricingSource() },
   sink: drizzleUsageSink(db, llmCalls),
 })
 

@@ -86,6 +86,7 @@ const FAKE_CTX: AdapterCtx = {
 
 function makeResolvedReq(overrides: Partial<ResolvedRequest> = {}): ResolvedRequest {
   return {
+    provider: 'codex-cli',
     model: 'gpt-5.4-mini',
     messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Say exactly: hi' }] }],
     config: {},

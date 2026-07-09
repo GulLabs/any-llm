@@ -21,7 +21,10 @@ describe('@gullabs/claude-cli package surface', () => {
   })
 
   it('claudeCliRegistry.resolve returns a descriptor for a known model id', () => {
-    const descriptor = claudeCliRegistry.resolve('claude-haiku-4-5-20251001')
+    const descriptor = claudeCliRegistry.resolve(
+      'claude-cli',
+      'claude-haiku-4-5-20251001',
+    )
     expect(descriptor).toBeDefined()
     expect(descriptor?.provider).toBe('claude-cli')
   })

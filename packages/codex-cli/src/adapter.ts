@@ -471,6 +471,13 @@ export function codexCliAdapter(opts?: CodexCliAdapterOptions): ProviderAdapter 
         )
       }
 
+      if (req.provider !== 'codex-cli') {
+        throw new LlmError(
+          `@gullabs/codex-cli received a request routed for provider "${req.provider}" — this adapter only serves "codex-cli"`,
+          { kind: 'bad_request', retryable: false, provider: 'codex-cli' },
+        )
+      }
+
       const warnings: Warning[] = []
       const model = req.model
 

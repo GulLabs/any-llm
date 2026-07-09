@@ -475,6 +475,13 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
     id: 'google',
 
     async run(req: ResolvedRequest, ctx: AdapterCtx): Promise<AdapterResult> {
+      if (req.provider !== 'google') {
+        throw new LlmError(
+          `geminiAdapter received a request for provider "${req.provider}", expected "google".`,
+          { kind: 'bad_request', retryable: false },
+        )
+      }
+
       const warnings: Warning[] = []
       const model = req.model
 

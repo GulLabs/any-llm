@@ -8,11 +8,11 @@
  *
  * const client = createClient({
  *   adapters: [geminiAdapter()],
- *   pricing: geminiPricingSource(),
+ *   pricingSources: { google: geminiPricingSource() },
  * })
  *
  * const result = await client.generate(
- *   { model: 'gemini-2.5-pro', messages: [...] },
+ *   { provider: 'google', model: 'gemini-2.5-pro', messages: [...] },
  *   { auth: { apiKey: process.env.GEMINI_API_KEY! } },
  * )
  * ```

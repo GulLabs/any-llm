@@ -50,7 +50,7 @@ const fakeClient = makeFakeGemini(
 const sink = new RecordingSink()
 const client = createClient({
   adapters: [geminiAdapter({ client: fakeClient })],
-  pricing: geminiPricingSource(),
+  pricingSources: { google: geminiPricingSource() },
   sink,
   clock: new FakeClock(0),
   ids: new FakeIds(),
@@ -58,6 +58,7 @@ const client = createClient({
 
 const callSite = defineCallSite({
   id: 'test',
+  provider: 'google',
   model: 'gemini-2.5-flash',
   jsonSchema: {
     type: 'object',

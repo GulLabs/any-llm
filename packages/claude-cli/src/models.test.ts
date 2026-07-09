@@ -51,14 +51,17 @@ describe('registry', () => {
   })
 
   it.each(ids)('resolves descriptor for %s', (id) => {
-    const descriptor = claudeCliRegistry.resolve(id)
+    const descriptor = claudeCliRegistry.resolve('claude-cli', id)
     expect(descriptor).toBeDefined()
-    expect(descriptor?.id).toBe(id)
+    expect(descriptor?.model).toBe(id)
     expect(descriptor?.provider).toBe('claude-cli')
   })
 
   it('validateConfig accepts a valid config via the Standard Schema surface', () => {
-    const descriptor = claudeCliRegistry.resolve('claude-haiku-4-5-20251001')
+    const descriptor = claudeCliRegistry.resolve(
+      'claude-cli',
+      'claude-haiku-4-5-20251001',
+    )
     const result = descriptor?.validateConfig['~standard'].validate({
       reasoning: { effort: 'medium' },
     })
@@ -69,7 +72,10 @@ describe('registry', () => {
   })
 
   it('validateConfig rejects an invalid config via the Standard Schema surface', () => {
-    const descriptor = claudeCliRegistry.resolve('claude-haiku-4-5-20251001')
+    const descriptor = claudeCliRegistry.resolve(
+      'claude-cli',
+      'claude-haiku-4-5-20251001',
+    )
     const result = descriptor?.validateConfig['~standard'].validate({
       temperature: 0.7,
     })

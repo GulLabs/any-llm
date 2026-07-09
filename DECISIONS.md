@@ -193,7 +193,7 @@ enumerating every version string in the pricing table.
 
 ## ADR-006: `ModelDescriptor` Registry with Exact-ID and Longest-Prefix Resolution
 
-**Status:** Accepted
+**Status:** Accepted; resolution keying and routing fallbacks superseded by ADR-022
 
 **Context:**
 A model string like `gemini-2.5-pro-001` must route to the `google` adapter, resolve to the
@@ -932,3 +932,46 @@ handle) so a one-file wrapper is all a host needs to bridge it to any APM system
 - The `metadata` field is the caller's domain anchor (tenantId, runId, traceId, etc.) and is
   stored verbatim; it must not contain secrets.
 - Items listed as deferred are tracked in ROADMAP.md under "Deferred observability."
+
+---
+
+## ADR-022: Provider-Qualified Model Identity — Explicit `(provider, model)` Everywhere
+
+**Status:** Accepted (supersedes the derived-provider routing and bare-model registry keying in
+ADR-006)
+
+**Context:**
+Model identity was a flat string: the registry, router, and pricing lookup were keyed by bare
+model id, and the provider was _derived_ (registry descriptor → `provider/model` slash-string
+parse → `'unknown'` fallback, with a single-adapter routing bypass). The CLI dev providers
+register bare ids like `gpt-5.4` and `claude-sonnet-5`; a future `openai`/`anthropic` API
+provider registering the same ids would collide in both routing and cost lookup. The same bare
+model must be able to exist under multiple providers with different config schemas.
+
+**Decision:**
+Identity is the explicit pair (`provider`, `model`) — structured fields, never slash strings:
+
+- `LlmRequest` and `CallSite` carry a required top-level `provider`; `model` stays the bare
+  provider-native string, forwarded verbatim to the SDK/CLI.
+- `ModelRegistry.resolve(provider, model)`; descriptors rename `id` → `model` and are keyed by
+  the pair. Longest-prefix matching is scoped within one provider. The same bare `model` under
+  different providers is allowed; duplicate exact pairs throw.
+- Routing is always `adapterMap.get(req.provider)`. `deriveProvider()`, the slash-convention
+  parse, the `'unknown'` fallback, and the single-adapter bypass are deleted. After any router
+  (default or custom) returns, the engine asserts `adapter.id === req.provider`.
+- `ClientConfig.pricing` becomes `pricingSources: Record<provider, PricingSource>`; the
+  `PricingSource` port shape is unchanged but is now defined as provider-scoped.
+- `createClient` verifies every registry descriptor's `provider` matches a configured adapter id.
+- Missing `provider`, an unconfigured provider, or an unregistered (`provider`, `model`) pair
+  throws `LlmError('bad_request')` at the public API boundary (reject, don't map).
+
+**Consequences:**
+
+- Every call site names its provider explicitly; a model swap across providers is a two-field
+  change instead of relying on derivation heuristics.
+- The silent `'unknown'`-provider fallthrough and cross-provider single-adapter routing are gone;
+  misrouted requests fail fast instead of running on the wrong adapter.
+- Records, rate-limiter keys, and telemetry events all source `provider` from `req.provider`,
+  matching the persistence layer, which already stored provider and model as separate columns.
+- Breaking change to `LlmRequest`, `CallSite`, `ModelRegistry`, `ModelDescriptor`, and
+  `ClientConfig` (pre-1.0, per the P0 no-legacy rule: no compatibility shims).

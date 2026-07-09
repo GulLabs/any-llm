@@ -57,7 +57,7 @@ import { drizzleUsageSink, llmCalls } from '@gullabs/drizzle'
 function baseClientConfig(db: DbLike) {
   return {
     adapters: [geminiAdapter()],
-    pricing: geminiPricingSource(),
+    pricingSources: { google: geminiPricingSource() },
     sink: drizzleUsageSink(db, llmCalls),
   }
 }
@@ -85,6 +85,7 @@ async function handleRoute(req: Request, db: DbLike) {
 
   return client.generate(
     {
+      provider: 'google',
       model: 'gemini-2.5-flash',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Summarize this' }] }],
       callSiteId: 'http-summary',
@@ -135,6 +136,7 @@ export async function runReportActivity(
 
   return client.generate(
     {
+      provider: 'google',
       model: 'gemini-2.5-pro',
       messages: [{ role: 'user', parts: [{ kind: 'text', text: input.prompt }] }],
       callSiteId: 'worker-report',

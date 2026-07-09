@@ -64,14 +64,14 @@ describe('codex-cli config schemas', () => {
 describe('codexCliRegistry', () => {
   it('resolves every supported model id without throwing at construction', () => {
     for (const id of CODEX_CLI_MODEL_IDS) {
-      const descriptor = codexCliRegistry.resolve(id)
+      const descriptor = codexCliRegistry.resolve('codex-cli', id)
       expect(descriptor).toBeDefined()
       expect(descriptor?.provider).toBe('codex-cli')
     }
   })
 
   it('validateConfig["~standard"].validate accepts a good config', async () => {
-    const descriptor = codexCliRegistry.resolve('gpt-5.4-mini')
+    const descriptor = codexCliRegistry.resolve('codex-cli', 'gpt-5.4-mini')
     expect(descriptor).toBeDefined()
     const result = await descriptor?.validateConfig['~standard'].validate({
       reasoning: { effort: 'high' },
@@ -80,7 +80,7 @@ describe('codexCliRegistry', () => {
   })
 
   it('validateConfig["~standard"].validate rejects a bad config', async () => {
-    const descriptor = codexCliRegistry.resolve('gpt-5.4-mini')
+    const descriptor = codexCliRegistry.resolve('codex-cli', 'gpt-5.4-mini')
     expect(descriptor).toBeDefined()
     const result = await descriptor?.validateConfig['~standard'].validate({
       temperature: 0.5,

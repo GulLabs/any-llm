@@ -22,6 +22,7 @@ function makeSuccessResult(): AdapterResult {
 }
 
 const STUB_REQ: ResolvedRequest = {
+  provider: 'fake',
   model: 'fake-model',
   messages: [],
   config: { serviceTier: 'flex' },
