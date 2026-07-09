@@ -11,13 +11,13 @@ const EmptyConfigJsonSchema = toConfigJsonSchema(EmptyConfigSchema)
 const EmptyConfigValidator = zodToStandardSchema(EmptyConfigSchema)
 
 export function makeTestDescriptor(
-  overrides: Partial<ModelDescriptor> & Pick<ModelDescriptor, 'id' | 'provider'>,
+  overrides: Partial<ModelDescriptor> & Pick<ModelDescriptor, 'model' | 'provider'>,
 ): ModelDescriptor {
-  const { id, provider, ...rest } = overrides
+  const { model, provider, ...rest } = overrides
 
   return {
     ...rest,
-    id,
+    model,
     provider,
     configSchema: EmptyConfigSchema,
     configJsonSchema: EmptyConfigJsonSchema,

@@ -55,6 +55,7 @@ function makeCtx(signal?: AbortSignal): EngineCtx {
 
 function makeReq(): ResolvedRequest {
   return {
+    provider: 'google',
     model: 'gemini-2.5-pro',
     messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
     config: {},
@@ -301,7 +302,7 @@ describe('retryMiddleware', () => {
       ...makeReq(),
       model: 'gemma-4-31b-it',
       modelDescriptor: makeTestDescriptor({
-        id: 'gemma-4-31b-it',
+        model: 'gemma-4-31b-it',
         provider: 'google',
       }),
     }
@@ -331,7 +332,7 @@ describe('retryMiddleware', () => {
     const req: ResolvedRequest = {
       ...makeReq(),
       modelDescriptor: makeTestDescriptor({
-        id: 'google-standard-only-model',
+        model: 'google-standard-only-model',
         provider: 'google',
         capabilities: { serviceTiers: ['standard'] },
       }),
@@ -386,7 +387,7 @@ describe('engine + middleware — integration', () => {
 
     const client = createClient({
       adapters: [adapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock,
       ids,
@@ -395,6 +396,7 @@ describe('engine + middleware — integration', () => {
 
     const result = await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       },
@@ -417,7 +419,7 @@ describe('engine + middleware — integration', () => {
     expect(() =>
       createClient({
         adapters: [new FakeAdapter('google', makeSuccessResult())],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         middleware: [mwA, mwB], // both have id='retry'
       }),
     ).toThrow(LlmError)
@@ -433,7 +435,7 @@ describe('engine + middleware — integration', () => {
 
     const client = createClient({
       adapters: [adapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids,
@@ -444,6 +446,7 @@ describe('engine + middleware — integration', () => {
 
     await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       },
@@ -474,7 +477,7 @@ describe('engine + middleware — integration', () => {
 
     const client = createClient({
       adapters: [adapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids,
@@ -486,6 +489,7 @@ describe('engine + middleware — integration', () => {
     await expect(
       client.generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-pro',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         },
@@ -518,7 +522,7 @@ describe('engine + middleware — integration', () => {
 
     const client = createClient({
       adapters: [adapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       clock: new FakeClock(),
       ids: new FakeIds(),
       telemetry: {
@@ -537,6 +541,7 @@ describe('engine + middleware — integration', () => {
 
     await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       },

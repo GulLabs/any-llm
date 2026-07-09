@@ -1,8 +1,8 @@
 /**
  * Model descriptor registry for @gullabs/core.
  *
- * Centralises model/provider knowledge so string-heuristics (gemini-* → google)
- * live in one place and unknown models fail fast at call time.
+ * Centralises model/provider knowledge. Descriptors are keyed by the pair
+ * (`provider`, `model`); unknown pairs fail fast at call time.
  *
  * @module
  */
@@ -28,11 +28,13 @@ import type { JsonValue, ReasoningEffort } from './types.js'
 
 export interface ModelDescriptor {
   /**
-   * Model identifier — used as the exact-match key and as the prefix for
-   * longest-prefix matching (e.g. `"gemini-2.5-pro"` also matches
-   * `"gemini-2.5-pro-001"`).
+   * Bare provider-native model identifier — used as the exact-match key and
+   * as the prefix for longest-prefix matching (e.g. `"gemini-2.5-pro"` also
+   * matches `"gemini-2.5-pro-001"`). Identity for a descriptor is the pair
+   * (`provider`, `model`); the same bare `model` string may be registered
+   * under multiple providers with different config schemas.
    */
-  id: string
+  model: string
   /** Provider identifier (e.g. `"google"`). Must match the adapter's `id`. */
   provider: string
   /**
@@ -64,7 +66,7 @@ export interface ModelDescriptor {
 }
 
 export interface ModelRegistry {
-  resolve(model: string): ModelDescriptor | undefined
+  resolve(provider: string, model: string): ModelDescriptor | undefined
   listDescriptors?(): readonly ModelDescriptor[]
 }
 
@@ -76,9 +78,9 @@ function assertDescriptorSchemaArtifacts(descriptor: Partial<ModelDescriptor>): 
 
   if (missing.length > 0) {
     throw new LlmError(
-      `Model descriptor "${descriptor.id ?? '<unknown>'}" is missing required schema artifacts: ${missing.join(
-        ', ',
-      )}.`,
+      `Model descriptor for provider "${descriptor.provider ?? '<unknown>'}" model "${
+        descriptor.model ?? '<unknown>'
+      }" is missing required schema artifacts: ${missing.join(', ')}.`,
       {
         kind: 'bad_request',
         retryable: false,
@@ -87,33 +89,53 @@ function assertDescriptorSchemaArtifacts(descriptor: Partial<ModelDescriptor>): 
   }
 }
 
+/** Composite key for the exact (provider, model) match map. */
+function descriptorKey(provider: string, model: string): string {
+  return `${provider}\u0000${model}`
+}
+
 export function createModelRegistry(descriptors: ModelDescriptor[]): ModelRegistry {
-  const map = new Map<string, ModelDescriptor>()
+  const exactMap = new Map<string, ModelDescriptor>()
+  // Grouped per-provider so longest-prefix matching never crosses providers.
+  const byProvider = new Map<string, Map<string, ModelDescriptor>>()
 
   for (const descriptor of descriptors) {
     assertDescriptorSchemaArtifacts(descriptor)
 
-    if (map.has(descriptor.id)) {
-      throw new LlmError(`Duplicate model descriptor id "${descriptor.id}"`, {
-        kind: 'bad_request',
-        retryable: false,
-      })
+    const key = descriptorKey(descriptor.provider, descriptor.model)
+    if (exactMap.has(key)) {
+      throw new LlmError(
+        `Duplicate model descriptor for provider "${descriptor.provider}" model "${descriptor.model}"`,
+        {
+          kind: 'bad_request',
+          retryable: false,
+        },
+      )
     }
+    exactMap.set(key, descriptor)
 
-    map.set(descriptor.id, descriptor)
+    let providerMap = byProvider.get(descriptor.provider)
+    if (providerMap === undefined) {
+      providerMap = new Map<string, ModelDescriptor>()
+      byProvider.set(descriptor.provider, providerMap)
+    }
+    providerMap.set(descriptor.model, descriptor)
   }
 
   return {
-    resolve(model: string): ModelDescriptor | undefined {
-      const exact = map.get(model)
+    resolve(provider: string, model: string): ModelDescriptor | undefined {
+      const exact = exactMap.get(descriptorKey(provider, model))
       if (exact !== undefined) return exact
+
+      const providerMap = byProvider.get(provider)
+      if (providerMap === undefined) return undefined
 
       let best: ModelDescriptor | undefined
       let bestLen = 0
-      for (const [id, descriptor] of map) {
-        if (model.startsWith(id) && id.length > bestLen) {
+      for (const [candidateModel, descriptor] of providerMap) {
+        if (model.startsWith(candidateModel) && candidateModel.length > bestLen) {
           best = descriptor
-          bestLen = id.length
+          bestLen = candidateModel.length
         }
       }
       return best
@@ -153,7 +175,7 @@ const GEMMA_REASONING_EFFORTS = [
 
 export const geminiModelDescriptors: ModelDescriptor[] = [
   {
-    id: 'gemini-2.5-pro',
+    model: 'gemini-2.5-pro',
     provider: 'google',
     pricingFamily: 'gemini-2.5-pro',
     capabilities: {
@@ -173,7 +195,7 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
     validateConfig: zodToStandardSchema(Gemini25ProConfigSchema),
   },
   {
-    id: 'gemini-2.5-flash',
+    model: 'gemini-2.5-flash',
     provider: 'google',
     pricingFamily: 'gemini-2.5-flash',
     capabilities: {
@@ -193,7 +215,7 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
     validateConfig: zodToStandardSchema(Gemini25FlashConfigSchema),
   },
   {
-    id: 'gemini-2.5-flash-lite',
+    model: 'gemini-2.5-flash-lite',
     provider: 'google',
     pricingFamily: 'gemini-2.5-flash-lite',
     capabilities: {
@@ -213,7 +235,7 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
     validateConfig: zodToStandardSchema(Gemini25FlashLiteConfigSchema),
   },
   {
-    id: 'gemini-3.5-flash',
+    model: 'gemini-3.5-flash',
     provider: 'google',
     pricingFamily: 'gemini-3.5-flash',
     capabilities: {
@@ -233,7 +255,7 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
     validateConfig: zodToStandardSchema(Gemini35FlashConfigSchema),
   },
   {
-    id: 'gemini-3.1-flash-lite',
+    model: 'gemini-3.1-flash-lite',
     provider: 'google',
     pricingFamily: 'gemini-3.1-flash-lite',
     capabilities: {
@@ -253,7 +275,7 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
     validateConfig: zodToStandardSchema(Gemini31FlashLiteConfigSchema),
   },
   {
-    id: 'gemini-3.1-pro-preview',
+    model: 'gemini-3.1-pro-preview',
     provider: 'google',
     pricingFamily: 'gemini-3.1-pro-preview',
     capabilities: {
@@ -273,7 +295,7 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
     validateConfig: zodToStandardSchema(Gemini31ProPreviewConfigSchema),
   },
   {
-    id: 'gemini-3-flash-preview',
+    model: 'gemini-3-flash-preview',
     provider: 'google',
     pricingFamily: 'gemini-3-flash-preview',
     capabilities: {
@@ -296,7 +318,7 @@ export const geminiModelDescriptors: ModelDescriptor[] = [
 
 export const gemmaModelDescriptors: ModelDescriptor[] = [
   {
-    id: 'gemma-4-31b-it',
+    model: 'gemma-4-31b-it',
     provider: 'google',
     capabilities: {
       reasoning: true,
@@ -313,7 +335,7 @@ export const gemmaModelDescriptors: ModelDescriptor[] = [
     validateConfig: zodToStandardSchema(Gemma431bItConfigSchema),
   },
   {
-    id: 'gemma-4-26b-a4b-it',
+    model: 'gemma-4-26b-a4b-it',
     provider: 'google',
     capabilities: {
       reasoning: true,

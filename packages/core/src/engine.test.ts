@@ -28,6 +28,7 @@ import type {
   CallStartEvent,
   CallSuccessEvent,
   ModelRegistry,
+  PricingSource,
   ProviderOptions,
 } from './index.js'
 import {
@@ -76,7 +77,7 @@ function makeClient(
 
   const client = createClient({
     adapters: [adapter],
-    pricing: PRICING,
+    pricingSources: { google: PRICING },
     sink,
     clock,
     ids,
@@ -97,6 +98,7 @@ describe('engine — success path', () => {
 
     const result = await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       },
@@ -137,6 +139,7 @@ describe('engine — success path', () => {
 
     const result = await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       },
@@ -165,6 +168,7 @@ describe('engine — success path', () => {
 
     await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       },
@@ -182,6 +186,7 @@ describe('engine — success path', () => {
 
     const result = await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       },
@@ -199,6 +204,7 @@ describe('engine — success path', () => {
 
     await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         metadata: { tenantId: 'acme', runId: 'run-1' },
@@ -215,6 +221,7 @@ describe('engine — success path', () => {
 
     await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       },
@@ -254,7 +261,7 @@ describe('engine — double-count integration', () => {
       const client = createClient({
         adapters: [adapter],
 
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -262,6 +269,7 @@ describe('engine — double-count integration', () => {
 
       const result = await client.generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-pro',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Test' }] }],
           config: { serviceTier: 'standard' },
@@ -303,6 +311,7 @@ describe('engine — double-count integration', () => {
       // FLEX service tier = 50% of standard.
       const flex = await client.generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-pro',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Test' }] }],
           config: { serviceTier: 'flex' },
@@ -337,7 +346,7 @@ describe('engine — failure path', () => {
     const client = createClient({
       adapters: [adapter],
 
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       telemetry,
       clock: new FakeClock(),
@@ -347,6 +356,7 @@ describe('engine — failure path', () => {
     await expect(
       client.generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-pro',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         },
@@ -357,6 +367,7 @@ describe('engine — failure path', () => {
     await expect(
       client.generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-pro',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         },
@@ -382,7 +393,7 @@ describe('engine — failure path', () => {
     const client = createClient({
       adapters: [adapter],
 
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -391,6 +402,7 @@ describe('engine — failure path', () => {
     await expect(
       client.generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-pro',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         },
@@ -427,7 +439,7 @@ describe('engine — structured output', () => {
     const client = createClient({
       adapters: [adapter],
 
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       telemetry,
       clock: new FakeClock(),
@@ -436,6 +448,7 @@ describe('engine — structured output', () => {
 
     const result = await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         output: { jsonSchema },
@@ -461,7 +474,7 @@ describe('engine — structured output', () => {
     const client = createClient({
       adapters: [adapter],
 
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -469,6 +482,7 @@ describe('engine — structured output', () => {
 
     const result = await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         output: { jsonSchema },
@@ -488,7 +502,7 @@ describe('engine — structured output', () => {
 
     const client = createClient({
       adapters: [adapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -496,6 +510,7 @@ describe('engine — structured output', () => {
 
     const result = await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         output: { jsonSchema: { type: 'object' } },
@@ -521,7 +536,7 @@ describe('engine — fail-open sink', () => {
     const client = createClient({
       adapters: [new FakeAdapter('google', makeSuccessResult())],
 
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -530,6 +545,7 @@ describe('engine — fail-open sink', () => {
     // Should NOT throw despite the sink failing
     const result = await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       },
@@ -548,7 +564,7 @@ describe('engine — fail-open sink', () => {
     const client = createClient({
       adapters: [adapter],
 
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -558,6 +574,7 @@ describe('engine — fail-open sink', () => {
     await expect(
       client.generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-pro',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         },
@@ -579,7 +596,7 @@ describe('engine — timeout', () => {
     const client = createClient({
       adapters: [slow],
 
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -588,6 +605,7 @@ describe('engine — timeout', () => {
     await expect(
       client.generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-pro',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
           config: { timeoutMs: 1 },
@@ -622,7 +640,7 @@ describe('engine — config resolution', () => {
     const client = createClient({
       adapters: [capturingAdapter],
 
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -632,6 +650,7 @@ describe('engine — config resolution', () => {
     // Per-request config overrides defaults
     await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         config: { temperature: 0.9 },
@@ -646,7 +665,7 @@ describe('engine — config resolution', () => {
     const adapter = new FakeAdapter('google', makeSuccessResult())
     const client = createClient({
       adapters: [adapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       clock: new FakeClock(),
       ids: new FakeIds(),
       defaults: { flexFallback: false },
@@ -656,6 +675,7 @@ describe('engine — config resolution', () => {
       client.runStructured(
         {
           id: 'callsite-1',
+          provider: 'google',
           model: 'gemini-2.5-pro',
           userTemplate: 'Hi',
           config: { serviceTier: 'flex' },
@@ -676,7 +696,7 @@ describe('engine — config resolution', () => {
     const client = createClient({
       adapters: [new FakeAdapter('google', makeSuccessResult())],
 
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -685,6 +705,7 @@ describe('engine — config resolution', () => {
 
     await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         config: { serviceTier: 'standard' },
@@ -696,7 +717,7 @@ describe('engine — config resolution', () => {
   })
 
   it('Gemma requests stay tierless when no serviceTier is provided', async () => {
-    const gemma = gemmaModelDescriptors.find((d) => d.id === 'gemma-4-31b-it')!
+    const gemma = gemmaModelDescriptors.find((d) => d.model === 'gemma-4-31b-it')!
     const adapter = new FakeAdapter(
       'google',
       makeSuccessResult({ model: 'gemma-4-31b-it' }),
@@ -704,7 +725,7 @@ describe('engine — config resolution', () => {
     const sink = new RecordingSink()
     const client = createClient({
       adapters: [adapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -712,6 +733,7 @@ describe('engine — config resolution', () => {
 
     await client.generate(
       {
+        provider: 'google',
         model: 'gemma-4-31b-it',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       },
@@ -729,6 +751,7 @@ describe('engine — config resolution', () => {
     // runStructured exercises the interpolation path
     const callSite = {
       id: 'test',
+      provider: 'google',
       model: 'gemini-2.5-pro',
       userTemplate: 'Value: {{val}}',
     }
@@ -755,7 +778,7 @@ describe('engine — config resolution', () => {
     const client = createClient({
       adapters: [capturingAdapter],
 
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       clock: new FakeClock(),
       ids: new FakeIds(),
       defaults: { reasoning: { effort: 'low', includeThoughts: false } },
@@ -763,6 +786,7 @@ describe('engine — config resolution', () => {
 
     await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         config: { reasoning: { includeThoughts: true } },
@@ -782,85 +806,122 @@ describe('engine — config resolution', () => {
 // ---------------------------------------------------------------------------
 
 describe('engine — routing', () => {
-  it('single adapter: used unconditionally regardless of model', async () => {
-    const adapter = new FakeAdapter('anthropic', makeSuccessResult())
-    const client = createClient({
-      adapters: [adapter],
+  const HI_MESSAGES = [
+    { role: 'user' as const, parts: [{ kind: 'text' as const, text: 'Hi' }] },
+  ]
 
-      pricing: PRICING,
+  it('lone adapter of another provider is never used: gemini request → bad_request', async () => {
+    // Replaces the deleted single-adapter bypass: a request for provider
+    // 'google' must NOT run through a lone 'anthropic' adapter.
+    const anthropic = new FakeAdapter('anthropic', makeSuccessResult())
+    const registry = createModelRegistry([
+      makeTestDescriptor({ model: 'claude-sonnet-5', provider: 'anthropic' }),
+    ])
+    const client = createClient({
+      adapters: [anthropic],
+      pricingSources: {},
+      modelRegistry: registry,
       clock: new FakeClock(),
       ids: new FakeIds(),
     })
 
-    // 'gemini-2.5-pro' with an 'anthropic' adapter — still works (single adapter)
-    await client.generate(
-      {
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      },
-      { auth: TEST_AUTH },
-    )
-
-    expect(adapter.calls).toHaveLength(1)
+    await expect(
+      client.generate(
+        { provider: 'google', model: 'gemini-2.5-pro', messages: HI_MESSAGES },
+        { auth: TEST_AUTH },
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+    expect(anthropic.calls).toHaveLength(0)
   })
 
-  it('multiple adapters: picks by provider prefix; no match → bad_request', async () => {
+  it('multiple adapters: routes by request.provider; unregistered model → bad_request', async () => {
     const google = new FakeAdapter('google', makeSuccessResult())
     const anthropic = new FakeAdapter('anthropic', makeSuccessResult())
 
     const client = createClient({
       adapters: [google, anthropic],
-
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       clock: new FakeClock(),
       ids: new FakeIds(),
     })
 
-    // gemini-* → google
+    // provider 'google' → google adapter
     await client.generate(
-      {
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      },
+      { provider: 'google', model: 'gemini-2.5-pro', messages: HI_MESSAGES },
       { auth: TEST_AUTH },
     )
     expect(google.calls).toHaveLength(1)
+    expect(anthropic.calls).toHaveLength(0)
 
-    // unknown model → bad_request
+    // unregistered (provider, model) pair → bad_request
     await expect(
       client.generate(
-        {
-          model: 'unknown-model-xyz',
-          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-        },
+        { provider: 'google', model: 'unknown-model-xyz', messages: HI_MESSAGES },
         { auth: TEST_AUTH },
       ),
     ).rejects.toMatchObject({ kind: 'bad_request' })
   })
 
-  it('custom route function is used when provided', async () => {
-    const a = new FakeAdapter('a', makeSuccessResult())
-    const b = new FakeAdapter('b', makeSuccessResult())
+  it('custom route(provider, model, adapters) is used when provided', async () => {
+    const google = new FakeAdapter('google', makeSuccessResult())
+    const anthropic = new FakeAdapter('anthropic', makeSuccessResult())
+    const routeCalls: Array<{ provider: string; model: string }> = []
 
     const client = createClient({
-      adapters: [a, b],
-
-      pricing: PRICING,
+      adapters: [google, anthropic],
+      pricingSources: { google: PRICING },
       clock: new FakeClock(),
       ids: new FakeIds(),
-      route: (_model, adapters) => adapters[1]!, // always pick second
+      route: (provider, model, adapters) => {
+        routeCalls.push({ provider, model })
+        return adapters.find((a) => a.id === provider)!
+      },
     })
 
     await client.generate(
-      {
-        model: 'gemini-2.5-pro',
-        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-      },
+      { provider: 'google', model: 'gemini-2.5-pro', messages: HI_MESSAGES },
       { auth: TEST_AUTH },
     )
 
-    expect(a.calls).toHaveLength(0)
-    expect(b.calls).toHaveLength(1)
+    expect(routeCalls).toEqual([{ provider: 'google', model: 'gemini-2.5-pro' }])
+    expect(google.calls).toHaveLength(1)
+    expect(anthropic.calls).toHaveLength(0)
+  })
+
+  it('post-route invariant: custom route returning a wrong-provider adapter → bad_request', async () => {
+    const google = new FakeAdapter('google', makeSuccessResult())
+    const anthropic = new FakeAdapter('anthropic', makeSuccessResult())
+
+    const client = createClient({
+      adapters: [google, anthropic],
+      pricingSources: { google: PRICING },
+      clock: new FakeClock(),
+      ids: new FakeIds(),
+      // Cross-provider router: always returns the anthropic adapter.
+      route: () => anthropic,
+    })
+
+    await expect(
+      client.generate(
+        { provider: 'google', model: 'gemini-2.5-pro', messages: HI_MESSAGES },
+        { auth: TEST_AUTH },
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+    expect(anthropic.calls).toHaveLength(0)
+    expect(google.calls).toHaveLength(0)
+  })
+
+  it('createClient throws when a registry descriptor has no matching adapter', () => {
+    const registry = createModelRegistry([
+      makeTestDescriptor({ model: 'claude-sonnet-5', provider: 'anthropic' }),
+    ])
+    expect(() =>
+      createClient({
+        adapters: [new FakeAdapter('google', makeSuccessResult())],
+        pricingSources: { google: PRICING },
+        modelRegistry: registry,
+      }),
+    ).toThrow(/no matching configured adapter/)
   })
 })
 
@@ -889,7 +950,7 @@ describe('engine — logger', () => {
     const client = createClient({
       adapters: [new FakeAdapter('google', makeSuccessResult())],
 
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       logger,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -897,6 +958,7 @@ describe('engine — logger', () => {
 
     await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       },
@@ -928,7 +990,7 @@ describe('engine — logger', () => {
     const client = createClient({
       adapters: [new FakeAdapter('google', { status: 500 })],
 
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       logger,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -937,6 +999,7 @@ describe('engine — logger', () => {
     await expect(
       client.generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-pro',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         },
@@ -965,7 +1028,7 @@ describe('engine — reasoning text', () => {
     const client = createClient({
       adapters: [adapter],
 
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -973,6 +1036,7 @@ describe('engine — reasoning text', () => {
 
     const result = await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       },
@@ -998,7 +1062,7 @@ describe('engine — caller abort (Finding 1)', () => {
     const client = createClient({
       adapters: [adapter],
 
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -1011,6 +1075,7 @@ describe('engine — caller abort (Finding 1)', () => {
     await expect(
       client.generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-pro',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         },
@@ -1037,7 +1102,7 @@ describe('engine — caller abort (Finding 1)', () => {
     const client = createClient({
       adapters: [adapter],
 
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -1049,6 +1114,7 @@ describe('engine — caller abort (Finding 1)', () => {
     await expect(
       client.generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-pro',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         },
@@ -1079,7 +1145,7 @@ describe('engine — timeout determinism (Finding 2)', () => {
     const client = createClient({
       adapters: [adapter],
 
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -1088,6 +1154,7 @@ describe('engine — timeout determinism (Finding 2)', () => {
     await expect(
       client.generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-pro',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
           config: { timeoutMs: 10 },
@@ -1110,7 +1177,7 @@ describe('engine — timeout determinism (Finding 2)', () => {
     const client = createClient({
       adapters: [slow],
 
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -1119,6 +1186,7 @@ describe('engine — timeout determinism (Finding 2)', () => {
     await expect(
       client.generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-pro',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
           config: { timeoutMs: 10 },
@@ -1150,7 +1218,7 @@ describe('engine — providerOptions strict merge', () => {
     const client = createClient({
       adapters: [capturingAdapter],
 
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       clock: new FakeClock(),
       ids: new FakeIds(),
       defaults: {
@@ -1165,6 +1233,7 @@ describe('engine — providerOptions strict merge', () => {
 
     await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         config: {
@@ -1196,6 +1265,7 @@ describe('engine — providerOptions strict merge', () => {
     await expect(
       client.generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-pro',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
           config: {
@@ -1214,13 +1284,96 @@ describe('engine — providerOptions strict merge', () => {
 // 12. pricingFamily routing
 // ---------------------------------------------------------------------------
 
+describe('engine — per-provider pricing sources', () => {
+  const HI_MESSAGES = [
+    { role: 'user' as const, parts: [{ kind: 'text' as const, text: 'Hi' }] },
+  ]
+
+  it('selects the pricing source by request.provider', async () => {
+    const anthropicPricing: PricingSource = {
+      version: 'anthropic-test-1',
+      price: () => ({
+        microUsd: 777,
+        usd: 0.000777,
+        pricingVersion: 'anthropic-test-1',
+        confidence: 'exact' as const,
+        details: { input: 777, cached: 0, output: 0 },
+      }),
+      hasModel: () => true,
+      listModels: () => ['claude-sonnet-5'],
+    }
+    const registry = createModelRegistry([
+      makeTestDescriptor({ model: 'gemini-2.5-pro', provider: 'google' }),
+      makeTestDescriptor({ model: 'claude-sonnet-5', provider: 'anthropic' }),
+    ])
+    const sink = new RecordingSink()
+    const client = createClient({
+      adapters: [
+        new FakeAdapter('google', makeSuccessResult()),
+        new FakeAdapter('anthropic', makeSuccessResult({ model: 'claude-sonnet-5' })),
+      ],
+      pricingSources: { google: PRICING, anthropic: anthropicPricing },
+      modelRegistry: registry,
+      sink,
+      clock: new FakeClock(),
+      ids: new FakeIds(),
+    })
+
+    const googleResult = await client.generate(
+      { provider: 'google', model: 'gemini-2.5-pro', messages: HI_MESSAGES },
+      { auth: TEST_AUTH },
+    )
+    expect(googleResult.cost?.pricingVersion).toBe(PRICING.version)
+
+    const anthropicResult = await client.generate(
+      { provider: 'anthropic', model: 'claude-sonnet-5', messages: HI_MESSAGES },
+      { auth: TEST_AUTH },
+    )
+    expect(anthropicResult.cost?.microUsd).toBe(777)
+    expect(anthropicResult.cost?.pricingVersion).toBe('anthropic-test-1')
+    expect(sink.last()!.pricingVersion).toBe('anthropic-test-1')
+  })
+
+  it('provider with no configured pricing source → cost absent + unpriced warning', async () => {
+    const registry = createModelRegistry([
+      makeTestDescriptor({ model: 'claude-sonnet-5', provider: 'anthropic' }),
+    ])
+    const sink = new RecordingSink()
+    const client = createClient({
+      adapters: [
+        new FakeAdapter('anthropic', makeSuccessResult({ model: 'claude-sonnet-5' })),
+      ],
+      pricingSources: { google: PRICING },
+      modelRegistry: registry,
+      sink,
+      clock: new FakeClock(),
+      ids: new FakeIds(),
+    })
+
+    const result = await client.generate(
+      { provider: 'anthropic', model: 'claude-sonnet-5', messages: HI_MESSAGES },
+      { auth: TEST_AUTH },
+    )
+
+    expect(result.cost).toBeUndefined()
+    expect(result.warnings).toEqual([
+      expect.objectContaining({
+        type: 'other',
+        message: expect.stringContaining('no configured pricing source'),
+      }),
+    ])
+    expect(sink.last()!.status).toBe('ok')
+    expect(sink.last()!.costMicroUsd).toBeUndefined()
+  })
+})
+
 describe('engine — pricingFamily routing', () => {
   it('pricingFamily on descriptor routes pricing to the family key', async () => {
     // Use a model string that has no pricing entry of its own, but whose
     // descriptor has pricingFamily pointing to 'gemini-2.5-pro' which IS priced.
     const customRegistry = createModelRegistry([
       makeTestDescriptor({
-        id: 'my-custom-model',
+        model: 'my-custom-model',
         provider: 'google',
         pricingFamily: 'gemini-2.5-pro',
         capabilities: { reasoning: false },
@@ -1230,7 +1383,7 @@ describe('engine — pricingFamily routing', () => {
     const client = createClient({
       adapters: [new FakeAdapter('google', makeSuccessResult())],
 
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -1239,6 +1392,7 @@ describe('engine — pricingFamily routing', () => {
 
     await client.generate(
       {
+        provider: 'google',
         model: 'my-custom-model',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       },
@@ -1257,7 +1411,7 @@ describe('engine — pricingFamily routing', () => {
     expect(() =>
       createClient({
         adapters: [new FakeAdapter('google', makeSuccessResult())],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         strictPricing: true,
       }),
     ).toThrow(LlmError)
@@ -1266,7 +1420,7 @@ describe('engine — pricingFamily routing', () => {
   it('strictPricing constructs when every registered descriptor resolves to pricing', () => {
     const customRegistry = createModelRegistry([
       makeTestDescriptor({
-        id: 'my-priced-model',
+        model: 'my-priced-model',
         provider: 'google',
         pricingFamily: 'gemini-2.5-pro',
       }),
@@ -1275,7 +1429,7 @@ describe('engine — pricingFamily routing', () => {
     expect(() =>
       createClient({
         adapters: [new FakeAdapter('google', makeSuccessResult())],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         modelRegistry: customRegistry,
         strictPricing: true,
       }),
@@ -1284,10 +1438,10 @@ describe('engine — pricingFamily routing', () => {
 
   it('strictPricing requires custom registries to implement listDescriptors', () => {
     const registryWithoutEnumeration: ModelRegistry = {
-      resolve(model) {
+      resolve(_provider, model) {
         if (model === 'my-priced-model') {
           return makeTestDescriptor({
-            id: 'my-priced-model',
+            model: 'my-priced-model',
             provider: 'google',
             pricingFamily: 'gemini-2.5-pro',
           })
@@ -1299,7 +1453,7 @@ describe('engine — pricingFamily routing', () => {
     expect(() =>
       createClient({
         adapters: [new FakeAdapter('google', makeSuccessResult())],
-        pricing: PRICING,
+        pricingSources: { google: PRICING },
         modelRegistry: registryWithoutEnumeration,
         strictPricing: true,
       }),
@@ -1312,7 +1466,7 @@ describe('engine — pricingFamily routing', () => {
       adapters: [
         new FakeAdapter('google', makeSuccessResult({ model: 'gemma-4-31b-it' })),
       ],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -1320,6 +1474,7 @@ describe('engine — pricingFamily routing', () => {
 
     const result = await client.generate(
       {
+        provider: 'google',
         model: 'gemma-4-31b-it',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       },
@@ -1358,6 +1513,7 @@ describe('engine — structured output parse-only path', () => {
 
     const result = await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Score?' }] }],
         output: { jsonSchema },
@@ -1382,6 +1538,7 @@ describe('engine — structured output parse-only path', () => {
 
     const result = await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Score?' }] }],
         output: { jsonSchema },
@@ -1404,6 +1561,7 @@ describe('engine — structured output parse-only path', () => {
 
     const result = await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'ok?' }] }],
         output: { jsonSchema },
@@ -1425,6 +1583,7 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
     const { client, sink } = makeClient()
     const result = await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       },
@@ -1455,7 +1614,7 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
     const client = createClient({
       adapters: [flakyAdapter],
 
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids,
@@ -1464,6 +1623,7 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
 
     const result = await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
       },
@@ -1494,7 +1654,7 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
     const sink = new RecordingSink()
     const client = createClient({
       adapters: [adapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -1508,6 +1668,7 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
 
     const result = await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         idempotencyKey: 'ctx-123',
@@ -1528,6 +1689,7 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
 
     await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         externalId: 'ai-studio-context-1',
@@ -1545,7 +1707,7 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
     const client = createClient({
       adapters: [adapter],
 
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -1555,6 +1717,7 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
     try {
       await client.generate(
         {
+          provider: 'google',
           model: 'gemini-2.5-pro',
           messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         },
@@ -1587,6 +1750,7 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
 
     await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
         metadata: { tenantId: 'acme', traceId: 'trace-99' },
@@ -1614,10 +1778,16 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
 
 describe('engine — fail-closed auth guard', () => {
   const req = {
+    provider: 'google',
     model: 'gemini-2.5-pro',
     messages: [{ role: 'user' as const, parts: [{ kind: 'text' as const, text: 'Hi' }] }],
   }
-  const callSite = { id: 'test', model: 'gemini-2.5-pro', userTemplate: 'Hi' }
+  const callSite = {
+    id: 'test',
+    provider: 'google',
+    model: 'gemini-2.5-pro',
+    userTemplate: 'Hi',
+  }
 
   it('generate() with no opts arg throws LlmError invalid_auth (not TypeError)', async () => {
     const { client } = makeClient()

@@ -11,7 +11,7 @@ import type { JsonValue } from './index.js'
 
 function findDescriptor(id: string) {
   return [...geminiModelDescriptors, ...gemmaModelDescriptors].find(
-    (descriptor) => descriptor.id === id,
+    (descriptor) => descriptor.model === id,
   )!
 }
 
@@ -169,9 +169,9 @@ describe('strict built-in config schemas', () => {
     for (const descriptor of [...geminiModelDescriptors, ...gemmaModelDescriptors]) {
       const objectSchemas = collectObjectSchemas(descriptor.configJsonSchema as JsonValue)
 
-      expect(objectSchemas.length, descriptor.id).toBeGreaterThan(0)
+      expect(objectSchemas.length, descriptor.model).toBeGreaterThan(0)
       for (const objectSchema of objectSchemas) {
-        expect(objectSchema['additionalProperties'], descriptor.id).toBe(false)
+        expect(objectSchema['additionalProperties'], descriptor.model).toBe(false)
       }
     }
   })

@@ -39,7 +39,7 @@ const PRICING = geminiPricingSource()
 function makeClient(adapter: FakeAdapter, sink?: RecordingSink) {
   return createClient({
     adapters: [adapter],
-    pricing: PRICING,
+    pricingSources: { google: PRICING },
     sink: sink ?? new RecordingSink(),
     clock: new FakeClock(),
     ids: new FakeIds(),
@@ -54,6 +54,7 @@ describe('defineCallSite', () => {
   it('returns the options object unchanged', () => {
     const opts = {
       id: 'my-site',
+      provider: 'google',
       model: 'gemini-2.5-flash',
       userTemplate: 'Hello {{name}}',
     }
@@ -62,7 +63,12 @@ describe('defineCallSite', () => {
 
   it('preserves jsonSchema on the call site', () => {
     const jsonSchema = { type: 'object', properties: { count: { type: 'number' } } }
-    const cs = defineCallSite({ id: 'x', model: 'gemini-2.5-flash', jsonSchema })
+    const cs = defineCallSite({
+      id: 'x',
+      provider: 'google',
+      model: 'gemini-2.5-flash',
+      jsonSchema,
+    })
     expect(cs.jsonSchema).toBe(jsonSchema)
   })
 })
@@ -78,6 +84,7 @@ describe('runStructured — template rendering', () => {
 
     const cs = defineCallSite({
       id: 'greet',
+      provider: 'google',
       model: 'gemini-2.5-flash',
       userTemplate: 'Hello, {{name}}! You are {{age}} years old.',
     })
@@ -95,6 +102,7 @@ describe('runStructured — template rendering', () => {
 
     const cs = defineCallSite({
       id: 'sys',
+      provider: 'google',
       model: 'gemini-2.5-flash',
       system: 'You are a bot for {{company}}.',
       userTemplate: 'Hello',
@@ -112,6 +120,7 @@ describe('runStructured — template rendering', () => {
 
     const cs = defineCallSite({
       id: 'missing',
+      provider: 'google',
       model: 'gemini-2.5-flash',
       userTemplate: 'Greet {{name}} and {{unknown}}',
     })
@@ -130,6 +139,7 @@ describe('runStructured — template rendering', () => {
 
     const cs = defineCallSite({
       id: 'inject',
+      provider: 'google',
       model: 'gemini-2.5-flash',
       userTemplate: 'Input: {{data}}',
     })
@@ -146,7 +156,11 @@ describe('runStructured — template rendering', () => {
     const adapter = new FakeAdapter('google', successResult())
     const client = makeClient(adapter)
 
-    const cs = defineCallSite({ id: 'empty', model: 'gemini-2.5-flash' })
+    const cs = defineCallSite({
+      id: 'empty',
+      provider: 'google',
+      model: 'gemini-2.5-flash',
+    })
     await client.runStructured(cs, { auth: TEST_AUTH })
 
     const req = adapter.calls[0]!
@@ -160,6 +174,7 @@ describe('runStructured — template rendering', () => {
 
     const cs = defineCallSite({
       id: 'novars',
+      provider: 'google',
       model: 'gemini-2.5-flash',
       userTemplate: 'Hello {{name}}',
     })
@@ -181,7 +196,7 @@ describe('runStructured — config resolution', () => {
     const adapter = new FakeAdapter('google', successResult())
     const client = createClient({
       adapters: [adapter],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       clock: new FakeClock(),
       ids: new FakeIds(),
       defaults: { temperature: 0.1, topP: 0.9 },
@@ -189,6 +204,7 @@ describe('runStructured — config resolution', () => {
 
     const cs = defineCallSite({
       id: 'cfg',
+      provider: 'google',
       model: 'gemini-2.5-flash',
       config: { temperature: 0.5 },
     })
@@ -210,6 +226,7 @@ describe('runStructured — config resolution', () => {
 
     const cs = defineCallSite({
       id: 'my-special-site',
+      provider: 'google',
       model: 'gemini-2.5-flash',
       userTemplate: 'Hi',
     })
@@ -224,7 +241,11 @@ describe('runStructured — config resolution', () => {
     const adapter = new FakeAdapter('google', successResult())
     const client = makeClient(adapter, sink)
 
-    const cs = defineCallSite({ id: 'meta', model: 'gemini-2.5-flash' })
+    const cs = defineCallSite({
+      id: 'meta',
+      provider: 'google',
+      model: 'gemini-2.5-flash',
+    })
 
     await client.runStructured(
       cs,
@@ -254,6 +275,7 @@ describe('runStructured — structured output', () => {
 
     const cs = defineCallSite({
       id: 'classify',
+      provider: 'google',
       model: 'gemini-2.5-flash',
       jsonSchema,
     })
@@ -274,6 +296,7 @@ describe('runStructured — structured output', () => {
 
     const cs = defineCallSite({
       id: 'classify-bad',
+      provider: 'google',
       model: 'gemini-2.5-flash',
       jsonSchema,
     })

@@ -58,21 +58,25 @@ import type { StandardSchemaV1 } from './standard-schema.js'
  */
 export interface ClientConfig {
   /**
-   * One or more provider adapters.  When a single adapter is provided the
-   * engine uses it unconditionally.  With multiple adapters, the default
-   * router picks by derived provider (e.g. `gemini-*` → `'google'`); supply
-   * a custom `route` function to override.
+   * One or more provider adapters.  Routing is always by `request.provider` →
+   * `adapterMap.get(provider)` (via the default router or a custom `route`);
+   * there is no single-adapter bypass.
    */
   adapters: ProviderAdapter[]
-  /** Pricing table used to compute micro-USD cost for each call. */
-  pricing: PricingSource
+  /**
+   * Per-provider pricing sources, keyed by provider id (e.g. `{ google: geminiPricingSource() }`).
+   * The engine selects the source via `request.provider`; a provider with no
+   * configured source yields absent cost + an "unpriced" warning (fail-open),
+   * never a crash.
+   */
+  pricingSources?: Record<string, PricingSource>
   /**
    * Opt-in construction-time pricing integrity check.
    *
    * When true, `createClient()` walks the configured model registry and throws
-   * if any registered model has no entry in the configured pricing source.
-   * Runtime pricing remains fail-open; this guard is deliberately only at
-   * construction time.
+   * if any registered model has no entry in its provider's configured pricing
+   * source. Runtime pricing remains fail-open; this guard is deliberately only
+   * at construction time.
    */
   strictPricing?: boolean
   /**
@@ -118,17 +122,30 @@ export interface ClientConfig {
   defaults?: GenConfig
   /**
    * Custom adapter router.
-   * Receives the model string and the full adapter list; returns the adapter
-   * to use.  Defaults to: single adapter → use it; multiple → match by
-   * derived provider prefix (`gemini-*` → `'google'`); no match → throw
-   * `LlmError('bad_request')`.
+   * Receives the request's `provider`, `model`, and the full adapter list;
+   * returns the adapter to use.  Defaults to matching `provider` against the
+   * configured adapters' `id`s; no match → throws `LlmError('bad_request')`.
+   *
+   * **Post-route invariant:** regardless of whether the default or a custom
+   * router is used, the engine asserts `adapter.id === request.provider`
+   * after routing and throws `LlmError('bad_request')` on mismatch — a
+   * custom router can pick among same-provider adapters but can never cross
+   * providers.
    */
-  route?(this: void, model: string, adapters: ProviderAdapter[]): ProviderAdapter
+  route?(
+    this: void,
+    provider: string,
+    model: string,
+    adapters: ProviderAdapter[],
+  ): ProviderAdapter
   /**
-   * Model registry used to derive the provider from a model string.
+   * Model registry used to resolve per-model config schemas and pricing keys.
    * Defaults to {@link defaultGeminiRegistry} (all models in the Gemini
    * pricing snapshot).  Supply a custom registry to add new models or
-   * override provider mappings without forking the library.
+   * providers without forking the library.
+   *
+   * **Construction-time invariant:** every descriptor's `provider` must match
+   * a configured adapter's `id`, else `createClient` throws.
    */
   modelRegistry?: ModelRegistry
   /**
@@ -410,32 +427,17 @@ function mergeSignals(signals: AbortSignal[]): {
 }
 
 /**
- * Derives the provider identifier from a model string for routing and records.
- *
- * Resolution order:
- * 1. Registry descriptor — uses `descriptor.provider` when found.
- * 2. `provider/model` slash convention → `provider`.
- * 3. `'unknown'` when nothing matches.
- */
-function deriveProvider(model: string, registry: ModelRegistry): string {
-  const descriptor = registry.resolve(model)
-  if (descriptor !== undefined) return descriptor.provider
-  const slash = model.indexOf('/')
-  if (slash > 0) return model.slice(0, slash)
-  return 'unknown'
-}
-
-/**
- * Default router: use the single adapter when only one is configured; otherwise
- * match by derived provider from the model string using the prebuilt adapter map.
+ * Default router: matches `provider` directly against the prebuilt adapter
+ * map.  No derivation, no single-adapter bypass — routing is always by
+ * `request.provider`.
  *
  * @throws {@link LlmError} `'bad_request'` when no matching adapter is found.
  */
 function defaultRoute(
+  provider: string,
   model: string,
   adapters: ProviderAdapter[],
   adapterMap: Map<string, ProviderAdapter>,
-  registry: ModelRegistry,
 ): ProviderAdapter {
   if (adapters.length === 0) {
     throw new LlmError('No adapters configured', {
@@ -443,23 +445,12 @@ function defaultRoute(
       retryable: false,
     })
   }
-  if (adapters.length === 1) {
-    const singleAdapter = adapters[0]
-    if (singleAdapter !== undefined) {
-      return singleAdapter
-    }
-    throw new LlmError('Adapter routing invariant violated: missing single adapter', {
-      kind: 'unknown',
-      retryable: false,
-    })
-  }
-  const provider = deriveProvider(model, registry)
   const found = adapterMap.get(provider)
   if (found === undefined) {
-    throw new LlmError(
-      `No adapter found for model "${model}" (derived provider: "${provider}")`,
-      { kind: 'bad_request', retryable: false },
-    )
+    throw new LlmError(`No adapter found for provider "${provider}" (model "${model}")`, {
+      kind: 'bad_request',
+      retryable: false,
+    })
   }
   return found
 }
@@ -853,12 +844,16 @@ function attachCallContext(
  * ```ts
  * const client = createClient({
  *   adapters: [geminiAdapter()],
- *   pricing: geminiPricingSource(),
+ *   pricingSources: { google: geminiPricingSource() },
  *   sink: drizzleUsageSink(db, llmCallsTable),
  * })
  *
  * const result = await client.generate(
- *   { model: 'gemini-2.5-pro', messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hello!' }] }] },
+ *   {
+ *     provider: 'google',
+ *     model: 'gemini-2.5-pro',
+ *     messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hello!' }] }],
+ *   },
  *   { auth: { apiKey: process.env['GEMINI_API_KEY']! } },
  * )
  * ```
@@ -918,7 +913,8 @@ function requireAuth(auth: AuthMaterial | undefined): AuthMaterial {
 }
 
 export function createClient(config: ClientConfig): Client {
-  const { adapters, pricing } = config
+  const { adapters } = config
+  const pricingSources: Record<string, PricingSource> = config.pricingSources ?? {}
   const sink = config.sink
   const clock: Clock = config.clock ?? DEFAULT_CLOCK
   const ids: IdGenerator = config.ids ?? DEFAULT_IDS
@@ -955,6 +951,27 @@ export function createClient(config: ClientConfig): Client {
     }
   }
 
+  // Unconditional construction-time invariant: every registry descriptor's
+  // provider must match a configured adapter's id.
+  {
+    const descriptors = registry.listDescriptors?.()
+    if (descriptors !== undefined) {
+      for (const d of descriptors) {
+        if (!adapterMap.has(d.provider)) {
+          throw new LlmError(
+            `Model registry descriptor for provider "${d.provider}" model "${d.model}" ` +
+              `has no matching configured adapter (configured adapter ids: ${Array.from(
+                adapterMap.keys(),
+              )
+                .map((id) => `"${id}"`)
+                .join(', ')}).`,
+            { kind: 'bad_request', retryable: false },
+          )
+        }
+      }
+    }
+  }
+
   if (config.strictPricing === true) {
     const descriptors = registry.listDescriptors?.()
     if (descriptors === undefined) {
@@ -965,11 +982,12 @@ export function createClient(config: ClientConfig): Client {
       )
     }
     for (const d of descriptors) {
-      const pricingKey = d.pricingFamily ?? d.id
-      if (!pricing.hasModel(pricingKey)) {
+      const pricingKey = d.pricingFamily ?? d.model
+      const source = pricingSources[d.provider]
+      if (source === undefined || !source.hasModel(pricingKey)) {
         throw new LlmError(
-          `strictPricing: model "${d.id}" (pricing key "${pricingKey}") has no entry in the ` +
-            'configured PricingSource.',
+          `strictPricing: model "${d.model}" (provider "${d.provider}", pricing key "${pricingKey}") ` +
+            `has no entry in pricingSources["${d.provider}"].`,
           { kind: 'bad_request', retryable: false },
         )
       }
@@ -978,8 +996,8 @@ export function createClient(config: ClientConfig): Client {
 
   const routeFn =
     config.route ??
-    ((model: string, adpts: ProviderAdapter[]) =>
-      defaultRoute(model, adpts, adapterMap, registry))
+    ((provider: string, model: string, adpts: ProviderAdapter[]) =>
+      defaultRoute(provider, model, adpts, adapterMap))
 
   // -------------------------------------------------------------------------
   // Core pipeline (shared by generate + runStructured)
@@ -1017,6 +1035,7 @@ export function createClient(config: ClientConfig): Client {
     try {
       const startEvent: CallStartEvent = {
         callId,
+        provider: request.provider,
         model: request.model,
         metadata: request.metadata ?? {},
         ...(callSiteId !== undefined ? { callSiteId } : {}),
@@ -1043,6 +1062,7 @@ export function createClient(config: ClientConfig): Client {
     // The per-attempt signal is NOT included here — each attempt builds its
     // own combined (caller + timeout) signal inside runAttempt.
     const preResolvedReq: ResolvedRequest = {
+      provider: request.provider,
       model: request.model,
       messages: request.messages,
       config: resolvedConfig,
@@ -1097,7 +1117,9 @@ export function createClient(config: ClientConfig): Client {
       )
 
       // Track progressive state for the error-path record builder.
-      let provider = deriveProvider(req.model, registry)
+      // `req.provider` is authoritative from the start; routing/post-route
+      // checks below never change it (they may only reject the call).
+      const provider = req.provider
       let normalizedResult: { usage: Usage; warnings: Warning[] } | undefined
       let cost: Cost | undefined
       // Release function returned by rateLimiter.acquire — called on every exit path.
@@ -1118,8 +1140,19 @@ export function createClient(config: ClientConfig): Client {
           validatedConfig === req.config ? req : { ...req, config: validatedConfig }
 
         // Step 5: Resolve adapter (may throw LlmError 'bad_request')
-        const adapter = routeFn(effectiveReq.model, adapters)
-        provider = adapter.id
+        const adapter = routeFn(effectiveReq.provider, effectiveReq.model, adapters)
+
+        // Post-route invariant — applies to the default router AND any custom
+        // `route()` option: the returned adapter must serve the requested
+        // provider. Closes both the default-route miss case and custom
+        // routers that might cross providers.
+        if (adapter.id !== effectiveReq.provider) {
+          throw new LlmError(
+            `Adapter routing invariant violated: router returned adapter "${adapter.id}" ` +
+              `for request provider "${effectiveReq.provider}".`,
+            { kind: 'bad_request', retryable: false },
+          )
+        }
 
         // ── Per-attempt cancellation setup ──────────────────────────────────
         // adapter.run() is raced against two independent rejection promises:
@@ -1214,16 +1247,26 @@ export function createClient(config: ClientConfig): Client {
         const costWarnings: Warning[] = []
         try {
           const pricingKey = req.modelDescriptor?.pricingFamily ?? req.model
-          cost = pricing.price(
-            pricingKey,
-            normalizedResult.usage,
-            adapterResult.servedServiceTier ?? effectiveReq.config.serviceTier,
-          )
-          if (cost.microUsd === null) {
+          const source = pricingSources[req.provider]
+          if (source === undefined) {
+            // No pricing source for this provider — cost stays absent
+            // (fail-open); the warning below is the only trace.
             costWarnings.push({
               type: 'other',
-              message: `Model "${req.model}" is unpriced (cost.microUsd is null); usage was recorded but not costed.`,
+              message: `Provider "${req.provider}" has no configured pricing source; usage was recorded but not costed.`,
             })
+          } else {
+            cost = source.price(
+              pricingKey,
+              normalizedResult.usage,
+              adapterResult.servedServiceTier ?? effectiveReq.config.serviceTier,
+            )
+            if (cost.microUsd === null) {
+              costWarnings.push({
+                type: 'other',
+                message: `Model "${req.model}" is unpriced (cost.microUsd is null); usage was recorded but not costed.`,
+              })
+            }
           }
         } catch (costErr) {
           costWarnings.push({
@@ -1375,6 +1418,7 @@ export function createClient(config: ClientConfig): Client {
         const successEvent: CallSuccessEvent = {
           callId,
           attemptId: result.attemptId,
+          provider: request.provider,
           model: request.model,
           metadata: request.metadata ?? {},
           latencyMs,
@@ -1413,6 +1457,7 @@ export function createClient(config: ClientConfig): Client {
         const attemptIdForEvent = err.attemptId ?? lastAttemptId
         const errorEvent: CallErrorEvent = {
           callId,
+          provider: request.provider,
           model: request.model,
           metadata: request.metadata ?? {},
           latencyMs,
@@ -1455,7 +1500,13 @@ export function createClient(config: ClientConfig): Client {
       const runtimeOpts = opts as GenerateOptions | undefined
       const callAuth = requireAuth(runtimeOpts?.auth)
       // Config resolution: libDefaults → request.config
-      const descriptor = registry.resolve(request.model)
+      const descriptor = registry.resolve(request.provider, request.model)
+      if (descriptor === undefined) {
+        throw new LlmError(
+          `No registered model for provider "${request.provider}" model "${request.model}".`,
+          { kind: 'bad_request', retryable: false },
+        )
+      }
       const merged = deepMergeConfig(libDefaults, request.config)
       const resolvedConfig = await validateResolvedConfig(
         request.model,
@@ -1494,7 +1545,13 @@ export function createClient(config: ClientConfig): Client {
       const callAuth = requireAuth(runtimeOpts?.auth)
 
       // Config resolution: libDefaults → callSite.config → opts.config
-      const descriptor = registry.resolve(callSite.model)
+      const descriptor = registry.resolve(callSite.provider, callSite.model)
+      if (descriptor === undefined) {
+        throw new LlmError(
+          `No registered model for provider "${callSite.provider}" model "${callSite.model}".`,
+          { kind: 'bad_request', retryable: false },
+        )
+      }
       const merged = deepMergeConfig(libDefaults, callSite.config, runtimeOpts?.config)
       const resolvedConfig = await validateResolvedConfig(
         callSite.model,
@@ -1512,6 +1569,7 @@ export function createClient(config: ClientConfig): Client {
 
       // Build the rendered request (no config on the request — already merged).
       const request: LlmRequest = {
+        provider: callSite.provider,
         model: callSite.model,
         messages: [{ role: 'user', parts: [{ kind: 'text', text: userText }] }],
         ...(renderedSystem !== undefined ? { system: renderedSystem } : {}),

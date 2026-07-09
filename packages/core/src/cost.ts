@@ -167,8 +167,12 @@ export function computeCost(model: string, usage: Usage, tier?: string): Cost {
 }
 
 /**
- * Factory that returns a {@link PricingSource} port implementation backed by
- * the built-in Gemini pricing snapshot.
+ * Factory that returns the **google-scoped** {@link PricingSource} port
+ * implementation backed by the built-in Gemini pricing snapshot.
+ *
+ * `PricingSource` is provider-scoped by contract — this source only knows
+ * bare Gemini/Gemma model keys. Compose it into `ClientConfig.pricingSources`
+ * under the `'google'` key; do not use it for other providers.
  *
  * The returned object is stateless and can be shared across calls.
  *

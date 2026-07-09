@@ -122,7 +122,7 @@ describe('caller-owned structured-output validation helper', () => {
           makeSuccessResult({ rawStructured: { unexpected: 'shape' } }),
         ),
       ],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -130,6 +130,7 @@ describe('caller-owned structured-output validation helper', () => {
 
     const result = await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Score?' }] }],
         output: {
@@ -166,7 +167,7 @@ describe('caller-owned structured-output validation helper', () => {
 
     const client = createClient({
       adapters: [new FakeAdapter('google', makeSuccessResult())],
-      pricing: PRICING,
+      pricingSources: { google: PRICING },
       sink: new RecordingSink(),
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -174,6 +175,7 @@ describe('caller-owned structured-output validation helper', () => {
 
     const result = await client.generate(
       {
+        provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [
           { role: 'user', parts: [{ kind: 'text', text: 'No JSON available' }] },
