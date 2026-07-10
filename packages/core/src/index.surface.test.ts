@@ -1,7 +1,18 @@
 import { describe, expect, it, expectTypeOf } from 'vitest'
 
 import * as surface from './index.js'
-import type { TokenCountRequest, TokenCount, Client } from './index.js'
+import type {
+  TokenCountRequest,
+  TokenCount,
+  Client,
+  LlmErrorIssue,
+  LlmErrorOptions,
+  LlmError,
+  CallSite,
+  StandardSchemaV1,
+  LlmRequest,
+  ClientConfig,
+} from './index.js'
 
 const removedConfigSchemaFactory = `makeGeminiConfig${'Schema'}`
 const removedConfigValidatorFactory = `makeGeminiConfig${'Validator'}`
@@ -60,6 +71,36 @@ describe('@gullabs/core package surface', () => {
         request: TokenCountRequest,
         opts: import('./engine.js').GenerateOptions,
       ) => Promise<TokenCount>
+    >()
+  })
+
+  it('exports LlmErrorIssue and LlmErrorOptions.issues (D6 input-contracts surface)', () => {
+    expectTypeOf<LlmErrorIssue>().toEqualTypeOf<{ path: string; message: string }>()
+    expectTypeOf<LlmErrorOptions>().toHaveProperty('issues')
+    expectTypeOf<LlmErrorOptions['issues']>().toEqualTypeOf<
+      readonly LlmErrorIssue[] | undefined
+    >()
+    expectTypeOf<LlmError['issues']>().toEqualTypeOf<
+      readonly LlmErrorIssue[] | undefined
+    >()
+  })
+
+  it('exports CallSite.inputSchema as an optional StandardSchemaV1 (D2 surface)', () => {
+    expectTypeOf<CallSite>().toHaveProperty('inputSchema')
+    expectTypeOf<CallSite['inputSchema']>().toEqualTypeOf<StandardSchemaV1 | undefined>()
+  })
+
+  it('exports LlmRequest.inputContract as an optional { schema, value } pair (D3 surface)', () => {
+    expectTypeOf<LlmRequest>().toHaveProperty('inputContract')
+    expectTypeOf<LlmRequest['inputContract']>().toEqualTypeOf<
+      { schema: StandardSchemaV1; value: unknown } | undefined
+    >()
+  })
+
+  it('exports ClientConfig.requireInputContract as an optional boolean (D4 surface)', () => {
+    expectTypeOf<ClientConfig>().toHaveProperty('requireInputContract')
+    expectTypeOf<ClientConfig['requireInputContract']>().toEqualTypeOf<
+      boolean | undefined
     >()
   })
 })

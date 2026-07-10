@@ -1463,6 +1463,76 @@ describe('engine — providerOptions strict merge', () => {
 
     expect(adapter.calls).toHaveLength(0)
   })
+
+  it('D6: config-validation bad_request carries structured issues alongside the message', async () => {
+    const { client, adapter } = makeClient({ modelRegistry: STRICT_REGISTRY })
+
+    const err = await client
+      .generate(
+        {
+          provider: 'google',
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+          config: {
+            providerOptions: { google: { tags: ['x'] } } as unknown as ProviderOptions,
+          },
+        },
+        { auth: TEST_AUTH },
+      )
+      .catch((e) => e)
+
+    expect(err).toBeInstanceOf(LlmError)
+    expect(err.kind).toBe('bad_request')
+    expect(err.retryable).toBe(false)
+    expect(Array.isArray(err.issues)).toBe(true)
+    expect(err.issues.length).toBeGreaterThan(0)
+    for (const issue of err.issues) {
+      expect(typeof issue.path).toBe('string')
+      expect(typeof issue.message).toBe('string')
+    }
+
+    expect(adapter.calls).toHaveLength(0)
+  })
+
+  it('D6 drift-pinning: message keeps the legacy config path format ([0] array indices) and corresponds 1:1 with issues', async () => {
+    const { client, adapter } = makeClient({ modelRegistry: STRICT_REGISTRY })
+
+    // safetySettings expects an array of objects — a string element produces a
+    // zod issue whose path ends in an array index, exercising the bracket case.
+    const err = await client
+      .generate(
+        {
+          provider: 'google',
+          model: 'gemini-2.5-pro',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+          config: {
+            providerOptions: {
+              google: { safetySettings: ['bad'] },
+            } as unknown as ProviderOptions,
+          },
+        },
+        { auth: TEST_AUTH },
+      )
+      .catch((e) => e)
+
+    expect(err).toBeInstanceOf(LlmError)
+    expect(err.kind).toBe('bad_request')
+    expect(err.issues).toHaveLength(1)
+
+    // The structured payload uses the dotted-path spec (array index as `.0`)…
+    expect(err.issues[0].path).toBe('providerOptions.google.safetySettings.0')
+
+    // …while the message keeps the pre-existing legacy rendering verbatim:
+    // string keys dotted, array indices in `[0]` bracket notation. Both are
+    // rendered from the same normalized segments in normalizeSchemaIssues, so
+    // pinning the exact message against the issue's own message text proves
+    // the two representations come from one source and cannot drift.
+    expect(err.message).toBe(
+      `Model "gemini-2.5-pro" config.providerOptions.google.safetySettings[0]: ${err.issues[0].message}`,
+    )
+
+    expect(adapter.calls).toHaveLength(0)
+  })
 })
 
 // ---------------------------------------------------------------------------

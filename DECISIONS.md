@@ -1253,3 +1253,151 @@ countTokens` (`packages/google/src/client.ts`) is a REQUIRED addition to the str
 - Cache-store and file-store callers that previously branched on `kind === 'bad_request'` for a
   malformed-payload failure must branch on `kind === 'server'` instead; the `retryable: false`
   behavior is unchanged.
+
+---
+
+## ADR-025: Input Contracts — Strict Interpolation, Callsite/Request Input Validation, Pre-Dispatch Ledger Rows
+
+**Status:** Accepted
+
+**Context:**
+`any-llm` enforces OUTPUT contracts thoroughly (`outputJsonSchema`, structured-output retry,
+strict per-model config schemas per ADR-009/ADR-010) but enforced zero INPUT contracts — nothing
+in `packages/core` checked whether the business content of a request was complete or sane before
+dispatch. A live incident (ai-studio, 2026-07-09/10, `docs/input-validation-middleware-proposal.md`)
+dispatched a prompt template filled from a request object carrying only 2 of ~9 expected context
+fields; the rendered prompt reached the provider with literal blank template labels and null-filled
+JSON, and two different providers returned schema-valid-but-degenerate responses. Three LLM calls
+were wasted per pipeline attempt before an app-level output check caught the shape was wrong, and
+diagnosing the root cause cost a multi-hour bisect because the defect was two layers upstream of
+every layer any-llm actually validates. The proposal doc also surfaced a latent reject-don't-map
+violation in the library's own default path: `interpolate()` silently left `{{placeholder}}`
+literals in a rendered prompt when a variable was missing or `null` — the same failure class as the
+incident, one layer downstream.
+
+The original proposal shaped this as a pre-dispatch `Middleware`. Triage (recorded in the proposal
+doc's "Consumer response" and "Maintainer ruling" sections) found the seam wrong on all three counts
+the ai-studio review raised: middleware sees the post-render `ResolvedRequest`, never the raw
+pre-template fields that were actually malformed; ai-studio calls `generate()` with already-rendered
+strings, so the library never sees the pre-template value bag middleware would need; and ledger rows
+for refusals require new engine wiring regardless of seam, since sink writes live inside `runAttempt`
+and quota refusals produced no row at all.
+
+**Decision:**
+Four settled rulings from the proposal's maintainer ruling, then the reshaped engine-level design
+implementing them (`docs/input-contracts-plan.md`, codex-approved):
+
+1. **Middleware shape withdrawn — validation is engine-level.** The middleware seam sees only the
+   post-render `ResolvedRequest` and never the raw inputs that break; input contracts are checked
+   inside the engine itself, at two opt-in surfaces (below), not via `Middleware`.
+2. **Schema format is `StandardSchemaV1` only** (`packages/core/src/standard-schema.ts`). No JSON
+   Schema input contracts, no schema-format autodetection — matching the model-config validation
+   seam (the library's only other runtime-validated contract), and avoiding a
+   JSON-Schema-to-validator runtime this library has never carried and will not add.
+   `outputJsonSchema` deliberately stays raw JSON Schema (`output?: { jsonSchema: JsonValue }`):
+   it is a provider wire hint forwarded verbatim, not a contract the engine validates at runtime.
+3. **Violations classify as `bad_request`** (`retryable: false`), not a new `LlmErrorKind` member.
+   `LlmErrorOptions`/`LlmError` gain a structured `issues?: readonly LlmErrorIssue[]` field
+   (`{ path, message }`, dotted path, `''` for root), normalized from `StandardSchemaV1.Issue[]` by
+   a shared helper (`normalizeSchemaIssues`/`toErrorIssues` in `packages/core/src/errors.ts`) so
+   every message-string formatter and the `issues` array derive from the same normalized data and
+   cannot drift. `validateResolvedConfig` (model-config validation) is upgraded to attach `issues`
+   to the `bad_request` it already threw — one taxonomy for all caller-fault validation errors.
+4. **Ledger rule: if a call got a `callId`, it leaves a ledger row.** Generalized, not
+   input-contract-specific: any `LlmError` thrown inside `runPipeline` after `callId` allocation but
+   before the first attempt produces a synthetic zero-usage `LlmCallRecord`, through one shared code
+   path — covering input-contract refusals, `@gullabs/quota` refusals, and any future pre-dispatch
+   middleware, with zero changes to `@gullabs/quota` itself. Errors thrown before `callId`
+   allocation (unregistered model, missing provider, callsite prologue failures) stay row-less —
+   those are misconfigurations, not calls.
+
+Implementing surfaces:
+
+- **D1 — strict template interpolation (breaking default, no opt-out).** In `runStructured`, every
+  `{{\w+}}` placeholder referenced by `callSite.userTemplate` or `callSite.system` must have a
+  string-typed value present in `vars`, or the call is refused (`bad_request`, one `issues` entry
+  per violating placeholder) before any request is built — zero tokens spent. `null`/`undefined`
+  and non-string values (numbers, objects — off-type but reachable from untyped callers) are
+  violations, never coerced. `vars` entries unused by any template are allowed (a shared context bag
+  across call sites with different template subsets is legitimate and cannot corrupt the render).
+  There is no escape syntax for literal `{{...}}` text. `interpolate()`'s old leave-placeholder
+  fallback is deleted, not kept behind a flag (P0 no-legacy) — `interpolate()` is now total over its
+  now-guaranteed inputs. This throws in the `runStructured` prologue, before `callId` allocation:
+  row-less, same layer as unregistered-model.
+- **`CallSite.inputSchema`** (opt-in, `packages/core/src/callsite.ts`) — an optional
+  `StandardSchemaV1` validating `vars` before D1's strict interpolation runs (so a missing business
+  field surfaces as the schema's own error, in the caller's vocabulary, not a downstream
+  unresolved-placeholder violation). Row-less, same prologue as D1.
+- **`LlmRequest.inputContract`** (opt-in, `packages/core/src/types.ts`) — a `{ schema, value }` pair
+  for the `generate()` path. Validated inside `runPipeline` immediately after `callId` allocation
+  and before the middleware chain: a violation never consumes `@gullabs/quota` budget, and
+  validation runs exactly once per logical call, never per retry attempt. `inputContract` is
+  consumed by the engine only — never copied onto `ResolvedRequest`, no adapter sees it.
+  `runStructured` never sets it (that path uses `CallSite.inputSchema` instead — one contract per
+  path, no auto-population between the two). Post-`callId`: a violation writes a ledger row via the
+  D5 rule.
+- **`createClient({ requireInputContract: true })`** — opt-in fleet-wide strict mode, default off.
+  On, `generate()` refuses any request missing `inputContract`; `runStructured` refuses any call
+  whose `callSite` lacks `inputSchema`. On the `runStructured` path this is the FIRST prologue check
+  — before `inputSchema` validation, D1 interpolation, and request building (row-less). On the
+  `generate()` path, the existing prologue checks (provider presence, model registration,
+  `validateResolvedConfig`) run first and win, row-less exactly as today; the missing-contract
+  refusal fires inside `runPipeline`, right after `callId` allocation (post-`callId` → ledger row).
+  `countTokens` is out of scope: it dispatches no generation and spends no tokens.
+- **Generic pre-attempt ledger record.** When the middleware chain throws and no attempt ever
+  started, the engine writes one synthetic `LlmCallRecord`: `status` via the existing
+  `errorKindToStatus` mapping (no new status value, `recordSchemaVersion` stays `1`), all-zero
+  usage, `cost` omitted (the existing "nothing was priced" convention, not a new `cost: 0` literal),
+  `attemptNumber: 0`. `attemptId` follows the EXISTING first-attempt idempotency rule
+  verbatim — `request.idempotencyKey` when supplied, a freshly minted id otherwise — so a
+  caller-retried refused call with the same `idempotencyKey` upserts the same row instead of
+  accumulating duplicates. `record.ts`'s `attemptNumber`/`attemptId` doc contracts are rewritten:
+  `attemptNumber` is documented as "0 = refused before any attempt ran; real attempts are 1-based";
+  `attemptId` on `attemptNumber: 0` is documented as derived by the attempt-1 rule and remaining the
+  idempotency key. **Deliberate telemetry divergence:** `CallErrorEvent.attemptId` stays absent when
+  no attempt ran (its existing documented semantics, unchanged) — the synthetic record's minted
+  `attemptId` has no telemetry counterpart, and this divergence is intentional, not an oversight.
+  **Quota-refusal observability consequence:** this is the same code path that covers
+  `@gullabs/quota` refusals with zero quota-package changes — refusals that previously left no
+  ledger row now appear as `error_kind: 'rate_limited'`, `attemptNumber: 0`, zero-usage rows.
+
+**Row-less prologue boundary** (§3 of `docs/input-contracts-plan.md`):
+
+| Failure                                          | Where it throws                      | Ledger row                     |
+| ------------------------------------------------ | ------------------------------------ | ------------------------------ |
+| Strict interpolation (D1)                        | `runStructured` prologue, pre-callId | No                             |
+| `CallSite.inputSchema`                           | `runStructured` prologue, pre-callId | No                             |
+| `requireInputContract` on callsite path          | `runStructured` prologue, pre-callId | No                             |
+| `LlmRequest.inputContract`                       | `runPipeline`, post-callId           | Yes (`attemptNumber: 0`)       |
+| `requireInputContract` on `generate()`           | `runPipeline`, post-callId           | Yes (`attemptNumber: 0`)       |
+| `@gullabs/quota` refusal (existing)              | middleware, post-callId              | Yes (`attemptNumber: 0`) — NEW |
+| Unregistered model / missing provider (existing) | prologue, pre-callId                 | No (unchanged)                 |
+
+Rationale for the asymmetry: callsite prologue failures are deterministic call-site code defects
+caught on first execution in dev/tests, in the same layer as unregistered-model; the
+ledger-visibility requirement in the proposal came from the `generate()` consumer (ai-studio), whose
+path is fully covered. The rule "callId ⇒ row" stays simple and exceptionless.
+
+**References:** ADR-021 (leveled fail-open logging, per-attempt records — this ADR's synthetic
+record follows the same fail-open sink-write discipline); ADR-009/ADR-010 (strict per-model config
+schema and its `Standard Schema` validation seam — `validateResolvedConfig`,
+`validateCallSiteInput`, and `validateInputContract` all share that same `~standard.validate` seam
+and, as of this ADR, the same issue-normalization helper).
+
+**Consequences:**
+
+- **Breaking, pre-1.0, no compatibility shim (per the P0 no-legacy rule):**
+  - Strict interpolation is the new unconditional default: templates that previously dispatched
+    with literal `{{placeholder}}` text now fail locally with a typed `bad_request` before dispatch.
+    There is no opt-out and no preserved fallback.
+  - Pre-attempt refusals — including `@gullabs/quota` denials — now write zero-usage
+    `attemptNumber: 0` ledger rows where they previously wrote none. `record.ts`'s `attemptNumber`
+    and `attemptId` doc contracts are revised accordingly (0-based sentinel added; `attemptId`
+    derivation rule documented for the `attemptNumber: 0` case).
+- New public core surface: `CallSite.inputSchema`, `LlmRequest.inputContract`,
+  `ClientConfig.requireInputContract`, `LlmErrorOptions.issues` / `LlmError.issues`, `LlmErrorIssue`.
+- No `@gullabs/quota` package changes and no release — its refusals are covered by the generic
+  pre-attempt ledger wiring in `@gullabs/core` alone.
+- No `errorIssues` column added to `LlmCallRecord` / `@gullabs/drizzle` in this ADR — `issues` is not
+  persisted; the record keeps `errorMessage` only. A structured `errorIssues` column remains a
+  possible follow-up, out of scope here.

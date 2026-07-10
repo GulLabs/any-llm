@@ -7,7 +7,11 @@
  * is fail-open so the row may be absent if the write failed).
  *
  * Cases covered:
- *  (1) Middleware throws before calling next() — no attempt ran.
+ *  (1) Middleware throws before calling next() — no attempt ran. Per D5
+ *      (input-contracts plan, §0.4: "if a call got a callId, it leaves a
+ *      ledger row"), this now writes ONE synthetic `attemptNumber: 0` record
+ *      — the telemetry/`LlmError.attemptId` contract is UNCHANGED (still
+ *      absent, since no real attempt ran).
  *  (2) Normal success — attemptId on result matches the persisted record's attemptId (when the sink write succeeds).
  *  (3) Retry-then-success — result.attemptId is the succeeding attempt.
  *  (4) Retries exhausted — LlmError.attemptId is the last real attempt's id.
@@ -129,11 +133,18 @@ describe('attemptId reconcile — middleware throws before next()', () => {
     expect(err.callId).toBeDefined()
     expect(typeof err.callId).toBe('string')
 
-    // attemptId must be UNDEFINED — no attempt ran, no record was persisted.
+    // attemptId must be UNDEFINED — no real attempt ran (telemetry contract
+    // unchanged by D5).
     expect(err.attemptId).toBeUndefined()
 
-    // Zero records written (no attempt, nothing to persist).
-    expect(sink.records).toHaveLength(0)
+    // D5: exactly ONE synthetic pre-attempt record is written — "callId ⇒
+    // ledger row" holds even though no real attempt ran. attemptNumber: 0
+    // marks it as a pre-attempt refusal; it has no telemetry counterpart
+    // (asserted below: onError still carries no attemptId).
+    expect(sink.records).toHaveLength(1)
+    expect(sink.records[0]!.attemptNumber).toBe(0)
+    expect(sink.records[0]!.callId).toBe(err.callId)
+    expect(sink.records[0]!.errorKind).toBe('bad_request')
 
     // onStart fired exactly once, and must NOT carry an attemptId.
     expect(startEvents).toHaveLength(1)

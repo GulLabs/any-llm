@@ -11,7 +11,13 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { LlmError, classifyError } from './errors.js'
+import {
+  LlmError,
+  classifyError,
+  normalizeSchemaIssues,
+  toErrorIssues,
+} from './errors.js'
+import type { LlmErrorIssue, NormalizedSchemaIssue } from './errors.js'
 import { buildRecord, normalizeUsage } from './record.js'
 import { redactSecrets } from './redact.js'
 import type { ModelDescriptor, ModelRegistry } from './registry.js'
@@ -169,6 +175,29 @@ export interface ClientConfig {
    * ```
    */
   middleware?: Middleware[]
+  /**
+   * Opt-in fleet-wide strict mode (D4): when `true`, every call is required
+   * to carry an input contract.
+   *
+   * - `generate()` refuses any request whose `inputContract` (D3) is absent.
+   *   The existing prologue checks (provider presence, model registration,
+   *   `validateResolvedConfig`) run first and win — a request that is both
+   *   missing its contract and misconfigured fails with the existing
+   *   prologue error, row-less, exactly as today. The missing-contract
+   *   refusal itself happens inside `runPipeline`, immediately after
+   *   `callId` allocation — post-`callId`, so it writes a ledger row (D5).
+   * - `runStructured` refuses any call whose `callSite.inputSchema` (D2) is
+   *   absent. This is the FIRST check in the `runStructured` prologue —
+   *   before D2 validation, D1 interpolation, and request building.
+   *   Row-less (pre-`callId`).
+   *
+   * Both refusals throw `LlmError('bad_request')`, not retryable, naming
+   * the option and the missing contract.
+   *
+   * Default: absent (off). `countTokens` is unaffected — it dispatches no
+   * generation and spends no tokens producing output.
+   */
+  requireInputContract?: boolean
 }
 
 /**
@@ -230,8 +259,14 @@ export interface Client {
    * Config resolution: `clientDefaults → callSite.config → opts.config`.
    * Template interpolation: `{{var}}` in `system` and `userTemplate` is
    * replaced with the corresponding value from `vars`.  Var values are NOT
-   * themselves interpolated (anti-injection).  Missing vars are left as the
-   * literal `{{var}}` placeholder.
+   * themselves interpolated (anti-injection).  Strict: every `{{var}}`
+   * placeholder referenced by either template must have a string-typed value
+   * present in `vars`, or the call is refused before any request is built
+   * (`LlmError('bad_request')`, not retryable, one `issues` entry per
+   * violating placeholder).  Extra `vars` entries unused by any template are
+   * allowed.  If `callSite.inputSchema` is set, `vars` is validated against
+   * it first — a missing/invalid field surfaces as the schema's own error,
+   * not a downstream unresolved-placeholder violation.
    * `opts.auth` is required on every call.
    *
    * @returns An {@link LlmResult}; callers validate `output` when present.
@@ -324,6 +359,9 @@ const EMPTY_USAGE: Usage = {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+/** Matches every `{{name}}` placeholder recognised by {@link interpolate}. */
+const PLACEHOLDER_RE = /\{\{(\w+)\}\}/g
+
 /**
  * Non-recursive `{{var}}` template interpolation.
  *
@@ -331,14 +369,77 @@ const EMPTY_USAGE: Usage = {
  * further `{{...}}` patterns, preventing template-injection attacks where a
  * user-supplied value could expand to another placeholder.
  *
- * Missing vars (key not present in `vars`) are left as the original `{{var}}`
- * placeholder so the absence is visible rather than silently producing an
- * empty string.
+ * Total over its inputs: callers MUST run {@link assertTemplateVarsResolved}
+ * first so every placeholder this regex recognises is guaranteed present in
+ * `vars` with a string value. There is no leave-placeholder fallback — an
+ * unresolved placeholder is a caller-fault error caught upstream, not a
+ * silently-degraded render.
  */
 function interpolate(template: string, vars: Record<string, string>): string {
-  return template.replace(/\{\{(\w+)\}\}/g, (match, key: string) => {
-    return Object.prototype.hasOwnProperty.call(vars, key) ? (vars[key] ?? match) : match
-  })
+  return template.replace(PLACEHOLDER_RE, (_match, key: string) => vars[key] as string)
+}
+
+/**
+ * Collects every distinct `{{name}}` placeholder referenced by `text` into
+ * `out`.
+ */
+function collectPlaceholders(text: string, out: Set<string>): void {
+  for (const match of text.matchAll(PLACEHOLDER_RE)) {
+    const key = match[1]
+    if (key !== undefined) out.add(key)
+  }
+}
+
+/**
+ * D1 — strict template-interpolation guard.
+ *
+ * Collects every `{{\w+}}` placeholder referenced across `templates`
+ * (typically a call site's `userTemplate` and `system`). Each placeholder's
+ * key must be present in `vars` AND `typeof vars[key] === 'string'` — `null`,
+ * `undefined`, and any non-string value (numbers, objects — off the
+ * `Record<string, string>` type but reachable from untyped callers) are
+ * violations, never coerced (reject, don't map).
+ *
+ * `vars` entries unused by any template are allowed: a shared context bag
+ * across call sites whose templates use different subsets is a legitimate
+ * pattern, and an unused variable cannot corrupt the rendered prompt.
+ *
+ * On violation, throws `LlmError('bad_request')`, not retryable, naming the
+ * call site id and every violating placeholder, with one `issues` entry per
+ * placeholder (`path` = the placeholder name). A call site with no templates
+ * (or templates with no `{{...}}` placeholders) is a no-op.
+ */
+function assertTemplateVarsResolved(
+  callSiteId: string,
+  templates: ReadonlyArray<string | undefined>,
+  vars: Record<string, string>,
+): void {
+  const placeholders = new Set<string>()
+  for (const template of templates) {
+    if (template !== undefined) collectPlaceholders(template, placeholders)
+  }
+  if (placeholders.size === 0) return
+
+  const violations: string[] = []
+  for (const key of placeholders) {
+    const hasKey = Object.prototype.hasOwnProperty.call(vars, key)
+    const value = hasKey ? (vars as Record<string, unknown>)[key] : undefined
+    if (!hasKey || typeof value !== 'string') {
+      violations.push(key)
+    }
+  }
+  if (violations.length === 0) return
+
+  const issues: LlmErrorIssue[] = violations.map((name) => ({
+    path: name,
+    message: `Placeholder "{{${name}}}" has no string value in vars.`,
+  }))
+  throw new LlmError(
+    `Call site "${callSiteId}" has unresolved template placeholder(s): ${violations
+      .map((name) => `{{${name}}}`)
+      .join(', ')}. Every "{{var}}" placeholder requires a string value in vars.`,
+    { kind: 'bad_request', retryable: false, issues },
+  )
 }
 
 /**
@@ -615,33 +716,36 @@ function buildCancellationRace(
 /** Resolved config type used throughout the pipeline. */
 type ResolvedConfig = GenConfig
 
-function formatConfigIssuePath(path: StandardSchemaV1.Issue['path']): string {
-  if (path === undefined || path.length === 0) {
-    return 'config'
-  }
-
+/**
+ * Renders the `config`-rooted path for a config-validation message from a
+ * normalized issue's STRUCTURED segments: string keys as `.key`, numeric
+ * array indices as `[0]` bracket notation (the format this message has
+ * always used). Root-level issues render as bare `config`.
+ */
+function formatConfigIssuePath(segments: readonly (string | number)[]): string {
   let rendered = 'config'
-  for (const segment of path) {
-    const key = typeof segment === 'object' ? segment.key : segment
-    if (typeof key === 'number') {
-      rendered += `[${key}]`
-    } else if (typeof key === 'string') {
-      rendered += rendered === 'config' ? `.${key}` : `.${key}`
-    } else {
-      rendered += `[${String(key)}]`
-    }
+  for (const segment of segments) {
+    rendered += typeof segment === 'number' ? `[${segment}]` : `.${segment}`
   }
   return rendered
 }
 
+/**
+ * Renders a config-validation error message from already-normalized
+ * {@link NormalizedSchemaIssue}s.  Deriving the message from the same
+ * normalized array whose `{ path, message }` projection is attached as
+ * `issues` (rather than re-walking the raw StandardSchema issues separately)
+ * is what guarantees the two representations cannot drift apart — see
+ * {@link normalizeSchemaIssues}.
+ */
 function buildConfigValidationMessage(
   model: string,
-  issues: ReadonlyArray<StandardSchemaV1.Issue>,
+  issues: ReadonlyArray<NormalizedSchemaIssue>,
 ): string {
   return issues
     .map(
       (issue) =>
-        `Model "${model}" ${formatConfigIssuePath(issue.path)}: ${issue.message}`,
+        `Model "${model}" ${formatConfigIssuePath(issue.segments)}: ${issue.message}`,
     )
     .join('; ')
 }
@@ -660,13 +764,92 @@ async function validateResolvedConfig(
     syncOrAsync instanceof Promise ? await syncOrAsync : syncOrAsync
 
   if (validationResult.issues !== undefined) {
-    throw new LlmError(buildConfigValidationMessage(model, validationResult.issues), {
+    const normalized = normalizeSchemaIssues(validationResult.issues)
+    throw new LlmError(buildConfigValidationMessage(model, normalized), {
       kind: 'bad_request',
       retryable: false,
+      issues: toErrorIssues(normalized),
     })
   }
 
   return validationResult.value as ResolvedConfig
+}
+
+/**
+ * D2 — opt-in call-site input contract.
+ *
+ * Validates `vars` against `callSite.inputSchema` via the `~standard.validate`
+ * seam — the same machinery {@link validateResolvedConfig} uses. Runs BEFORE
+ * strict template interpolation (D1): a missing/invalid business field then
+ * surfaces as the schema's own error, in the caller's own vocabulary, rather
+ * than a downstream unresolved-placeholder violation. Async validators are
+ * supported (StandardSchema permits `Promise` results); `runStructured` is
+ * already async.
+ *
+ * The validated/transformed output is intentionally discarded: `vars` keeps
+ * flowing into D1/`interpolate` unchanged. `inputSchema` is a contract check,
+ * not a transform step — there is exactly one shape of `vars` used for
+ * rendering.
+ */
+async function validateCallSiteInput(
+  callSiteId: string,
+  schema: StandardSchemaV1,
+  vars: Record<string, string>,
+): Promise<void> {
+  const syncOrAsync = schema['~standard'].validate(vars)
+  const validationResult =
+    syncOrAsync instanceof Promise ? await syncOrAsync : syncOrAsync
+
+  if (validationResult.issues !== undefined) {
+    const normalized = normalizeSchemaIssues(validationResult.issues)
+    const message = normalized
+      .map(
+        (issue) =>
+          `Call site "${callSiteId}" vars${issue.path ? `.${issue.path}` : ''}: ${issue.message}`,
+      )
+      .join('; ')
+    throw new LlmError(message, {
+      kind: 'bad_request',
+      retryable: false,
+      issues: toErrorIssues(normalized),
+    })
+  }
+}
+
+/**
+ * D3 — opt-in request input contract (the `generate()` path).
+ *
+ * Validates `contract.value` against `contract.schema` via the
+ * `~standard.validate` seam — the same machinery {@link validateCallSiteInput}
+ * and {@link validateResolvedConfig} use. Called by `runPipeline` immediately
+ * after `callId` allocation and before the middleware chain is entered: never
+ * consumes `@gullabs/quota` budget on a violation, and validated exactly once
+ * per logical call (before the retry middleware, never per attempt).
+ *
+ * On violation, throws `LlmError('bad_request')`, not retryable, with one
+ * `issues` entry per failing path (D6). Async validators are supported.
+ */
+async function validateInputContract(contract: {
+  schema: StandardSchemaV1
+  value: unknown
+}): Promise<void> {
+  const syncOrAsync = contract.schema['~standard'].validate(contract.value)
+  const validationResult =
+    syncOrAsync instanceof Promise ? await syncOrAsync : syncOrAsync
+
+  if (validationResult.issues !== undefined) {
+    const normalized = normalizeSchemaIssues(validationResult.issues)
+    const message = normalized
+      .map(
+        (issue) => `inputContract${issue.path ? `.${issue.path}` : ''}: ${issue.message}`,
+      )
+      .join('; ')
+    throw new LlmError(`Request input contract violated: ${message}`, {
+      kind: 'bad_request',
+      retryable: false,
+      issues: toErrorIssues(normalized),
+    })
+  }
 }
 
 /**
@@ -1027,6 +1210,13 @@ export function createClient(config: ClientConfig): Client {
     callSiteId: string | undefined,
     callerSignal: AbortSignal | undefined,
     callAuth: AuthMaterial,
+    // D4: only `generate()` enforces `requireInputContract` here.
+    // `runStructured()` enforces its own callsite-level check (missing
+    // `callSite.inputSchema`) in its own prologue, pre-callId, before this
+    // function is ever called — re-checking `request.inputContract` here
+    // would wrongly refuse every `runStructured()` call, since D3 says
+    // `runStructured` never sets `inputContract` (that's D2's job).
+    enforceInputContract: boolean,
   ): Promise<LlmResult> {
     // ── (a) Call-level prologue ────────────────────────────────────────────
     // ONE callId per logical call.  ONE onStart.  ONE log-start entry.
@@ -1422,6 +1612,33 @@ export function createClient(config: ClientConfig): Client {
     // telemetry.onSuccess / onError and the call-level logger events fire
     // ONCE here, after the chain (including any retry middleware) settles.
     try {
+      // D4 (generate() path only) / D3: input-contract enforcement. Runs
+      // immediately after callId allocation, BEFORE the middleware chain is
+      // entered — before `@gullabs/quota` (never consumes budget on a
+      // violation) and before the retry middleware (validated exactly once
+      // per logical call, never per attempt). A throw here is caught by the
+      // epilogue below exactly like a pre-attempt middleware refusal: the
+      // same telemetry.onError / logger.error / D5 synthetic-record path.
+      if (enforceInputContract && request.inputContract === undefined) {
+        throw new LlmError(
+          'createClient({ requireInputContract: true }): request is missing "inputContract".',
+          {
+            kind: 'bad_request',
+            retryable: false,
+            issues: [
+              {
+                path: 'inputContract',
+                message:
+                  'inputContract is required when requireInputContract is enabled.',
+              },
+            ],
+          },
+        )
+      }
+      if (request.inputContract !== undefined) {
+        await validateInputContract(request.inputContract)
+      }
+
       const result = await chain(preResolvedReq, engineCtx)
       const latencyMs = clock.now() - callStartMs
       try {
@@ -1463,6 +1680,46 @@ export function createClient(config: ClientConfig): Client {
         ...(lastAttemptId !== undefined ? { attemptId: lastAttemptId } : {}),
       })
       const latencyMs = clock.now() - callStartMs
+
+      // D5: generic pre-attempt ledger record. When no attempt ran (the
+      // middleware chain threw before `runAttempt` ever began — e.g. a
+      // D3/D4 input-contract refusal, or a quota-style pre-attempt denial),
+      // write ONE synthetic zero-usage record so "callId ⇒ ledger row"
+      // holds exceptionlessly (§0.4). Detected via `lastAttemptId`, which
+      // `runAttempt` sets only once it actually starts (see (b) above) —
+      // still `undefined` here means `runAttempt` never began. Errors
+      // thrown AFTER an attempt ran already have their own per-attempt
+      // record from `runAttempt`'s own catch block; this branch must not
+      // duplicate that (boundary pinned by tests).
+      //
+      // `attemptId` follows the EXISTING first-attempt idempotency rule
+      // verbatim (see `runAttempt` above): `request.idempotencyKey` when
+      // supplied, a freshly minted id otherwise. `attemptNumber: 0` marks
+      // "refused before any attempt ran" — real attempts start at 1.
+      // Telemetry is deliberately unaffected: `CallErrorEvent.attemptId`
+      // below still derives from `lastAttemptId` (undefined here), not from
+      // this synthetic id — it has no telemetry counterpart.
+      if (lastAttemptId === undefined) {
+        const syntheticAttemptId = request.idempotencyKey ?? ids.attemptId()
+        const syntheticRecord = buildErrorRecord(
+          callId,
+          syntheticAttemptId,
+          callSiteId,
+          request.provider,
+          request.model,
+          request.metadata,
+          resolvedConfig,
+          EMPTY_USAGE,
+          0,
+          undefined,
+          callStartMs,
+          err,
+          0,
+          request.externalId,
+        )
+        await recordToSink(sink, syntheticRecord, safeLogger, callId)
+      }
+
       try {
         const attemptIdForEvent = err.attemptId ?? lastAttemptId
         const errorEvent: CallErrorEvent = {
@@ -1542,6 +1799,7 @@ export function createClient(config: ClientConfig): Client {
         request.callSiteId,
         runtimeOpts?.signal,
         callAuth,
+        config.requireInputContract === true,
       )
     },
 
@@ -1550,6 +1808,25 @@ export function createClient(config: ClientConfig): Client {
       varsOrOpts: Record<string, string> | RunStructuredOptions,
       opts?: RunStructuredOptions,
     ): Promise<LlmResult> {
+      // D4: FIRST check in the runStructured prologue — before D2 validation,
+      // D1 interpolation, and request building (before even the overload
+      // detection / provider / auth checks below). Row-less (pre-callId).
+      if (config.requireInputContract === true && callSite.inputSchema === undefined) {
+        throw new LlmError(
+          `createClient({ requireInputContract: true }): call site "${callSite.id}" is missing "inputSchema".`,
+          {
+            kind: 'bad_request',
+            retryable: false,
+            issues: [
+              {
+                path: 'inputSchema',
+                message: 'inputSchema is required when requireInputContract is enabled.',
+              },
+            ],
+          },
+        )
+      }
+
       // Detect overload: (callSite, opts) vs (callSite, vars, opts)
       let vars: Record<string, string>
       let resolvedOpts: RunStructuredOptions
@@ -1594,7 +1871,25 @@ export function createClient(config: ClientConfig): Client {
         merged,
       )
 
-      // Render templates (non-recursive interpolation; missing vars → placeholder).
+      // D2: opt-in callsite input contract. Runs before D1 so a missing/invalid
+      // business field surfaces as the schema's own error, not a downstream
+      // unresolved-placeholder violation.
+      if (callSite.inputSchema !== undefined) {
+        await validateCallSiteInput(callSite.id, callSite.inputSchema, vars)
+      }
+
+      // D1: strict template interpolation. Every {{var}} referenced by either
+      // template must resolve to a string in vars, or the call is refused here
+      // — before any request is built (row-less: this is the runStructured
+      // prologue, pre-callId).
+      assertTemplateVarsResolved(
+        callSite.id,
+        [callSite.userTemplate, callSite.system],
+        vars,
+      )
+
+      // Render templates (non-recursive interpolation; every placeholder is
+      // pre-validated above, so interpolate is total over its inputs).
       const userText =
         callSite.userTemplate !== undefined
           ? interpolate(callSite.userTemplate, vars)
@@ -1623,6 +1918,11 @@ export function createClient(config: ClientConfig): Client {
         callSite.id,
         runtimeOpts?.signal,
         callAuth,
+        // `runStructured` never sets `LlmRequest.inputContract` (D3 is the
+        // generate() path; this call site uses `CallSite.inputSchema`, D2) —
+        // the requireInputContract precondition was already enforced above,
+        // pre-callId, so runPipeline must not re-check it here.
+        false,
       )
     },
 
