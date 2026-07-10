@@ -42,3 +42,5 @@ export type {
   InMemoryRateLimiterOptions,
   ScriptedRateLimiterOptions,
 } from './rate-limiter.js'
+export { assertRegistryInvariants } from './registry-invariants.js'
+export type { AssertRegistryInvariantsOptions } from './registry-invariants.js'

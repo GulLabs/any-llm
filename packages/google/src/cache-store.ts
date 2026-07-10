@@ -294,9 +294,16 @@ export class GoogleCacheStore {
     }
 
     if (resp.name === undefined || resp.name.length === 0) {
+      // Provider fault, not caller fault: the SDK call succeeded but the
+      // payload is malformed — classify as a server error. NOT retryable:
+      // create() is side-effecting and not idempotent — the provider may have
+      // already created the cached content even though the payload carries no
+      // name, so there is no handle to clean up and an automatic retry could
+      // orphan/duplicate provider-side resources.
       throw new LlmError('Cache create response missing required field: name', {
-        kind: 'bad_request',
+        kind: 'server',
         retryable: false,
+        provider: 'google',
       })
     }
 

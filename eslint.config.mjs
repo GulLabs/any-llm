@@ -46,6 +46,7 @@ export default defineConfig(
       '**/coverage/**',
       '.craftsman/**',
       '.remember/**',
+      '.claude/**',
     ],
   },
   {

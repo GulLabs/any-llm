@@ -5,11 +5,19 @@
  */
 
 import { describe, it, expect } from 'vitest'
+import { assertRegistryInvariants } from '@gullabs/testing'
 import {
   claudeCliModelDescriptors,
   claudeCliRegistry,
   ClaudeHaiku45ConfigSchema,
 } from './models.js'
+
+const EXPECTED_MODEL_IDS = [
+  'claude-fable-5',
+  'claude-opus-4-8',
+  'claude-sonnet-5',
+  'claude-haiku-4-5-20251001',
+] as const
 
 describe('config schema', () => {
   it('rejects an unknown key (strict object)', () => {
@@ -39,15 +47,17 @@ describe('config schema', () => {
 })
 
 describe('registry', () => {
-  const ids = [
-    'claude-fable-5',
-    'claude-opus-4-8',
-    'claude-sonnet-5',
-    'claude-haiku-4-5-20251001',
-  ] as const
+  const ids = EXPECTED_MODEL_IDS
 
   it('has exactly 4 descriptors', () => {
     expect(claudeCliModelDescriptors).toHaveLength(4)
+  })
+
+  it('publishes schema artifacts for every model and keeps the pinned model-id list', () => {
+    assertRegistryInvariants({
+      descriptors: claudeCliModelDescriptors,
+      expectedModelIds: EXPECTED_MODEL_IDS,
+    })
   })
 
   it.each(ids)('resolves descriptor for %s', (id) => {

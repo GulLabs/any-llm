@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { toConfigJsonSchema } from '@gullabs/core'
+import { assertRegistryInvariants } from '@gullabs/testing'
 
 import {
   defaultGeminiRegistry,
   gemmaModelDescriptors,
   geminiModelDescriptors,
 } from './models.js'
-import { GEMINI_PRICING } from './pricing.js'
+import { geminiPricingSource } from './cost.js'
 
 const EXPECTED_GEMINI_MODEL_IDS = [
   'gemini-2.5-pro',
@@ -22,19 +22,11 @@ const EXPECTED_BUILT_IN_MODEL_IDS = [
   ...EXPECTED_GEMINI_MODEL_IDS,
   ...EXPECTED_GEMMA_MODEL_IDS,
 ] as const
-const ADAPTER_FIXTURE_MODEL_IDS = new Set<string>(EXPECTED_BUILT_IN_MODEL_IDS)
-const NEGATIVE_CONTRACT_FIXTURE_MODEL_IDS = new Set<string>(EXPECTED_BUILT_IN_MODEL_IDS)
+const ADAPTER_FIXTURE_MODEL_IDS = EXPECTED_BUILT_IN_MODEL_IDS
+const NEGATIVE_CONTRACT_FIXTURE_MODEL_IDS = EXPECTED_BUILT_IN_MODEL_IDS
 const EXPLICIT_UNPRICED_MODEL_IDS = new Set<string>(EXPECTED_GEMMA_MODEL_IDS)
 
 describe('built-in descriptors', () => {
-  it('publish schema artifacts for every built-in model', () => {
-    for (const descriptor of [...geminiModelDescriptors, ...gemmaModelDescriptors]) {
-      expect(descriptor.configSchema, descriptor.model).toBeDefined()
-      expect(descriptor.configJsonSchema, descriptor.model).toBeDefined()
-      expect(descriptor.validateConfig, descriptor.model).toBeDefined()
-    }
-  })
-
   it('keeps the expected built-in model ids registered', () => {
     expect(geminiModelDescriptors.map((descriptor) => descriptor.model)).toEqual(
       EXPECTED_GEMINI_MODEL_IDS,
@@ -46,28 +38,14 @@ describe('built-in descriptors', () => {
   })
 
   it('fails model onboarding unless schema, fixtures, and pricing decisions are explicit', () => {
-    const descriptors = [...geminiModelDescriptors, ...gemmaModelDescriptors]
-    expect(descriptors.map((descriptor) => descriptor.model)).toEqual(
-      EXPECTED_BUILT_IN_MODEL_IDS,
-    )
-
-    for (const descriptor of descriptors) {
-      expect(descriptor.configJsonSchema, descriptor.model).toEqual(
-        toConfigJsonSchema(descriptor.configSchema),
-      )
-      expect(ADAPTER_FIXTURE_MODEL_IDS.has(descriptor.model), descriptor.model).toBe(true)
-      expect(
-        NEGATIVE_CONTRACT_FIXTURE_MODEL_IDS.has(descriptor.model),
-        descriptor.model,
-      ).toBe(true)
-
-      const pricingFamily = descriptor.pricingFamily ?? descriptor.model
-      const hasPricing = GEMINI_PRICING[pricingFamily] !== undefined
-      const hasExplicitUnpricedDecision = EXPLICIT_UNPRICED_MODEL_IDS.has(
-        descriptor.model,
-      )
-      expect(hasPricing || hasExplicitUnpricedDecision, descriptor.model).toBe(true)
-    }
+    assertRegistryInvariants({
+      descriptors: [...geminiModelDescriptors, ...gemmaModelDescriptors],
+      expectedModelIds: EXPECTED_BUILT_IN_MODEL_IDS,
+      pricingSource: geminiPricingSource(),
+      explicitlyUnpriced: EXPLICIT_UNPRICED_MODEL_IDS,
+      adapterFixtureModelIds: ADAPTER_FIXTURE_MODEL_IDS,
+      negativeContractFixtureModelIds: NEGATIVE_CONTRACT_FIXTURE_MODEL_IDS,
+    })
   })
 
   it('enforces the stricter documented reasoning effort sets', () => {

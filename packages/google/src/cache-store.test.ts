@@ -506,7 +506,7 @@ describe('GoogleCacheStore', () => {
   })
 
   // NEW (f): create() validates response name — undefined case
-  it('create throws LlmError bad_request when response name is undefined', async () => {
+  it('create throws LlmError server when response name is undefined', async () => {
     const client = makeClient({
       create: vi.fn().mockResolvedValue({
         model: 'gemini-2.0-flash',
@@ -520,8 +520,9 @@ describe('GoogleCacheStore', () => {
       store.create({ model: 'gemini-2.0-flash', ttlSeconds: 3600 }),
     ).rejects.toMatchObject({
       message: 'Cache create response missing required field: name',
-      kind: 'bad_request',
+      kind: 'server',
       retryable: false,
+      provider: 'google',
     })
     await expect(
       store.create({ model: 'gemini-2.0-flash', ttlSeconds: 3600 }),
@@ -529,7 +530,7 @@ describe('GoogleCacheStore', () => {
   })
 
   // NEW (g): create() validates response name — empty-string case
-  it('create throws LlmError bad_request when response name is an empty string', async () => {
+  it('create throws LlmError server when response name is an empty string', async () => {
     const client = makeClient({
       create: vi.fn().mockResolvedValue({
         name: '',
@@ -543,8 +544,9 @@ describe('GoogleCacheStore', () => {
       store.create({ model: 'gemini-2.0-flash', ttlSeconds: 3600 }),
     ).rejects.toMatchObject({
       message: 'Cache create response missing required field: name',
-      kind: 'bad_request',
+      kind: 'server',
       retryable: false,
+      provider: 'google',
     })
   })
 
