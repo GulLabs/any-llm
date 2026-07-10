@@ -1,5 +1,12 @@
 # @gullabs/drizzle
 
+## 0.3.8
+
+### Patch Changes
+
+- Updated dependencies [20453fc]
+  - @gullabs/core@0.9.0
+
 ## 0.3.7
 
 ### Patch Changes

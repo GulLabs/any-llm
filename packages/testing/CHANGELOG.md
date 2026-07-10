@@ -1,5 +1,13 @@
 # @gullabs/testing
 
+## 0.4.1
+
+### Patch Changes
+
+- b2b7f8c: docs: host-owned factory wiring example
+- Updated dependencies [20453fc]
+  - @gullabs/core@0.9.0
+
 ## 0.4.0
 
 ### Minor Changes
