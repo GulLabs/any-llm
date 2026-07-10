@@ -28,6 +28,7 @@ import type {
   XaiInputContentPart,
   XaiResponseShape,
   XaiUsageShape,
+  XaiMessageOutputItem,
 } from './client.js'
 
 // ---------------------------------------------------------------------------
@@ -518,15 +519,38 @@ export function xaiAdapter(opts?: XaiAdapterOptions): ProviderAdapter {
       // ------------------------------------------------------------------
       let text = ''
       let reasoningText: string | undefined
+      const messageItems: XaiMessageOutputItem[] = []
 
       for (const item of response.output) {
         if (item.type === 'message') {
-          text += item.content.map((part) => part.text).join('')
+          messageItems.push(item)
         } else {
           const joined = item.summary.map((s) => s.text).join('')
           if (joined.length > 0) {
             reasoningText = (reasoningText ?? '') + joined
           }
+        }
+      }
+
+      // xAI's Responses API convention: when multiple `type: 'message'`
+      // output items are present, the LAST one is the response — earlier
+      // ones are superseded (observed live in strict json_schema mode,
+      // grok-4.5, reasoning effort high: two complete-JSON message items in
+      // one response). Concatenating across items corrupts the payload
+      // (e.g. two JSON documents back-to-back); joining `output_text` parts
+      // WITHIN a single message item is still correct (segmentation, not
+      // duplication).
+      if (messageItems.length > 0) {
+        const lastMessage = messageItems[messageItems.length - 1] as XaiMessageOutputItem
+        text = lastMessage.content.map((part) => part.text).join('')
+
+        if (messageItems.length > 1) {
+          warnings.push({
+            type: 'other',
+            message: `xai: response contained ${messageItems.length} message output items; using the last one and discarding ${
+              messageItems.length - 1
+            } earlier message item(s).`,
+          })
         }
       }
 

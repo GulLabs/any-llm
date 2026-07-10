@@ -326,6 +326,113 @@ describe('structured output', () => {
 })
 
 // ---------------------------------------------------------------------------
+// 3b. Multiple `type: 'message'` output items (last-item rule)
+// ---------------------------------------------------------------------------
+
+describe('multiple message output items', () => {
+  it('single-message responses are unaffected: no warning, text unchanged', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'Hi there' }))
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(makeResolvedReq(), FAKE_CTX)
+
+    expect(result.text).toBe('Hi there')
+    expect(result.warnings).toEqual([])
+  })
+
+  it('joins multiple output_text parts WITHIN a single message item (segmentation, not duplication)', async () => {
+    const client = makeFakeXai({
+      id: 'resp-1',
+      model: 'grok-4.5',
+      status: 'completed',
+      output: [
+        {
+          type: 'message',
+          role: 'assistant',
+          status: 'completed',
+          content: [
+            { type: 'output_text', text: 'Hello, ' },
+            { type: 'output_text', text: 'world.' },
+          ],
+        },
+      ],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    })
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(makeResolvedReq(), FAKE_CTX)
+
+    expect(result.text).toBe('Hello, world.')
+    expect(result.warnings).toEqual([])
+  })
+
+  it('takes the LAST message item as text when multiple message items are present, and emits a warning naming the dropped count', async () => {
+    const client = makeFakeXai({
+      id: 'resp-2',
+      model: 'grok-4.5',
+      status: 'completed',
+      output: [
+        {
+          type: 'message',
+          role: 'assistant',
+          status: 'completed',
+          content: [{ type: 'output_text', text: '{"a":1}' }],
+        },
+        {
+          type: 'message',
+          role: 'assistant',
+          status: 'completed',
+          content: [{ type: 'output_text', text: '{"a":2}' }],
+        },
+      ],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    })
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(makeResolvedReq(), FAKE_CTX)
+
+    expect(result.text).toBe('{"a":2}')
+    expect(result.warnings).toEqual([
+      {
+        type: 'other',
+        message:
+          'xai: response contained 2 message output items; using the last one and discarding 1 earlier message item(s).',
+      },
+    ])
+  })
+
+  it('reasoningText assembly from reasoning items is unaffected by the multi-message rule', async () => {
+    const client = makeFakeXai({
+      id: 'resp-3',
+      model: 'grok-4.5',
+      status: 'completed',
+      output: [
+        {
+          type: 'reasoning',
+          summary: [{ type: 'summary_text', text: 'thinking...' }],
+          status: 'completed',
+        },
+        {
+          type: 'message',
+          role: 'assistant',
+          status: 'completed',
+          content: [{ type: 'output_text', text: 'draft' }],
+        },
+        {
+          type: 'message',
+          role: 'assistant',
+          status: 'completed',
+          content: [{ type: 'output_text', text: 'final' }],
+        },
+      ],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    })
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(makeResolvedReq(), FAKE_CTX)
+
+    expect(result.reasoningText).toBe('thinking...')
+    expect(result.text).toBe('final')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // 4. max_output_tokens + finishReason
 // ---------------------------------------------------------------------------
 

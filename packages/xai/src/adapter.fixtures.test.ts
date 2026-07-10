@@ -79,6 +79,9 @@ const errorTaxonomyFixture = loadFixture<ErrorTaxonomyFixture>('09-error-taxonom
 const nonStrictSchemaFixture = loadFixture<NonStrictSchemaFixture>(
   '10-non-strict-schema-accepted.json',
 )
+const multiMessageOutputFixture = loadFixture<FixtureCall>(
+  '11-multi-message-output.json',
+)
 
 const FAKE_CTX: AdapterCtx = {
   auth: { apiKey: 'test-key' },
@@ -307,6 +310,45 @@ describe('fixture: 10-non-strict-schema-accepted', () => {
     expect(result.usage.inputTokens).toBe(288)
     expect(result.usage.outputTokens).toBe(194)
     expect(result.rawStructured).toEqual({ name: 'Bob', email: 'bob@example.com' })
+  })
+})
+
+describe('fixture: 11-multi-message-output', () => {
+  it('uses the LAST message item as text, discarding the earlier superseded one', async () => {
+    const client = makeFakeXai(multiMessageOutputFixture.body as never)
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({
+        outputJsonSchema: {
+          type: 'object',
+          properties: { reportAudit: { type: 'object' } },
+          required: ['reportAudit'],
+        },
+      }),
+      FAKE_CTX,
+    )
+
+    // The result text is exactly the LAST message item's output_text — NOT
+    // the two documents concatenated (which would be invalid JSON, and is
+    // exactly the shape of the live defect this fixture is modeled on).
+    expect(result.text).toBe(
+      '{"reportAudit":{"findings":[{"module":"custody","severity":"high"}],"status":"final"}}',
+    )
+    expect(result.rawStructured).toEqual({
+      reportAudit: { findings: [{ module: 'custody', severity: 'high' }], status: 'final' },
+    })
+
+    // A warning names the dropped item count.
+    expect(result.warnings).toEqual([
+      {
+        type: 'other',
+        message:
+          'xai: response contained 2 message output items; using the last one and discarding 1 earlier message item(s).',
+      },
+    ])
+
+    // reasoningText assembly from the (single) reasoning item is unaffected.
+    expect(result.reasoningText).toContain('Reviewing the documents')
   })
 })
 

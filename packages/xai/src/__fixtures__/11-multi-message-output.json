@@ -1,0 +1,114 @@
+{
+  "_note": "Modeled on a live defect observed 2026-07-10 (redline Grok e2e run f6eca8f9): xAI's Responses API returned TWO `type: 'message'` output items in one response under strict json_schema mode (grok-4.5, reasoning effort high). Each item was a complete, independently-valid JSON document. Naively concatenating output_text across all message items produced `...}\\n}{\\n\"reportAudit\": ...` — invalid JSON. The adapter must take only the LAST message item's output_text as the result text.",
+  "status": 200,
+  "body": {
+    "created_at": 1783745403,
+    "completed_at": 1783745411,
+    "id": "3d856199-d477-9156-8243-multi0001",
+    "max_output_tokens": null,
+    "model": "grok-4.5",
+    "object": "response",
+    "output": [
+      {
+        "id": "rs_3d856199-d477-9156-8243-multi0001",
+        "summary": [
+          {
+            "text": "Reviewing the documents for the requested audit output.\n",
+            "type": "summary_text"
+          }
+        ],
+        "type": "reasoning",
+        "status": "completed"
+      },
+      {
+        "content": [
+          {
+            "type": "output_text",
+            "text": "{\"reportAudit\":{\"findings\":[],\"status\":\"superseded-draft\"}}",
+            "logprobs": [],
+            "annotations": []
+          }
+        ],
+        "id": "msg_3d856199-d477-9156-8243-multi0001a",
+        "role": "assistant",
+        "type": "message",
+        "status": "completed"
+      },
+      {
+        "content": [
+          {
+            "type": "output_text",
+            "text": "{\"reportAudit\":{\"findings\":[{\"module\":\"custody\",\"severity\":\"high\"}],\"status\":\"final\"}}",
+            "logprobs": [],
+            "annotations": []
+          }
+        ],
+        "id": "msg_3d856199-d477-9156-8243-multi0001b",
+        "role": "assistant",
+        "type": "message",
+        "status": "completed"
+      }
+    ],
+    "parallel_tool_calls": true,
+    "previous_response_id": null,
+    "reasoning": {
+      "effort": "high",
+      "summary": "detailed"
+    },
+    "temperature": 0.7,
+    "text": {
+      "format": {
+        "type": "json_schema",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "reportAudit": {
+              "type": "object"
+            }
+          },
+          "required": ["reportAudit"]
+        }
+      }
+    },
+    "tool_choice": "auto",
+    "tools": [],
+    "top_p": 0.95,
+    "usage": {
+      "input_tokens": 4200,
+      "input_tokens_details": {
+        "cached_tokens": 512
+      },
+      "output_tokens": 1830,
+      "output_tokens_details": {
+        "reasoning_tokens": 640
+      },
+      "total_tokens": 6030,
+      "num_sources_used": 0,
+      "num_server_side_tools_used": 0,
+      "cost_in_usd_ticks": 98430000,
+      "context_details": {
+        "input_tokens": 4200,
+        "output_tokens": 1830
+      }
+    },
+    "user": null,
+    "incomplete_details": null,
+    "status": "completed",
+    "store": false,
+    "metadata": {
+      "system_fingerprint": "fp_a39489019fa99b6e"
+    },
+    "background": false,
+    "service_tier": "default",
+    "truncation": "disabled",
+    "top_logprobs": 0,
+    "presence_penalty": 0,
+    "frequency_penalty": 0,
+    "prompt_cache_key": null,
+    "max_tool_calls": null,
+    "safety_identifier": null,
+    "error": null,
+    "instructions": null,
+    "output_text": "{\"reportAudit\":{\"findings\":[],\"status\":\"superseded-draft\"}}{\"reportAudit\":{\"findings\":[{\"module\":\"custody\",\"severity\":\"high\"}],\"status\":\"final\"}}"
+  }
+}
