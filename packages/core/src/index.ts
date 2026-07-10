@@ -84,6 +84,10 @@ export type {
 } from './engine.js'
 export { createClient } from './engine.js'
 
+// Provider plugin composition
+export type { ProviderPlugin } from './plugin.js'
+export { composeProviders } from './plugin.js'
+
 // Model registry
 export type { ModelDescriptor, ModelRegistry } from './registry.js'
 export {

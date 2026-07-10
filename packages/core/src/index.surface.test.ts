@@ -20,6 +20,10 @@ describe('@gullabs/core package surface', () => {
     expect(removedEffortBudget in surface).toBe(false)
   })
 
+  it('exports composeProviders for assembling ProviderPlugins', () => {
+    expect(typeof surface.composeProviders).toBe('function')
+  })
+
   it('no longer exports the Google-specific provider option types (moved to @gullabs/google)', () => {
     // These were only ever type exports, so this `in` check cannot catch a
     // stray `export type`; it only guards against someone reintroducing them

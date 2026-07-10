@@ -27,6 +27,7 @@ export type {
 } from './types.js'
 export { geminiAdapter } from './adapter.js'
 export type { GeminiAdapterOptions } from './adapter.js'
+export { googleProvider } from './provider.js'
 export type { GeminiClientLike } from './client.js'
 export {
   buildGoogleClient,

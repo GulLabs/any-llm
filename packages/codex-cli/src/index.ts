@@ -26,6 +26,7 @@
 
 export { codexCliAdapter } from './adapter.js'
 export type { CodexCliAdapterOptions } from './adapter.js'
+export { codexCliProvider } from './provider.js'
 
 export { createCodexCliRunner } from './runner.js'
 export type { CodexCliRunner, CodexCliRunResult } from './runner.js'

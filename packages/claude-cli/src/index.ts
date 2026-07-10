@@ -31,6 +31,7 @@ export type {
   ClaudeCliEnvelope,
   ClaudeCliUsageShape,
 } from './adapter.js'
+export { claudeCliProvider } from './provider.js'
 
 export { buildClaudeCliRunner } from './runner.js'
 export type {

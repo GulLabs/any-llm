@@ -9,7 +9,11 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { FLEX_DEFAULT_TIMEOUT_MS, TRANSPORT_TIMEOUT_BUFFER_MS } from './index.js'
+import {
+  FLEX_DEFAULT_TIMEOUT_MS,
+  TRANSPORT_TIMEOUT_BUFFER_MS,
+  googleProvider,
+} from './index.js'
 
 describe('@gullabs/google package surface: timeout constants', () => {
   it('FLEX_DEFAULT_TIMEOUT_MS is exported and equals 1_500_000', () => {
@@ -18,5 +22,11 @@ describe('@gullabs/google package surface: timeout constants', () => {
 
   it('TRANSPORT_TIMEOUT_BUFFER_MS is exported and equals 5_000', () => {
     expect(TRANSPORT_TIMEOUT_BUFFER_MS).toBe(5_000)
+  })
+})
+
+describe('@gullabs/google package surface: googleProvider', () => {
+  it('googleProvider is a function reachable from the package root', () => {
+    expect(typeof googleProvider).toBe('function')
   })
 })
