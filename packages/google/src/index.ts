@@ -3,12 +3,11 @@
  *
  * @example
  * ```ts
- * import { geminiAdapter } from '@gullabs/google'
- * import { createClient, geminiPricingSource } from '@gullabs/core'
+ * import { createClient, composeProviders } from '@gullabs/core'
+ * import { googleProvider } from '@gullabs/google'
  *
  * const client = createClient({
- *   adapters: [geminiAdapter()],
- *   pricingSources: { google: geminiPricingSource() },
+ *   ...composeProviders([googleProvider()]),
  * })
  *
  * const result = await client.generate(
@@ -20,9 +19,26 @@
  * @module
  */
 
+export type {
+  GoogleSafetySetting,
+  GoogleSearchTool,
+  GoogleProviderOptions,
+} from './types.js'
 export { geminiAdapter } from './adapter.js'
 export type { GeminiAdapterOptions } from './adapter.js'
-export type { GeminiClientLike } from './client.js'
+export { googleProvider } from './provider.js'
+export {
+  geminiModelDescriptors,
+  gemmaModelDescriptors,
+  defaultGeminiRegistry,
+} from './models.js'
+export { geminiPricingSource } from './cost.js'
+export { GEMINI_PRICING, TIER_FACTOR, pricingVersion } from './pricing.js'
+export type {
+  GeminiClientLike,
+  GeminiCountTokensParams,
+  GeminiCountTokensResponseShape,
+} from './client.js'
 export {
   buildGoogleClient,
   requireApiKey,
@@ -46,3 +62,8 @@ export type {
 export { GoogleCacheStore } from './cache-store.js'
 export { normalizeGroundingCitations } from './grounding.js'
 export type { Citation } from './grounding.js'
+export { geminiContentToMessages } from './content-to-messages.js'
+export type {
+  GeminiContentToMessagesInput,
+  GeminiContentToMessagesResult,
+} from './content-to-messages.js'

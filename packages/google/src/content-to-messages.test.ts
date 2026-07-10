@@ -1,0 +1,669 @@
+/**
+ * geminiContentToMessages — unit tests.
+ *
+ * @module
+ */
+
+import { describe, it, expect } from 'vitest'
+import type { Content } from '@google/genai'
+import { LlmError } from '@gullabs/core'
+import { geminiContentToMessages } from './content-to-messages.js'
+
+describe('geminiContentToMessages: role mapping', () => {
+  it('maps role "user" → "user"', () => {
+    const { messages } = geminiContentToMessages({
+      contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+    })
+    expect(messages).toEqual([{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }])
+  })
+
+  it('maps role "model" → "assistant"', () => {
+    const { messages } = geminiContentToMessages({
+      contents: [{ role: 'model', parts: [{ text: 'hi' }] }],
+    })
+    expect(messages).toEqual([
+      { role: 'assistant', parts: [{ kind: 'text', text: 'hi' }] },
+    ])
+  })
+
+  it('throws bad_request naming the role for an unrecognized role', () => {
+    const contents = [{ role: 'system', parts: [{ text: 'hi' }] }] as unknown as Content[]
+    try {
+      geminiContentToMessages({ contents })
+      expect.unreachable()
+    } catch (err) {
+      expect(err).toBeInstanceOf(LlmError)
+      expect((err as LlmError).kind).toBe('bad_request')
+      expect((err as LlmError).retryable).toBe(false)
+      expect((err as LlmError).message).toContain('system')
+    }
+  })
+
+  it('throws bad_request naming the role when role is missing (no inference)', () => {
+    const contents = [{ parts: [{ text: 'hi' }] }] as unknown as Content[]
+    expect(() => geminiContentToMessages({ contents })).toThrow(LlmError)
+    try {
+      geminiContentToMessages({ contents })
+      expect.unreachable()
+    } catch (err) {
+      expect((err as LlmError).kind).toBe('bad_request')
+      expect((err as LlmError).message).toContain('undefined')
+    }
+  })
+})
+
+describe('geminiContentToMessages: supported part kinds', () => {
+  it('maps a text part', () => {
+    const { messages } = geminiContentToMessages({
+      contents: [{ role: 'user', parts: [{ text: 'hello world' }] }],
+    })
+    expect(messages).toEqual([
+      { role: 'user', parts: [{ kind: 'text', text: 'hello world' }] },
+    ])
+  })
+
+  it('maps an inlineData part', () => {
+    const { messages } = geminiContentToMessages({
+      contents: [
+        {
+          role: 'user',
+          parts: [{ inlineData: { mimeType: 'image/png', data: 'YWJj' } }],
+        },
+      ],
+    })
+    expect(messages).toEqual([
+      {
+        role: 'user',
+        parts: [{ kind: 'inline-media', mimeType: 'image/png', data: 'YWJj' }],
+      },
+    ])
+  })
+
+  it('maps a fileData part', () => {
+    const { messages } = geminiContentToMessages({
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              fileData: {
+                mimeType: 'video/mp4',
+                fileUri: 'https://files.example.com/v.mp4',
+              },
+            },
+          ],
+        },
+      ],
+    })
+    expect(messages).toEqual([
+      {
+        role: 'user',
+        parts: [
+          {
+            kind: 'file-uri',
+            uri: 'https://files.example.com/v.mp4',
+            mimeType: 'video/mp4',
+          },
+        ],
+      },
+    ])
+  })
+
+  it('maps mediaResolution.level LOW on inlineData', () => {
+    const { messages } = geminiContentToMessages({
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              inlineData: { mimeType: 'image/png', data: 'YWJj' },
+              mediaResolution: { level: 'MEDIA_RESOLUTION_LOW' as never },
+            },
+          ],
+        },
+      ],
+    })
+    expect(messages[0]?.parts[0]).toEqual({
+      kind: 'inline-media',
+      mimeType: 'image/png',
+      data: 'YWJj',
+      mediaResolution: 'low',
+    })
+  })
+
+  it('maps mediaResolution.level MEDIUM on fileData', () => {
+    const { messages } = geminiContentToMessages({
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              fileData: { mimeType: 'image/png', fileUri: 'https://f/x.png' },
+              mediaResolution: { level: 'MEDIA_RESOLUTION_MEDIUM' as never },
+            },
+          ],
+        },
+      ],
+    })
+    expect(messages[0]?.parts[0]).toEqual({
+      kind: 'file-uri',
+      uri: 'https://f/x.png',
+      mimeType: 'image/png',
+      mediaResolution: 'medium',
+    })
+  })
+
+  it('maps mediaResolution.level HIGH', () => {
+    const { messages } = geminiContentToMessages({
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              inlineData: { mimeType: 'image/png', data: 'YWJj' },
+              mediaResolution: { level: 'MEDIA_RESOLUTION_HIGH' as never },
+            },
+          ],
+        },
+      ],
+    })
+    expect(messages[0]?.parts[0]).toEqual({
+      kind: 'inline-media',
+      mimeType: 'image/png',
+      data: 'YWJj',
+      mediaResolution: 'high',
+    })
+  })
+
+  it('throws bad_request on an unknown mediaResolution.level enum value', () => {
+    const contents = [
+      {
+        role: 'user',
+        parts: [
+          {
+            inlineData: { mimeType: 'image/png', data: 'YWJj' },
+            mediaResolution: { level: 'MEDIA_RESOLUTION_UNSPECIFIED' },
+          },
+        ],
+      },
+    ] as unknown as Content[]
+    try {
+      geminiContentToMessages({ contents })
+      expect.unreachable()
+    } catch (err) {
+      expect((err as LlmError).kind).toBe('bad_request')
+      expect((err as LlmError).message).toContain('MEDIA_RESOLUTION_UNSPECIFIED')
+    }
+  })
+
+  it('throws bad_request when mediaResolution.numTokens is set', () => {
+    const contents = [
+      {
+        role: 'user',
+        parts: [
+          {
+            inlineData: { mimeType: 'image/png', data: 'YWJj' },
+            mediaResolution: { numTokens: 100 },
+          },
+        ],
+      },
+    ] as unknown as Content[]
+    try {
+      geminiContentToMessages({ contents })
+      expect.unreachable()
+    } catch (err) {
+      expect((err as LlmError).kind).toBe('bad_request')
+      expect((err as LlmError).message).toContain('numTokens')
+    }
+  })
+})
+
+describe('geminiContentToMessages: unsupported part kinds', () => {
+  const unsupportedCases: Array<[string, Record<string, unknown>]> = [
+    ['functionCall', { functionCall: { name: 'f', args: {} } }],
+    ['functionResponse', { functionResponse: { name: 'f', response: {} } }],
+    ['executableCode', { executableCode: { code: '1+1', language: 'PYTHON' } }],
+    [
+      'codeExecutionResult',
+      { codeExecutionResult: { outcome: 'OUTCOME_OK', output: '2' } },
+    ],
+    ['toolCall', { toolCall: {} }],
+    ['toolResponse', { toolResponse: {} }],
+    ['thought', { text: 'reasoning...', thought: true }],
+    ['thoughtSignature', { text: 'x', thoughtSignature: 'sig' }],
+    [
+      'videoMetadata',
+      {
+        fileData: { mimeType: 'video/mp4', fileUri: 'https://f/v.mp4' },
+        videoMetadata: { fps: 1 },
+      },
+    ],
+    ['partMetadata', { text: 'x', partMetadata: { source: 'a' } }],
+  ]
+
+  it.each(unsupportedCases)('throws bad_request naming %s', (label, partShape) => {
+    const contents = [{ role: 'user', parts: [partShape] }] as unknown as Content[]
+    try {
+      geminiContentToMessages({ contents })
+      expect.unreachable()
+    } catch (err) {
+      expect(err).toBeInstanceOf(LlmError)
+      expect((err as LlmError).kind).toBe('bad_request')
+      expect((err as LlmError).retryable).toBe(false)
+      expect((err as LlmError).message).toContain(label)
+    }
+  })
+
+  it('throws bad_request naming inlineData.displayName', () => {
+    const contents = [
+      {
+        role: 'user',
+        parts: [
+          { inlineData: { mimeType: 'image/png', data: 'YWJj', displayName: 'x.png' } },
+        ],
+      },
+    ] as unknown as Content[]
+    try {
+      geminiContentToMessages({ contents })
+      expect.unreachable()
+    } catch (err) {
+      expect((err as LlmError).kind).toBe('bad_request')
+      expect((err as LlmError).message).toContain('displayName')
+    }
+  })
+
+  it('throws bad_request naming fileData.displayName', () => {
+    const contents = [
+      {
+        role: 'user',
+        parts: [
+          {
+            fileData: {
+              mimeType: 'video/mp4',
+              fileUri: 'https://f/v.mp4',
+              displayName: 'v.mp4',
+            },
+          },
+        ],
+      },
+    ] as unknown as Content[]
+    try {
+      geminiContentToMessages({ contents })
+      expect.unreachable()
+    } catch (err) {
+      expect((err as LlmError).kind).toBe('bad_request')
+      expect((err as LlmError).message).toContain('displayName')
+    }
+  })
+
+  it('throws bad_request for a part with zero recognized fields', () => {
+    const contents = [{ role: 'user', parts: [{}] }] as unknown as Content[]
+    try {
+      geminiContentToMessages({ contents })
+      expect.unreachable()
+    } catch (err) {
+      expect((err as LlmError).kind).toBe('bad_request')
+      expect((err as LlmError).message).toContain('no recognized fields')
+    }
+  })
+})
+
+describe('geminiContentToMessages: exhaustive key-set validation', () => {
+  const expectBadRequest = (contents: Content[], naming: string): void => {
+    try {
+      geminiContentToMessages({ contents })
+      expect.unreachable()
+    } catch (err) {
+      expect(err).toBeInstanceOf(LlmError)
+      expect((err as LlmError).kind).toBe('bad_request')
+      expect((err as LlmError).retryable).toBe(false)
+      expect((err as LlmError).message).toContain(naming)
+    }
+  }
+
+  it('throws bad_request when text and inlineData are both set', () => {
+    const contents = [
+      {
+        role: 'user',
+        parts: [{ text: 'hi', inlineData: { mimeType: 'image/png', data: 'YWJj' } }],
+      },
+    ] as unknown as Content[]
+    expectBadRequest(contents, 'inlineData')
+  })
+
+  it('throws bad_request when text carries a mediaResolution', () => {
+    const contents = [
+      {
+        role: 'user',
+        parts: [{ text: 'hi', mediaResolution: { level: 'MEDIA_RESOLUTION_LOW' } }],
+      },
+    ] as unknown as Content[]
+    expectBadRequest(contents, 'mediaResolution')
+  })
+
+  it('throws bad_request when text carries a thoughtSignature', () => {
+    const contents = [
+      { role: 'user', parts: [{ text: 'hi', thoughtSignature: 'sig' }] },
+    ] as unknown as Content[]
+    expectBadRequest(contents, 'thoughtSignature')
+  })
+
+  it('throws bad_request when text carries partMetadata', () => {
+    const contents = [
+      { role: 'user', parts: [{ text: 'hi', partMetadata: { source: 'a' } }] },
+    ] as unknown as Content[]
+    expectBadRequest(contents, 'partMetadata')
+  })
+
+  it('throws bad_request for an unknown future SDK key alongside text', () => {
+    const contents = [
+      { role: 'user', parts: [{ text: 'x', someFutureField: 1 }] },
+    ] as unknown as Content[]
+    expectBadRequest(contents, 'someFutureField')
+  })
+
+  it('throws bad_request for an explicit empty mediaResolution object', () => {
+    const contents = [
+      {
+        role: 'user',
+        parts: [
+          { inlineData: { mimeType: 'image/png', data: 'YWJj' }, mediaResolution: {} },
+        ],
+      },
+    ] as unknown as Content[]
+    expectBadRequest(contents, 'mediaResolution')
+  })
+
+  it('throws bad_request for mediaResolution with level: undefined', () => {
+    const contents = [
+      {
+        role: 'user',
+        parts: [
+          {
+            inlineData: { mimeType: 'image/png', data: 'YWJj' },
+            mediaResolution: { level: undefined },
+          },
+        ],
+      },
+    ] as unknown as Content[]
+    expectBadRequest(contents, 'mediaResolution')
+  })
+
+  it('throws bad_request for an unknown Content-level key on a message', () => {
+    const contents = [
+      { role: 'user', parts: [{ text: 'hi' }], someFutureField: 1 },
+    ] as unknown as Content[]
+    expectBadRequest(contents, 'someFutureField')
+  })
+
+  it('treats keys with value undefined as absent', () => {
+    const contents = [
+      {
+        role: 'user',
+        parts: [{ text: 'hi', thoughtSignature: undefined, functionCall: undefined }],
+      },
+    ] as unknown as Content[]
+    const { messages } = geminiContentToMessages({ contents })
+    expect(messages).toEqual([{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }])
+  })
+})
+
+describe('geminiContentToMessages: systemInstruction', () => {
+  it('is absent when systemInstruction is not provided', () => {
+    const { system } = geminiContentToMessages({
+      contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+    })
+    expect(system).toBeUndefined()
+  })
+
+  it('uses a string systemInstruction as-is', () => {
+    const { system } = geminiContentToMessages({
+      contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+      systemInstruction: 'Be concise.',
+    })
+    expect(system).toBe('Be concise.')
+  })
+
+  it('concatenates text parts of a Content systemInstruction', () => {
+    const { system } = geminiContentToMessages({
+      contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+      systemInstruction: { parts: [{ text: 'Be ' }, { text: 'concise.' }] },
+    })
+    expect(system).toBe('Be concise.')
+  })
+
+  it('throws bad_request naming the part kind for a non-text systemInstruction part', () => {
+    const systemInstruction = {
+      parts: [{ inlineData: { mimeType: 'image/png', data: 'YWJj' } }],
+    } as unknown as Content
+    try {
+      geminiContentToMessages({
+        contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+        systemInstruction,
+      })
+      expect.unreachable()
+    } catch (err) {
+      expect((err as LlmError).kind).toBe('bad_request')
+      expect((err as LlmError).message).toContain('inlineData')
+    }
+  })
+
+  it('throws bad_request for a systemInstruction Content carrying role "model"', () => {
+    const systemInstruction = {
+      role: 'model',
+      parts: [{ text: 'Be concise.' }],
+    } as unknown as Content
+    try {
+      geminiContentToMessages({
+        contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+        systemInstruction,
+      })
+      expect.unreachable()
+    } catch (err) {
+      expect(err).toBeInstanceOf(LlmError)
+      expect((err as LlmError).kind).toBe('bad_request')
+      expect((err as LlmError).retryable).toBe(false)
+      expect((err as LlmError).message).toContain('role')
+    }
+  })
+
+  it('throws bad_request for a systemInstruction Content carrying role "user"', () => {
+    const systemInstruction = {
+      role: 'user',
+      parts: [{ text: 'Be concise.' }],
+    } as unknown as Content
+    try {
+      geminiContentToMessages({
+        contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+        systemInstruction,
+      })
+      expect.unreachable()
+    } catch (err) {
+      expect((err as LlmError).kind).toBe('bad_request')
+      expect((err as LlmError).message).toContain('role')
+    }
+  })
+
+  it('throws bad_request for an unknown Content-level key on a systemInstruction', () => {
+    const systemInstruction = {
+      parts: [{ text: 'Be concise.' }],
+      someFutureField: 1,
+    } as unknown as Content
+    try {
+      geminiContentToMessages({
+        contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+        systemInstruction,
+      })
+      expect.unreachable()
+    } catch (err) {
+      expect((err as LlmError).kind).toBe('bad_request')
+      expect((err as LlmError).message).toContain('someFutureField')
+    }
+  })
+
+  it('yields system "" for a Content systemInstruction with zero parts', () => {
+    const { system } = geminiContentToMessages({
+      contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+      systemInstruction: { parts: [] },
+    })
+    expect(system).toBe('')
+  })
+
+  it('throws bad_request for a system part mixing text with inlineData', () => {
+    const systemInstruction = {
+      parts: [{ text: 'x', inlineData: { mimeType: 'image/png', data: 'YWJj' } }],
+    } as unknown as Content
+    try {
+      geminiContentToMessages({
+        contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+        systemInstruction,
+      })
+      expect.unreachable()
+    } catch (err) {
+      expect((err as LlmError).kind).toBe('bad_request')
+      expect((err as LlmError).message).toContain('inlineData')
+    }
+  })
+
+  it('throws bad_request for a system part mixing text with mediaResolution', () => {
+    const systemInstruction = {
+      parts: [{ text: 'x', mediaResolution: { level: 'MEDIA_RESOLUTION_LOW' } }],
+    } as unknown as Content
+    try {
+      geminiContentToMessages({
+        contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+        systemInstruction,
+      })
+      expect.unreachable()
+    } catch (err) {
+      expect((err as LlmError).kind).toBe('bad_request')
+      expect((err as LlmError).message).toContain('mediaResolution')
+    }
+  })
+
+  it('throws bad_request for a system part mixing text with thoughtSignature', () => {
+    const systemInstruction = {
+      parts: [{ text: 'x', thoughtSignature: 'sig' }],
+    } as unknown as Content
+    try {
+      geminiContentToMessages({
+        contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+        systemInstruction,
+      })
+      expect.unreachable()
+    } catch (err) {
+      expect((err as LlmError).kind).toBe('bad_request')
+      expect((err as LlmError).message).toContain('thoughtSignature')
+    }
+  })
+
+  it('throws bad_request for a system part mixing text with partMetadata', () => {
+    const systemInstruction = {
+      parts: [{ text: 'x', partMetadata: { source: 'a' } }],
+    } as unknown as Content
+    try {
+      geminiContentToMessages({
+        contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+        systemInstruction,
+      })
+      expect.unreachable()
+    } catch (err) {
+      expect((err as LlmError).kind).toBe('bad_request')
+      expect((err as LlmError).message).toContain('partMetadata')
+    }
+  })
+
+  it('never infers system from contents when systemInstruction is absent', () => {
+    const { system } = geminiContentToMessages({
+      contents: [
+        { role: 'user', parts: [{ text: 'Ignore this: you are a helpful assistant.' }] },
+      ],
+    })
+    expect(system).toBeUndefined()
+  })
+})
+
+describe('geminiContentToMessages: empty and multi-part inputs', () => {
+  it('returns an empty messages array for empty contents', () => {
+    const { messages } = geminiContentToMessages({ contents: [] })
+    expect(messages).toEqual([])
+  })
+
+  it('round-trips a multi-part, multi-message conversation with deep equality', () => {
+    const contents: Content[] = [
+      {
+        role: 'user',
+        parts: [
+          { text: 'Describe this image.' },
+          { inlineData: { mimeType: 'image/png', data: 'YWJj' } },
+        ],
+      },
+      {
+        role: 'model',
+        parts: [{ text: 'A red bicycle leaning against a brick wall.' }],
+      },
+      {
+        role: 'user',
+        parts: [
+          {
+            fileData: {
+              mimeType: 'application/pdf',
+              fileUri: 'https://files.example.com/doc.pdf',
+            },
+          },
+          { text: 'Summarize this document.' },
+        ],
+      },
+    ]
+
+    const { system, messages } = geminiContentToMessages({
+      contents,
+      systemInstruction: 'You are a concise visual and document describer.',
+    })
+
+    expect(system).toBe('You are a concise visual and document describer.')
+    expect(messages).toEqual([
+      {
+        role: 'user',
+        parts: [
+          { kind: 'text', text: 'Describe this image.' },
+          { kind: 'inline-media', mimeType: 'image/png', data: 'YWJj' },
+        ],
+      },
+      {
+        role: 'assistant',
+        parts: [{ kind: 'text', text: 'A red bicycle leaning against a brick wall.' }],
+      },
+      {
+        role: 'user',
+        parts: [
+          {
+            kind: 'file-uri',
+            uri: 'https://files.example.com/doc.pdf',
+            mimeType: 'application/pdf',
+          },
+          { kind: 'text', text: 'Summarize this document.' },
+        ],
+      },
+    ])
+  })
+
+  it('property: accepted inputs never lose a part (count in == count out)', () => {
+    const contents: Content[] = [
+      {
+        role: 'user',
+        parts: [
+          { text: 'a' },
+          { inlineData: { mimeType: 'image/png', data: 'YQ==' } },
+          { fileData: { mimeType: 'video/mp4', fileUri: 'https://f/v.mp4' } },
+          { text: 'b' },
+        ],
+      },
+    ]
+
+    const { messages } = geminiContentToMessages({ contents })
+    const inputPartCount = contents.reduce((sum, c) => sum + (c.parts?.length ?? 0), 0)
+    const outputPartCount = messages.reduce((sum, m) => sum + m.parts.length, 0)
+    expect(outputPartCount).toBe(inputPartCount)
+  })
+})

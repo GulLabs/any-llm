@@ -1,0 +1,194 @@
+{
+  "low": {
+    "status": 200,
+    "body": {
+      "created_at": 1783643299,
+      "completed_at": 1783643300,
+      "id": "f3892469-5a30-907e-9b1c-33cd4eca98a8",
+      "max_output_tokens": 100,
+      "model": "grok-4.5",
+      "object": "response",
+      "output": [
+        {
+          "id": "rs_f3892469-5a30-907e-9b1c-33cd4eca98a8",
+          "summary": [
+            {
+              "text": "The user said: \"Say hi\"\n",
+              "type": "summary_text"
+            }
+          ],
+          "type": "reasoning",
+          "status": "completed"
+        },
+        {
+          "content": [
+            {
+              "type": "output_text",
+              "text": "Hi! 😊 How can I help you today?",
+              "logprobs": [],
+              "annotations": []
+            }
+          ],
+          "id": "msg_f3892469-5a30-907e-9b1c-33cd4eca98a8",
+          "role": "assistant",
+          "type": "message",
+          "status": "completed"
+        }
+      ],
+      "parallel_tool_calls": true,
+      "previous_response_id": null,
+      "reasoning": {
+        "effort": "low",
+        "summary": "detailed"
+      },
+      "temperature": 0.7,
+      "text": {
+        "format": {
+          "type": "text"
+        }
+      },
+      "tool_choice": "auto",
+      "tools": [],
+      "top_p": 0.95,
+      "usage": {
+        "input_tokens": 208,
+        "input_tokens_details": {
+          "cached_tokens": 128
+        },
+        "output_tokens": 33,
+        "output_tokens_details": {
+          "reasoning_tokens": 22
+        },
+        "total_tokens": 241,
+        "num_sources_used": 0,
+        "num_server_side_tools_used": 0,
+        "cost_in_usd_ticks": 4220000,
+        "context_details": {
+          "input_tokens": 208,
+          "output_tokens": 33
+        }
+      },
+      "user": null,
+      "incomplete_details": null,
+      "status": "completed",
+      "store": false,
+      "metadata": {
+        "system_fingerprint": "fp_a39489019fa99b6e"
+      },
+      "background": false,
+      "service_tier": "default",
+      "truncation": "disabled",
+      "top_logprobs": 0,
+      "presence_penalty": 0,
+      "frequency_penalty": 0,
+      "prompt_cache_key": null,
+      "max_tool_calls": null,
+      "safety_identifier": null,
+      "error": null,
+      "instructions": null
+    }
+  },
+  "high": {
+    "status": 200,
+    "body": {
+      "created_at": 1783643300,
+      "completed_at": 1783643301,
+      "id": "be5de315-855f-9236-84b4-dd8066e0a736",
+      "max_output_tokens": 100,
+      "model": "grok-4.5",
+      "object": "response",
+      "output": [
+        {
+          "id": "rs_be5de315-855f-9236-84b4-dd8066e0a736",
+          "summary": [
+            {
+              "text": "The user said \"Say hi\". This is a simple greeting request. I should respond in a friendly, helpful manner as Grok, built by xAI.\n",
+              "type": "summary_text"
+            }
+          ],
+          "type": "reasoning",
+          "status": "completed"
+        },
+        {
+          "content": [
+            {
+              "type": "output_text",
+              "text": "Hi! 👋 How can I help you today?",
+              "logprobs": [],
+              "annotations": []
+            }
+          ],
+          "id": "msg_be5de315-855f-9236-84b4-dd8066e0a736",
+          "role": "assistant",
+          "type": "message",
+          "status": "completed"
+        }
+      ],
+      "parallel_tool_calls": true,
+      "previous_response_id": null,
+      "reasoning": {
+        "effort": "high",
+        "summary": "detailed"
+      },
+      "temperature": 0.7,
+      "text": {
+        "format": {
+          "type": "text"
+        }
+      },
+      "tool_choice": "auto",
+      "tools": [],
+      "top_p": 0.95,
+      "usage": {
+        "input_tokens": 208,
+        "input_tokens_details": {
+          "cached_tokens": 128
+        },
+        "output_tokens": 81,
+        "output_tokens_details": {
+          "reasoning_tokens": 70
+        },
+        "total_tokens": 289,
+        "num_sources_used": 0,
+        "num_server_side_tools_used": 0,
+        "cost_in_usd_ticks": 7100000,
+        "context_details": {
+          "input_tokens": 208,
+          "output_tokens": 81
+        }
+      },
+      "user": null,
+      "incomplete_details": null,
+      "status": "completed",
+      "store": false,
+      "metadata": {
+        "system_fingerprint": "fp_a39489019fa99b6e"
+      },
+      "background": false,
+      "service_tier": "default",
+      "truncation": "disabled",
+      "top_logprobs": 0,
+      "presence_penalty": 0,
+      "frequency_penalty": 0,
+      "prompt_cache_key": null,
+      "max_tool_calls": null,
+      "safety_identifier": null,
+      "error": null,
+      "instructions": null
+    }
+  },
+  "none": {
+    "status": 400,
+    "body": {
+      "code": "invalid-argument",
+      "error": "This model does not support `reasoning_effort` value `none`."
+    }
+  },
+  "bogus": {
+    "status": 400,
+    "body": {
+      "code": "invalid-argument",
+      "error": "Invalid reasoning effort."
+    }
+  }
+}

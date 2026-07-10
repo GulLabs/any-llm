@@ -20,8 +20,8 @@ import type { LlmResult } from './types.js'
 function revalidatePinnedServiceTier(
   req: ResolvedRequest,
   tier: string | undefined,
-): 'flex' | 'standard' | undefined {
-  if (tier !== 'flex' && tier !== 'standard') {
+): string | undefined {
+  if (tier === undefined) {
     return undefined
   }
 
@@ -240,7 +240,7 @@ export function retryMiddleware(
       const timeoutMs = req.config.timeoutMs
       const start = nowFn()
       let attempt = 0
-      let pinnedServiceTier: 'flex' | 'standard' | undefined
+      let pinnedServiceTier: string | undefined
 
       for (;;) {
         attempt++

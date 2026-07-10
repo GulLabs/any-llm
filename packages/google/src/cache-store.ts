@@ -11,6 +11,7 @@
  */
 
 import type { AuthMaterial, Logger } from '@gullabs/core'
+import type { Content } from '@google/genai'
 
 import { requireApiKey } from './client.js'
 import { LlmError, classifyError, redactSecrets } from '@gullabs/core'
@@ -51,8 +52,8 @@ export interface GeminiCachesClientLike {
   create(params: {
     model: string
     config: {
-      contents?: unknown
-      systemInstruction?: unknown
+      contents?: Content[]
+      systemInstruction?: Content | string
       ttl?: string
       displayName?: string
     }
@@ -86,6 +87,35 @@ export interface GoogleCacheStoreOptions {
   logger?: Logger
   /** Injectable clock for deterministic tests.  Default: `Date.now`. */
   now?: () => number
+  /**
+   * Opt-in pre-flight token-count gate applied before every cache create
+   * (both `create()` directly and the `getOrCreate()` path it delegates to,
+   * including the coalesced path — enforced once, inside `create()`, so
+   * there is no separate "in-flight" gap to close).
+   */
+  preflight?: {
+    /** Minimum token count required before a cache create is allowed to proceed. */
+    minTokens: number
+    /**
+     * Counts tokens for the exact token-bearing payload of the impending
+     * create — `model` + `contents` + `systemInstruction` only. `ttl` and
+     * `displayName` are excluded: they carry no tokens and are irrelevant to
+     * the pre-flight check.
+     *
+     * This callback receives genai-native `Content[]`/`Content|string` — it
+     * does NOT receive the library's `Message[]` shape and there is no
+     * automatic conversion between the two (explicit seam, by design). Hosts
+     * using genai-native content directly can wire this to a raw
+     * `client.models.countTokens` call; hosts building from the library's
+     * `Message[]` should call `@gullabs/core`'s `client.countTokens` rather
+     * than expecting this callback to convert for them.
+     */
+    countTokens: (payload: {
+      model: string
+      contents?: Content[]
+      systemInstruction?: Content | string
+    }) => Promise<number>
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +193,7 @@ export class GoogleCacheStore {
   private readonly onDeleteError: (cacheName: string, err: unknown) => void
   private readonly logger: Logger | undefined
   private readonly now: () => number
+  private readonly preflight: GoogleCacheStoreOptions['preflight']
 
   /** Memoised client promise — built at most once per store instance. */
   private clientPromise: Promise<GeminiCachesClientLike> | undefined
@@ -195,6 +226,7 @@ export class GoogleCacheStore {
         }
       })
     this.now = opts.now ?? (() => Date.now())
+    this.preflight = opts.preflight
   }
 
   private getClient(): Promise<GeminiCachesClientLike> {
@@ -219,16 +251,33 @@ export class GoogleCacheStore {
   async create(input: {
     model: string
     ttlSeconds: number
-    contents?: unknown
-    systemInstruction?: unknown
+    contents?: Content[]
+    systemInstruction?: Content | string
     displayName?: string
   }): Promise<GoogleCacheHandle> {
+    if (this.preflight !== undefined) {
+      const counted = await this.preflight.countTokens({
+        model: input.model,
+        ...(input.contents !== undefined ? { contents: input.contents } : {}),
+        ...(input.systemInstruction !== undefined
+          ? { systemInstruction: input.systemInstruction }
+          : {}),
+      })
+      if (counted < this.preflight.minTokens) {
+        throw new LlmError(
+          `GoogleCacheStore preflight: counted ${counted} token(s), below the configured ` +
+            `minimum of ${this.preflight.minTokens} for model "${input.model}".`,
+          { kind: 'bad_request', retryable: false },
+        )
+      }
+    }
+
     const client = await this.getClient()
 
     const config: {
       ttl: string
-      contents?: unknown
-      systemInstruction?: unknown
+      contents?: Content[]
+      systemInstruction?: Content | string
       displayName?: string
     } = { ttl: `${input.ttlSeconds}s` }
 
@@ -245,9 +294,16 @@ export class GoogleCacheStore {
     }
 
     if (resp.name === undefined || resp.name.length === 0) {
+      // Provider fault, not caller fault: the SDK call succeeded but the
+      // payload is malformed — classify as a server error. NOT retryable:
+      // create() is side-effecting and not idempotent — the provider may have
+      // already created the cached content even though the payload carries no
+      // name, so there is no handle to clean up and an automatic retry could
+      // orphan/duplicate provider-side resources.
       throw new LlmError('Cache create response missing required field: name', {
-        kind: 'bad_request',
+        kind: 'server',
         retryable: false,
+        provider: 'google',
       })
     }
 
@@ -277,8 +333,8 @@ export class GoogleCacheStore {
     key: CacheKey,
     factory: () => Promise<{
       ttlSeconds: number
-      contents?: unknown
-      systemInstruction?: unknown
+      contents?: Content[]
+      systemInstruction?: Content | string
     }>,
   ): Promise<GoogleCacheHandle> {
     const mapKey = `${key.model}:${key.stableKey}`

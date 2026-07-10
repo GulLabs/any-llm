@@ -1,0 +1,290 @@
+/**
+ * @gullabs/xai — fixture-backed contract tests.
+ *
+ * Feeds live-captured (and human-sanitized) xAI Responses API fixture
+ * response bodies through `xaiAdapter` / `classifyXaiError`, proving the
+ * adapter maps each recorded real-world shape correctly end-to-end.
+ *
+ * Fixtures live in `./__fixtures__/` and were captured against the live
+ * xAI Responses API on 2026-07-09, then grepped clean of any
+ * Authorization/Bearer/API-key-shaped strings before being copied into this
+ * package.
+ *
+ * @module
+ */
+
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { describe, it, expect } from 'vitest'
+import type { AdapterCtx, ResolvedRequest } from '@gullabs/core'
+import { makeFakeXai } from '@gullabs/testing'
+import { xaiAdapter, classifyXaiError } from './adapter.js'
+
+/** Read + JSON.parse a fixture file at test time (no resolveJsonModule needed). */
+function loadFixture<T = unknown>(name: string): T {
+  const path = fileURLToPath(new URL(`./__fixtures__/${name}`, import.meta.url))
+  return JSON.parse(readFileSync(path, 'utf8')) as T
+}
+
+interface FixtureCall {
+  status: number
+  body: Record<string, unknown>
+}
+
+// Named-property interfaces (not index signatures) so plain dot-notation
+// access stays `FixtureCall`, not `FixtureCall | undefined`, under this
+// repo's `noUncheckedIndexedAccess` tsconfig setting.
+interface ReasoningMatrixFixture {
+  low: FixtureCall
+  high: FixtureCall
+  none: FixtureCall
+  bogus: FixtureCall
+}
+interface StructuredOutputFixture {
+  text_format: FixtureCall
+  response_format: FixtureCall
+  empty_enum: FixtureCall
+}
+interface CachingFixture {
+  call1_with_key: FixtureCall
+  call2_with_key: FixtureCall
+  call3_without_key: FixtureCall
+}
+interface MaxOutputTokensFixture {
+  huge_max: FixtureCall
+  tiny_max: FixtureCall
+}
+interface ErrorTaxonomyFixture {
+  nonexistent_model: FixtureCall
+  malformed_body: FixtureCall
+  invalid_api_key: FixtureCall
+}
+
+const minimalFixture = loadFixture<FixtureCall>('02-responses-minimal.json')
+const reasoningMatrixFixture = loadFixture<ReasoningMatrixFixture>(
+  '03-reasoning-effort-matrix.json',
+)
+const structuredOutputFixture = loadFixture<StructuredOutputFixture>(
+  '04-structured-output.json',
+)
+const cachingFixture = loadFixture<CachingFixture>('07-caching.json')
+const maxOutputTokensFixture = loadFixture<MaxOutputTokensFixture>(
+  '08-max-output-tokens.json',
+)
+const errorTaxonomyFixture = loadFixture<ErrorTaxonomyFixture>('09-error-taxonomy.json')
+
+const FAKE_CTX: AdapterCtx = {
+  auth: { apiKey: 'test-key' },
+  logger: { info() {}, warn() {}, error() {}, debug() {} },
+}
+
+function makeResolvedReq(overrides: Partial<ResolvedRequest> = {}): ResolvedRequest {
+  return {
+    provider: 'xai',
+    model: 'grok-4.5',
+    messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hello' }] }],
+    config: {},
+    ...overrides,
+  }
+}
+
+describe('fixture: 02-responses-minimal', () => {
+  it('maps the minimal completed response end-to-end', async () => {
+    const client = makeFakeXai(minimalFixture.body as never)
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(makeResolvedReq(), FAKE_CTX)
+
+    expect(result.text).toBe("Hi! 👋 How's it going?")
+    expect(result.reasoningText).toContain('The user said')
+    expect(result.finishReason).toBe('stop')
+    expect(result.usage.inputTokens).toBe(208)
+    expect(result.usage.cachedInputTokens).toBe(128)
+    expect(result.usage.outputTokens).toBe(42)
+    expect(result.usage.thinkingTokens).toBe(33)
+    expect(result.usage.totalTokens).toBe(250)
+  })
+
+  it('surfaces numeric xAI usage extras into details and non-numeric extras into providerMetadata', async () => {
+    const client = makeFakeXai(minimalFixture.body as never)
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(makeResolvedReq(), FAKE_CTX)
+
+    // Canonical counters stay canonical…
+    expect(result.usage.details).toMatchObject({
+      input: 208,
+      output: 42,
+      cached: 128,
+      thinking: 33,
+    })
+    // …and every numeric xAI extra is surfaced under its raw name.
+    expect(result.usage.details).toMatchObject({
+      num_sources_used: 0,
+      num_server_side_tools_used: 0,
+      cost_in_usd_ticks: 4_760_000,
+    })
+
+    // Non-numeric extras go to providerMetadata (usage.raw keeps the full
+    // verbatim payload separately).
+    expect(result.providerMetadata).toEqual({
+      context_details: { input_tokens: 208, output_tokens: 42 },
+      metadata: { system_fingerprint: 'fp_a39489019fa99b6e' },
+    })
+    expect(result.usage.raw).toEqual(minimalFixture.body['usage'])
+  })
+})
+
+describe('fixture: 03-reasoning-effort-matrix', () => {
+  it('maps the low-effort branch', async () => {
+    const client = makeFakeXai(reasoningMatrixFixture.low.body as never)
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({ config: { reasoning: { effort: 'low' } } }),
+      FAKE_CTX,
+    )
+    expect(result.usage.outputTokens).toBe(33)
+    expect(result.usage.thinkingTokens).toBe(22)
+  })
+
+  it('maps the high-effort branch', async () => {
+    const client = makeFakeXai(reasoningMatrixFixture.high.body as never)
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({ config: { reasoning: { effort: 'high' } } }),
+      FAKE_CTX,
+    )
+    expect(result.usage.outputTokens).toBe(81)
+    expect(result.usage.thinkingTokens).toBe(70)
+  })
+})
+
+describe('fixture: 04-structured-output', () => {
+  it('maps the text_format success case, parsing rawStructured', async () => {
+    const client = makeFakeXai(structuredOutputFixture.text_format.body as never)
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({
+        outputJsonSchema: {
+          type: 'object',
+          properties: { name: { type: 'string' }, age: { type: 'number' } },
+        },
+      }),
+      FAKE_CTX,
+    )
+    expect(result.rawStructured).toEqual({ name: 'Bob', age: 30 })
+  })
+})
+
+describe('fixture: 07-caching', () => {
+  it('maps call1_with_key (first call, low cache hit)', async () => {
+    const client = makeFakeXai(cachingFixture.call1_with_key.body as never)
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({
+        config: { providerOptions: { xai: { promptCacheKey: 'anyllm-probe-1' } } },
+      }),
+      FAKE_CTX,
+    )
+    expect(result.usage.inputTokens).toBe(1234)
+    expect(result.usage.cachedInputTokens).toBe(128)
+
+    const call = client.calls[0] as { prompt_cache_key?: string }
+    expect(call.prompt_cache_key).toBe('anyllm-probe-1')
+  })
+
+  it('maps call2_with_key (repeat call, high cache hit)', async () => {
+    const client = makeFakeXai(cachingFixture.call2_with_key.body as never)
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({
+        config: { providerOptions: { xai: { promptCacheKey: 'anyllm-probe-1' } } },
+      }),
+      FAKE_CTX,
+    )
+    expect(result.usage.cachedInputTokens).toBe(1152)
+  })
+
+  it('maps call3_without_key (no prompt_cache_key sent)', async () => {
+    const client = makeFakeXai(cachingFixture.call3_without_key.body as never)
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(makeResolvedReq(), FAKE_CTX)
+    expect(result.usage.cachedInputTokens).toBe(128)
+
+    const call = client.calls[0] as { prompt_cache_key?: string }
+    expect(call.prompt_cache_key).toBeUndefined()
+  })
+})
+
+describe('fixture: 08-max-output-tokens', () => {
+  it('maps huge_max (completed, no truncation)', async () => {
+    const client = makeFakeXai(maxOutputTokensFixture.huge_max.body as never)
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({ config: { maxOutputTokens: 100_000_000 } }),
+      FAKE_CTX,
+    )
+    expect(result.finishReason).toBe('stop')
+
+    const call = client.calls[0] as { max_output_tokens?: number }
+    expect(call.max_output_tokens).toBe(100_000_000)
+  })
+
+  it('maps tiny_max (incomplete/max_output_tokens -> finishReason:"length")', async () => {
+    const client = makeFakeXai(maxOutputTokensFixture.tiny_max.body as never)
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({ config: { maxOutputTokens: 16 } }),
+      FAKE_CTX,
+    )
+    expect(result.finishReason).toBe('length')
+    expect(result.text).toContain('Ember of Aetheria')
+  })
+
+  it('tiny_max: numeric usage extras land in details, context_details/metadata in providerMetadata', async () => {
+    const client = makeFakeXai(maxOutputTokensFixture.tiny_max.body as never)
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({ config: { maxOutputTokens: 16 } }),
+      FAKE_CTX,
+    )
+    expect(result.usage.details).toMatchObject({
+      input: 214,
+      output: 51,
+      cached: 0,
+      thinking: 35,
+      num_sources_used: 0,
+      num_server_side_tools_used: 0,
+      cost_in_usd_ticks: 7_340_000,
+    })
+    expect(result.providerMetadata).toEqual({
+      context_details: { input_tokens: 214, output_tokens: 51 },
+      metadata: { system_fingerprint: 'fp_a39489019fa99b6e' },
+    })
+  })
+})
+
+describe('fixture: 09-error-taxonomy', () => {
+  it('classifies nonexistent_model (400) as bad_request', () => {
+    const fixture = errorTaxonomyFixture.nonexistent_model
+    const result = classifyXaiError({ status: fixture.status, ...fixture.body })
+    expect(result.kind).toBe('bad_request')
+  })
+
+  it('classifies malformed_body (422) as bad_request', () => {
+    const fixture = errorTaxonomyFixture.malformed_body
+    const result = classifyXaiError({ status: fixture.status, ...fixture.body })
+    expect(result.kind).toBe('bad_request')
+  })
+
+  it('classifies invalid_api_key (400, recorded body signature) as invalid_auth', () => {
+    const fixture = errorTaxonomyFixture.invalid_api_key
+    // openai-SDK shape: APIError hoists the body's `error` field onto `.error`.
+    const result = classifyXaiError({ status: fixture.status, ...fixture.body })
+    expect(result.kind).toBe('invalid_auth')
+  })
+
+  it('classifies invalid_api_key with the full parsed body on .error as invalid_auth', () => {
+    const fixture = errorTaxonomyFixture.invalid_api_key
+    const result = classifyXaiError({ status: fixture.status, error: fixture.body })
+    expect(result.kind).toBe('invalid_auth')
+  })
+})

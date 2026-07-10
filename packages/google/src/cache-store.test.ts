@@ -506,7 +506,7 @@ describe('GoogleCacheStore', () => {
   })
 
   // NEW (f): create() validates response name — undefined case
-  it('create throws LlmError bad_request when response name is undefined', async () => {
+  it('create throws LlmError server when response name is undefined', async () => {
     const client = makeClient({
       create: vi.fn().mockResolvedValue({
         model: 'gemini-2.0-flash',
@@ -520,8 +520,9 @@ describe('GoogleCacheStore', () => {
       store.create({ model: 'gemini-2.0-flash', ttlSeconds: 3600 }),
     ).rejects.toMatchObject({
       message: 'Cache create response missing required field: name',
-      kind: 'bad_request',
+      kind: 'server',
       retryable: false,
+      provider: 'google',
     })
     await expect(
       store.create({ model: 'gemini-2.0-flash', ttlSeconds: 3600 }),
@@ -529,7 +530,7 @@ describe('GoogleCacheStore', () => {
   })
 
   // NEW (g): create() validates response name — empty-string case
-  it('create throws LlmError bad_request when response name is an empty string', async () => {
+  it('create throws LlmError server when response name is an empty string', async () => {
     const client = makeClient({
       create: vi.fn().mockResolvedValue({
         name: '',
@@ -543,8 +544,9 @@ describe('GoogleCacheStore', () => {
       store.create({ model: 'gemini-2.0-flash', ttlSeconds: 3600 }),
     ).rejects.toMatchObject({
       message: 'Cache create response missing required field: name',
-      kind: 'bad_request',
+      kind: 'server',
       retryable: false,
+      provider: 'google',
     })
   })
 
@@ -796,6 +798,156 @@ describe('GoogleCacheStore', () => {
 
       // Still only one GoogleGenAI instance across create-via-refresh + update + delete.
       expect(constructorCalls).toHaveLength(1)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // preflight token-count gate
+  // ---------------------------------------------------------------------------
+  describe('preflight', () => {
+    it('create() below threshold rejects with bad_request naming counted/required tokens and never calls the SDK', async () => {
+      const client = makeClient()
+      const countTokens = vi.fn().mockResolvedValue(100)
+      const store = new GoogleCacheStore({
+        auth: fakeAuth,
+        client,
+        now: () => BASE_NOW,
+        preflight: { minTokens: 2048, countTokens },
+      })
+
+      await expect(
+        store.create({
+          model: 'gemini-2.0-flash',
+          ttlSeconds: 3600,
+          contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+        }),
+      ).rejects.toMatchObject({
+        kind: 'bad_request',
+        retryable: false,
+        message: expect.stringContaining('counted 100'),
+      })
+      await expect(
+        store.create({ model: 'gemini-2.0-flash', ttlSeconds: 3600 }),
+      ).rejects.toMatchObject({ message: expect.stringContaining('minimum of 2048') })
+      await expect(
+        store.create({ model: 'gemini-2.0-flash', ttlSeconds: 3600 }),
+      ).rejects.toBeInstanceOf(LlmError)
+
+      expect(client.create).not.toHaveBeenCalled()
+    })
+
+    it('create() at/above threshold proceeds normally (SDK create is called)', async () => {
+      const client = makeClient()
+      const countTokens = vi.fn().mockResolvedValue(2048)
+      const store = new GoogleCacheStore({
+        auth: fakeAuth,
+        client,
+        now: () => BASE_NOW,
+        preflight: { minTokens: 2048, countTokens },
+      })
+
+      const handle = await store.create({
+        model: 'gemini-2.0-flash',
+        ttlSeconds: 3600,
+        contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+      })
+
+      expect(handle.cacheName).toBe('cachedContents/abc123')
+      expect(client.create).toHaveBeenCalledTimes(1)
+    })
+
+    it('countTokens callback receives exactly { model, contents, systemInstruction } — no ttl/displayName', async () => {
+      const client = makeClient()
+      const countTokens = vi.fn().mockResolvedValue(9999)
+      const store = new GoogleCacheStore({
+        auth: fakeAuth,
+        client,
+        now: () => BASE_NOW,
+        preflight: { minTokens: 1, countTokens },
+      })
+      const systemInstruction = { role: 'system', parts: [{ text: 'be terse' }] }
+      const contents = [{ role: 'user', parts: [{ text: 'hi' }] }]
+
+      await store.create({
+        model: 'gemini-2.0-flash',
+        ttlSeconds: 3600,
+        contents,
+        systemInstruction,
+        displayName: 'my-cache',
+      })
+
+      expect(countTokens).toHaveBeenCalledWith({
+        model: 'gemini-2.0-flash',
+        contents,
+        systemInstruction,
+      })
+    })
+
+    it('getOrCreate() (non-coalesced) below threshold rejects and never calls the SDK', async () => {
+      const client = makeClient()
+      const countTokens = vi.fn().mockResolvedValue(1)
+      const store = new GoogleCacheStore({
+        auth: fakeAuth,
+        client,
+        now: () => BASE_NOW,
+        preflight: { minTokens: 2048, countTokens },
+      })
+      const factory = vi.fn().mockResolvedValue({
+        ttlSeconds: 3600,
+        contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+      })
+
+      await expect(
+        store.getOrCreate(
+          { model: 'gemini-2.0-flash', stableKey: 'preflight-key' },
+          factory,
+        ),
+      ).rejects.toMatchObject({ kind: 'bad_request' })
+      expect(client.create).not.toHaveBeenCalled()
+    })
+
+    it('getOrCreate() (coalesced) below threshold rejects both callers and never calls the SDK', async () => {
+      const client = makeClient()
+      const countTokens = vi.fn().mockResolvedValue(1)
+      const store = new GoogleCacheStore({
+        auth: fakeAuth,
+        client,
+        coalesce: true,
+        now: () => BASE_NOW,
+        preflight: { minTokens: 2048, countTokens },
+      })
+      const factory = vi.fn().mockResolvedValue({ ttlSeconds: 3600 })
+      const key = { model: 'gemini-2.0-flash', stableKey: 'preflight-coalesce-key' }
+
+      const p1 = store.getOrCreate(key, factory).catch((e: unknown) => e)
+      const p2 = store.getOrCreate(key, factory).catch((e: unknown) => e)
+      const [r1, r2] = await Promise.all([p1, p2])
+
+      expect(r1).toBeInstanceOf(LlmError)
+      expect(r2).toBeInstanceOf(LlmError)
+      expect(client.create).not.toHaveBeenCalled()
+    })
+
+    it('unconfigured store (no preflight option): behavior is unchanged', async () => {
+      const client = makeClient()
+      const store = new GoogleCacheStore({ auth: fakeAuth, client, now: () => BASE_NOW })
+
+      const handle = await store.create({ model: 'gemini-2.0-flash', ttlSeconds: 3600 })
+      expect(handle.cacheName).toBe('cachedContents/abc123')
+      expect(client.create).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Type tightening — contents/systemInstruction are no longer `unknown`
+  // ---------------------------------------------------------------------------
+  describe('type tightening', () => {
+    it('rejects a non-Content[] value for contents at compile time', () => {
+      const client = makeClient()
+      const store = new GoogleCacheStore({ auth: fakeAuth, client, now: () => BASE_NOW })
+
+      // @ts-expect-error — contents must be Content[], not a bare string.
+      void store.create({ model: 'gemini-2.0-flash', ttlSeconds: 3600, contents: 'nope' })
     })
   })
 })

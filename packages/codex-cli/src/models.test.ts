@@ -5,7 +5,13 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { CODEX_CLI_MODEL_IDS, Gpt54MiniConfigSchema, codexCliRegistry } from './models.js'
+import { assertRegistryInvariants } from '@gullabs/testing'
+import {
+  CODEX_CLI_MODEL_IDS,
+  Gpt54MiniConfigSchema,
+  codexCliModelDescriptors,
+  codexCliRegistry,
+} from './models.js'
 
 describe('codex-cli config schemas', () => {
   it('rejects unknown keys (strict object)', () => {
@@ -62,6 +68,13 @@ describe('codex-cli config schemas', () => {
 })
 
 describe('codexCliRegistry', () => {
+  it('publishes schema artifacts for every model and keeps the pinned model-id list', () => {
+    assertRegistryInvariants({
+      descriptors: codexCliModelDescriptors,
+      expectedModelIds: CODEX_CLI_MODEL_IDS,
+    })
+  })
+
   it('resolves every supported model id without throwing at construction', () => {
     for (const id of CODEX_CLI_MODEL_IDS) {
       const descriptor = codexCliRegistry.resolve('codex-cli', id)

@@ -8,11 +8,15 @@
 import { describe, it, expect } from 'vitest'
 import { LlmError } from './errors.js'
 import { computeBackoffMs, retryMiddleware } from './retry.js'
-import { createClient, geminiPricingSource } from './index.js'
+import { createClient, createModelRegistry } from './index.js'
 import type { Handler, EngineCtx, ResolvedRequest } from './ports.js'
 import type { LlmResult, Usage } from './types.js'
 import { FakeAdapter, FakeClock, FakeIds, RecordingSink } from '@gullabs/testing'
-import { makeTestDescriptor } from './test-model-descriptor.js'
+import {
+  makePermissiveTestDescriptor,
+  makeTestDescriptor,
+} from './test-model-descriptor.js'
+import { makeTestPricingSource } from './test-pricing-source.js'
 
 // ---------------------------------------------------------------------------
 // Shared test fixtures
@@ -297,7 +301,7 @@ describe('retryMiddleware', () => {
   }, 2_000)
 
   it('does not pin servedServiceTier onto a descriptor with no supported service tiers', async () => {
-    const seenTiers: Array<'flex' | 'standard' | undefined> = []
+    const seenTiers: Array<string | undefined> = []
     const req: ResolvedRequest = {
       ...makeReq(),
       model: 'gemma-4-31b-it',
@@ -328,7 +332,7 @@ describe('retryMiddleware', () => {
   })
 
   it('does not pin an unsupported servedServiceTier onto the next retry attempt', async () => {
-    const seenTiers: Array<'flex' | 'standard' | undefined> = []
+    const seenTiers: Array<string | undefined> = []
     const req: ResolvedRequest = {
       ...makeReq(),
       modelDescriptor: makeTestDescriptor({
@@ -357,6 +361,37 @@ describe('retryMiddleware', () => {
 
     expect(seenTiers).toEqual([undefined, undefined])
   })
+
+  it('pins a served service tier from a non-Google descriptor vocabulary', async () => {
+    const seenTiers: Array<string | undefined> = []
+    const req: ResolvedRequest = {
+      ...makeReq(),
+      modelDescriptor: makeTestDescriptor({
+        model: 'priority-tiered-model',
+        provider: 'google',
+        capabilities: { serviceTiers: ['priority', 'default'] },
+      }),
+    }
+
+    let calls = 0
+    const handler: Handler = async (attemptReq) => {
+      calls++
+      seenTiers.push(attemptReq.config.serviceTier)
+      if (calls === 1) {
+        throw new LlmError('Rate limited', {
+          kind: 'rate_limited',
+          retryable: true,
+          servedServiceTier: 'priority',
+        })
+      }
+      return DUMMY_RESULT
+    }
+
+    const mw = retryMiddleware({ maxAttempts: 2 }, { sleep: NO_SLEEP, random: () => 0 })
+    await mw.intercept(req, makeCtx(), handler)
+
+    expect(seenTiers).toEqual([undefined, 'priority'])
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -364,7 +399,20 @@ describe('retryMiddleware', () => {
 // ---------------------------------------------------------------------------
 
 describe('engine + middleware — integration', () => {
-  const PRICING = geminiPricingSource()
+  const PRICING = makeTestPricingSource(
+    {
+      'gemini-2.5-pro': {
+        inputPerM: 1_250_000,
+        cachedPerM: 125_000,
+        outputPerM: 10_000_000,
+      },
+    },
+    { standard: 1 },
+    'test-pricing-1',
+  )
+  const TEST_REGISTRY = createModelRegistry([
+    makePermissiveTestDescriptor({ model: 'gemini-2.5-pro', provider: 'google' }),
+  ])
   const TEST_AUTH = { apiKey: 'test-key' }
 
   function makeSuccessResult() {
@@ -388,6 +436,7 @@ describe('engine + middleware — integration', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock,
       ids,
@@ -420,6 +469,7 @@ describe('engine + middleware — integration', () => {
       createClient({
         adapters: [new FakeAdapter('google', makeSuccessResult())],
         pricingSources: { google: PRICING },
+        modelRegistry: TEST_REGISTRY,
         middleware: [mwA, mwB], // both have id='retry'
       }),
     ).toThrow(LlmError)
@@ -436,6 +486,7 @@ describe('engine + middleware — integration', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids,
@@ -478,6 +529,7 @@ describe('engine + middleware — integration', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids,
@@ -523,6 +575,7 @@ describe('engine + middleware — integration', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       clock: new FakeClock(),
       ids: new FakeIds(),
       telemetry: {

@@ -15,7 +15,6 @@ import { LlmError, classifyError } from './errors.js'
 import { buildRecord, normalizeUsage } from './record.js'
 import { redactSecrets } from './redact.js'
 import type { ModelDescriptor, ModelRegistry } from './registry.js'
-import { defaultGeminiRegistry } from './registry.js'
 import type {
   ProviderAdapter,
   AdapterResult,
@@ -36,6 +35,8 @@ import type {
   CallStartEvent,
   CallSuccessEvent,
   CallErrorEvent,
+  TokenCountRequest,
+  TokenCount,
 } from './ports.js'
 import type {
   LlmRequest,
@@ -140,14 +141,18 @@ export interface ClientConfig {
   ): ProviderAdapter
   /**
    * Model registry used to resolve per-model config schemas and pricing keys.
-   * Defaults to {@link defaultGeminiRegistry} (all models in the Gemini
-   * pricing snapshot).  Supply a custom registry to add new models or
-   * providers without forking the library.
+   *
+   * **Required.** Core ships with no default registry — it has zero
+   * provider/model knowledge. Supply one via a provider package's plugin,
+   * e.g. `createClient({ ...composeProviders([googleProvider()]), ... })`
+   * (`composeProviders` from `@gullabs/core`, `googleProvider` from
+   * `@gullabs/google`), or build a custom `ModelRegistry` with
+   * `createModelRegistry` for bespoke/multi-provider setups.
    *
    * **Construction-time invariant:** every descriptor's `provider` must match
    * a configured adapter's `id`, else `createClient` throws.
    */
-  modelRegistry?: ModelRegistry
+  modelRegistry: ModelRegistry
   /**
    * Ordered middleware stack applied to every call, outermost-first.
    *
@@ -236,6 +241,14 @@ export interface Client {
     vars: Record<string, string>,
     opts: RunStructuredOptions,
   ): Promise<LlmResult>
+
+  /**
+   * Count tokens for a prospective request without generating.
+   * Same auth/signal semantics as {@link generate}. Throws `LlmError('bad_request')`
+   * when the (provider, model) pair is not registered, or when the resolved
+   * adapter does not implement `countTokens`.
+   */
+  countTokens(request: TokenCountRequest, opts: GenerateOptions): Promise<TokenCount>
 }
 
 // ---------------------------------------------------------------------------
@@ -638,13 +651,6 @@ async function validateResolvedConfig(
   descriptor: ModelDescriptor | undefined,
   config: GenConfig,
 ): Promise<ResolvedConfig> {
-  if (config.flexFallback !== undefined && config.serviceTier !== 'flex') {
-    throw new LlmError(
-      `Model "${model}" config.flexFallback: flexFallback requires config.serviceTier to be explicitly "flex"; remove flexFallback or set serviceTier to "flex".`,
-      { kind: 'bad_request', retryable: false },
-    )
-  }
-
   if (descriptor?.validateConfig === undefined) {
     return config
   }
@@ -842,9 +848,11 @@ function attachCallContext(
  *
  * @example
  * ```ts
+ * import { createClient, composeProviders } from '@gullabs/core'
+ * import { googleProvider } from '@gullabs/google'
+ *
  * const client = createClient({
- *   adapters: [geminiAdapter()],
- *   pricingSources: { google: geminiPricingSource() },
+ *   ...composeProviders([googleProvider()]),
  *   sink: drizzleUsageSink(db, llmCallsTable),
  * })
  *
@@ -923,7 +931,7 @@ export function createClient(config: ClientConfig): Client {
   const telemetry: Telemetry = config.telemetry ?? NOOP_TELEMETRY
   const rateLimiter: RateLimiter = config.rateLimiter ?? NOOP_RATE_LIMITER
   const libDefaults: GenConfig = config.defaults ?? {}
-  const registry: ModelRegistry = config.modelRegistry ?? defaultGeminiRegistry
+  const registry: ModelRegistry = config.modelRegistry
 
   // Build O(1) adapter map at construction time — also detects duplicate ids.
   const adapterMap = new Map<string, ProviderAdapter>()
@@ -1262,9 +1270,11 @@ export function createClient(config: ClientConfig): Client {
               adapterResult.servedServiceTier ?? effectiveReq.config.serviceTier,
             )
             if (cost.microUsd === null) {
+              const reason =
+                cost.unpricedReason !== undefined ? ` Reason: ${cost.unpricedReason}` : ''
               costWarnings.push({
                 type: 'other',
-                message: `Model "${req.model}" is unpriced (cost.microUsd is null); usage was recorded but not costed.`,
+                message: `Model "${req.model}" is unpriced (cost.microUsd is null); usage was recorded but not costed.${reason}`,
               })
             }
           }
@@ -1614,6 +1624,92 @@ export function createClient(config: ClientConfig): Client {
         runtimeOpts?.signal,
         callAuth,
       )
+    },
+
+    async countTokens(
+      request: TokenCountRequest,
+      opts: GenerateOptions,
+    ): Promise<TokenCount> {
+      if (typeof request.provider !== 'string' || request.provider.length === 0) {
+        throw new LlmError(
+          'request.provider is required — model identity is (provider, model).',
+          { kind: 'bad_request', retryable: false },
+        )
+      }
+      const runtimeOpts = opts as GenerateOptions | undefined
+      const callAuth = requireAuth(runtimeOpts?.auth)
+
+      const descriptor = registry.resolve(request.provider, request.model)
+      if (descriptor === undefined) {
+        throw new LlmError(
+          `No registered model for provider "${request.provider}" model "${request.model}".`,
+          { kind: 'bad_request', retryable: false },
+        )
+      }
+      if (descriptor.provider !== request.provider) {
+        throw new LlmError(
+          `Registry returned a descriptor for provider "${descriptor.provider}" when provider "${request.provider}" (model "${request.model}") was requested — refusing to validate against a mismatched provider.`,
+          { kind: 'bad_request', retryable: false },
+        )
+      }
+
+      const adapter = routeFn(request.provider, request.model, adapters)
+      if (adapter.id !== request.provider) {
+        throw new LlmError(
+          `Adapter routing invariant violated: router returned adapter "${adapter.id}" ` +
+            `for request provider "${request.provider}".`,
+          { kind: 'bad_request', retryable: false },
+        )
+      }
+
+      if (adapter.countTokens === undefined) {
+        throw new LlmError(
+          `Provider "${request.provider}" does not support token counting.`,
+          { kind: 'bad_request', retryable: false },
+        )
+      }
+
+      const callId = ids.callId()
+      const startMs = clock.now()
+      safeLogger.info(
+        { callId, provider: request.provider, model: request.model },
+        'llm.count_tokens.start',
+      )
+
+      try {
+        const result = await adapter.countTokens(request, {
+          auth: callAuth,
+          logger: safeLogger,
+          ...(runtimeOpts?.signal !== undefined ? { signal: runtimeOpts.signal } : {}),
+        })
+        const latencyMs = clock.now() - startMs
+        safeLogger.info(
+          {
+            callId,
+            provider: request.provider,
+            model: request.model,
+            totalTokens: result.totalTokens,
+            latencyMs,
+          },
+          'llm.count_tokens.success',
+        )
+        return result
+      } catch (rawErr) {
+        const err = classifyError(rawErr)
+        attachCallContext(err, { callId })
+        const latencyMs = clock.now() - startMs
+        safeLogger.error(
+          {
+            callId,
+            provider: request.provider,
+            model: request.model,
+            errorKind: err.kind,
+            latencyMs,
+          },
+          'llm.count_tokens.error',
+        )
+        throw err
+      }
     },
   }
 }

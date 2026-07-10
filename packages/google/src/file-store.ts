@@ -261,9 +261,16 @@ export class GoogleFileStore {
       uri === undefined ||
       uri.length === 0
     ) {
+      // Provider fault, not caller fault: the SDK call succeeded but the
+      // payload is malformed — classify as a server error. NOT retryable:
+      // upload() is side-effecting and not idempotent — the provider may have
+      // already stored the file even though the payload carries no name/uri,
+      // so there is no handle to clean up and an automatic retry could
+      // orphan/duplicate provider-side resources.
       throw new LlmError('File upload response missing required fields (name or uri)', {
-        kind: 'bad_request',
+        kind: 'server',
         retryable: false,
+        provider: 'google',
       })
     }
 

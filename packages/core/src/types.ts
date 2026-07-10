@@ -161,32 +161,24 @@ export interface ReasoningIntent {
   includeThoughts?: boolean
 }
 
-export type GoogleSafetySetting = {
-  category: string
-  threshold: string
-}
+/**
+ * Open, augmentable map of per-provider option shapes.
+ *
+ * Empty by default — provider packages extend it via declaration merging:
+ * ```ts
+ * declare module '@gullabs/core' {
+ *   interface ProviderOptionsMap {
+ *     google?: GoogleProviderOptions
+ *   }
+ * }
+ * ```
+ * See `packages/google/src/types.ts` for the reference implementation. A key
+ * only appears here once its owning provider package is imported.
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- augmentable via declaration merging; intentionally empty by default
+export interface ProviderOptionsMap {}
 
-export type GoogleSearchTool = {
-  googleSearch: Record<string, never>
-}
-
-export type GoogleProviderOptions = {
-  /** Google cached content resource name. */
-  cachedContent?: string
-  /** Allowlisted Google safety settings. */
-  safetySettings?: GoogleSafetySetting[]
-  /** Exact Google tool declarations admitted by the selected model schema. */
-  tools?: GoogleSearchTool[]
-  /** Allowlisted Google transport options. */
-  httpOptions?: {
-    /** Per-request Google transport timeout in milliseconds. */
-    timeout?: number
-  }
-}
-
-export type ProviderOptions = {
-  google?: GoogleProviderOptions
-}
+export type ProviderOptions = ProviderOptionsMap
 
 /** Common generation knobs plus schema-admitted provider extension lanes. */
 export interface GenConfig {
@@ -203,19 +195,13 @@ export interface GenConfig {
   /** Reasoning / thinking intent; exact fields are selected by the model schema. */
   reasoning?: ReasoningIntent
   /**
-   * Explicit service tier. Omitted tier stays omitted and uses provider-default
-   * request behavior.
+   * Explicit service tier. Opaque provider-defined string — admitted values
+   * are constrained by each model's strict config schema (e.g. Gemini schemas
+   * admit `'flex' | 'standard'`; models without tiers never admit this key at
+   * all since their schemas are strict and reject unknown keys). Omitted tier
+   * stays omitted and uses provider-default request behavior.
    */
-  serviceTier?: 'flex' | 'standard'
-  /**
-   * Gemini Flex capacity fallback. Valid only when the same parsed config
-   * explicitly sets `serviceTier: 'flex'`.
-   *
-   * Defaults to `true` on explicit Flex calls: Gemini flex capacity errors are
-   * retried once by the provider adapter on standard tier. Set to `false` to
-   * surface the original flex capacity error.
-   */
-  flexFallback?: boolean
+  serviceTier?: string
   /**
    * Overall wall-clock ceiling for the logical call.
    *
@@ -338,12 +324,17 @@ export interface Usage {
 /**
  * Cost in micro-USD, frozen at write time.
  *
- * The `details` breakdown **must** satisfy:
+ * When the cost is **priced** (`microUsd` is a `number`), the `details`
+ * breakdown **must** satisfy:
  * ```
  * details.input + details.cached + details.output === microUsd
  * ```
  * Thinking tokens are billed at the output rate and are folded into
  * `details.output` — there is no separate `thinking` lane.
+ *
+ * When the cost is **unpriced** (`microUsd: null`), this invariant does not
+ * apply: `details` is zero-filled (`{ input: 0, cached: 0, output: 0 }`)
+ * rather than meaningful, so it trivially sums to `0`, not to `microUsd`.
  */
 export interface Cost {
   /**
@@ -377,6 +368,13 @@ export interface Cost {
     /** Cost of output tokens (thinking is billed here, not separately). */
     output: number
   }
+  /**
+   * Present only when `microUsd` is `null`. Names the specific reason pricing
+   * was refused (e.g. an unrecognized model, or an unrecognized service tier)
+   * — never a silent substitution. Consumers (e.g. the engine) surface this
+   * verbatim in the "unpriced" warning.
+   */
+  unpricedReason?: string
 }
 
 /**

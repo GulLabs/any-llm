@@ -21,10 +21,8 @@ export type {
   Message,
   ReasoningEffort,
   ReasoningIntent,
-  GoogleSafetySetting,
-  GoogleSearchTool,
-  GoogleProviderOptions,
   ProviderOptions,
+  ProviderOptionsMap,
   GenConfig,
   LlmRequest,
   FinishReason,
@@ -64,18 +62,21 @@ export type {
   EngineCtx,
   Handler,
   Middleware,
+  // Token counting
+  TokenCountRequest,
+  TokenCount,
 } from './ports.js'
 
 // Record
 export type { LlmCallRecord, BuildRecordInput } from './record.js'
 export { buildRecord, errorKindToStatus, normalizeUsage } from './record.js'
 
-// Pricing snapshot
-export { GEMINI_PRICING, pricingVersion } from './pricing.js'
+// Pricing shapes (generic — no provider pricing tables live in core)
 export type { ModelRates } from './pricing.js'
 
 // Cost computation
-export { computeCost, geminiPricingSource } from './cost.js'
+export { computeCost } from './cost.js'
+export type { CostRatesLookup } from './cost.js'
 
 // Engine
 export type {
@@ -86,14 +87,13 @@ export type {
 } from './engine.js'
 export { createClient } from './engine.js'
 
+// Provider plugin composition
+export type { ProviderPlugin } from './plugin.js'
+export { composeProviders } from './plugin.js'
+
 // Model registry
 export type { ModelDescriptor, ModelRegistry } from './registry.js'
-export {
-  createModelRegistry,
-  gemmaModelDescriptors,
-  geminiModelDescriptors,
-  defaultGeminiRegistry,
-} from './registry.js'
+export { createModelRegistry } from './registry.js'
 export { toConfigJsonSchema, zodToStandardSchema } from './model-config/index.js'
 
 // Call site

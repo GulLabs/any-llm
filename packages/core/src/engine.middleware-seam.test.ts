@@ -16,7 +16,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
   createClient,
-  geminiPricingSource,
+  createModelRegistry,
   LlmError,
   inMemoryRateLimiter,
 } from './index.js'
@@ -30,6 +30,8 @@ import type {
   Release,
 } from './index.js'
 import { FakeAdapter, FakeClock, FakeIds, RecordingSink } from '@gullabs/testing'
+import { makeTestPricingSource } from './test-pricing-source.js'
+import { makePermissiveTestDescriptor } from './test-model-descriptor.js'
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -52,7 +54,16 @@ function makeSuccessResult(overrides?: Partial<AdapterResult>): AdapterResult {
   }
 }
 
-const PRICING = geminiPricingSource()
+const PRICING = makeTestPricingSource(
+  {
+    'gemini-2.5-flash': { inputPerM: 300_000, cachedPerM: 30_000, outputPerM: 2_500_000 },
+  },
+  { standard: 1 },
+  'test-pricing-1',
+)
+const TEST_REGISTRY = createModelRegistry([
+  makePermissiveTestDescriptor({ model: 'gemini-2.5-flash', provider: 'google' }),
+])
 const TEST_AUTH = { apiKey: 'test-key' }
 
 // ---------------------------------------------------------------------------
@@ -105,6 +116,7 @@ describe('engine — middleware ordering (onion model)', () => {
     const client = createClient({
       adapters: [capturingAdapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       clock: new FakeClock(),
       ids: new FakeIds(),
       middleware: [mw1, mw2, mw3],
@@ -177,6 +189,7 @@ describe('engine — retry + rate-limiter integration', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       clock: new FakeClock(),
       ids,
       sink,

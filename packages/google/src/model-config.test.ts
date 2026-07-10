@@ -1,13 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
-import {
-  geminiModelDescriptors,
-  gemmaModelDescriptors,
-  toConfigJsonSchema,
-  zodToStandardSchema,
-} from './index.js'
-import type { JsonValue } from './index.js'
+import { toConfigJsonSchema, zodToStandardSchema } from '@gullabs/core'
+import type { JsonValue } from '@gullabs/core'
+import { geminiModelDescriptors, gemmaModelDescriptors } from './models.js'
 
 function findDescriptor(id: string) {
   return [...geminiModelDescriptors, ...gemmaModelDescriptors].find(
@@ -95,7 +91,7 @@ describe('strict built-in config schemas', () => {
     expect(result.success).toBe(false)
   })
 
-  it('rejects flexFallback unless serviceTier is explicitly flex', () => {
+  it('accepts providerOptions.google.flexFallback only in the flex branch', () => {
     expect(
       findDescriptor('gemini-2.5-flash').configSchema.safeParse({
         flexFallback: false,
@@ -105,14 +101,14 @@ describe('strict built-in config schemas', () => {
     expect(
       findDescriptor('gemini-2.5-flash').configSchema.safeParse({
         serviceTier: 'standard',
-        flexFallback: false,
+        providerOptions: { google: { flexFallback: false } },
       }).success,
     ).toBe(false)
 
     expect(
       findDescriptor('gemini-2.5-flash').configSchema.safeParse({
         serviceTier: 'flex',
-        flexFallback: false,
+        providerOptions: { google: { flexFallback: false } },
       }).success,
     ).toBe(true)
   })

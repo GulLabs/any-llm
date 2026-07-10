@@ -5,11 +5,15 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { codexCliAdapter, codexCliRegistry } from './index.js'
+import { codexCliAdapter, codexCliRegistry, codexCliProvider } from './index.js'
 
 describe('@gullabs/codex-cli package surface', () => {
   it('codexCliAdapter is a function', () => {
     expect(typeof codexCliAdapter).toBe('function')
+  })
+
+  it('codexCliProvider is a function', () => {
+    expect(typeof codexCliProvider).toBe('function')
   })
 
   it('codexCliRegistry.resolve("gpt-5.4-mini") is defined', () => {

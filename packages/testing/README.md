@@ -26,8 +26,8 @@ pnpm add -D @gullabs/testing @gullabs/core @gullabs/google
 ## Quick example — end-to-end with fake Gemini client
 
 ```ts
-import { createClient, geminiPricingSource, defineCallSite } from '@gullabs/core'
-import { geminiAdapter } from '@gullabs/google'
+import { createClient, composeProviders, defineCallSite } from '@gullabs/core'
+import { googleProvider } from '@gullabs/google'
 import {
   FakeClock,
   FakeIds,
@@ -49,8 +49,7 @@ const fakeClient = makeFakeGemini(
 
 const sink = new RecordingSink()
 const client = createClient({
-  adapters: [geminiAdapter({ client: fakeClient })],
-  pricingSources: { google: geminiPricingSource() },
+  ...composeProviders([googleProvider({ client: fakeClient })]),
   sink,
   clock: new FakeClock(0),
   ids: new FakeIds(),

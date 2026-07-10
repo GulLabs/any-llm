@@ -1,19 +1,19 @@
 import { z } from 'zod'
 
-export const Gemini3FlashPreviewConfigSchema = z
+export const Gemini35FlashConfigSchema = z
   .union([
     z.strictObject({
       maxOutputTokens: z.number().int().positive().optional().meta({
         title: 'Max Output Tokens',
-        description: 'Maximum output token cap for gemini-3-flash-preview.',
+        description: 'Maximum output token cap for gemini-3.5-flash.',
       }),
       stopSequences: z.array(z.string()).max(5).optional().meta({
         title: 'Stop Sequences',
-        description: 'Up to five stop sequences for gemini-3-flash-preview.',
+        description: 'Up to five stop sequences for gemini-3.5-flash.',
       }),
       serviceTier: z.literal('flex').meta({
         title: 'Service Tier',
-        description: 'Explicit flex tier for gemini-3-flash-preview.',
+        description: 'Explicit flex tier for gemini-3.5-flash.',
       }),
       reasoning: z
         .union([
@@ -21,7 +21,7 @@ export const Gemini3FlashPreviewConfigSchema = z
             effort: z.enum(['none', 'low', 'medium', 'high']).meta({
               title: 'Reasoning Effort',
               description:
-                'Reasoning effort for gemini-3-flash-preview; none maps to minimal thinking.',
+                'Reasoning effort for gemini-3.5-flash; none maps to minimal thinking.',
             }),
             includeThoughts: z.boolean().optional().meta({
               title: 'Include Thoughts',
@@ -38,16 +38,11 @@ export const Gemini3FlashPreviewConfigSchema = z
         .optional()
         .meta({
           title: 'Reasoning',
-          description: 'Gemini 3 Flash Preview thinkingLevel configuration.',
+          description: 'Gemini 3.5 Flash thinkingLevel configuration.',
         }),
       timeoutMs: z.number().int().positive().optional().meta({
         title: 'Timeout',
         description: 'Logical request timeout in milliseconds.',
-      }),
-      flexFallback: z.boolean().optional().meta({
-        title: 'Flex Fallback',
-        description:
-          'Allow provider fallback from flex when flex was explicitly selected.',
       }),
       providerOptions: z
         .strictObject({
@@ -88,7 +83,7 @@ export const Gemini3FlashPreviewConfigSchema = z
                 .optional()
                 .meta({
                   title: 'Tools',
-                  description: 'Allowlisted Google tools for gemini-3-flash-preview.',
+                  description: 'Allowlisted Google tools for gemini-3.5-flash.',
                 }),
               httpOptions: z
                 .strictObject({
@@ -102,32 +97,36 @@ export const Gemini3FlashPreviewConfigSchema = z
                   title: 'HTTP Options',
                   description: 'Allowlisted Google transport options.',
                 }),
+              flexFallback: z.boolean().optional().meta({
+                title: 'Flex Fallback',
+                description:
+                  'Allow provider fallback from flex when flex was explicitly selected.',
+              }),
             })
             .optional()
             .meta({
               title: 'Google Provider Options',
-              description:
-                'Allowlisted Google provider options for gemini-3-flash-preview.',
+              description: 'Allowlisted Google provider options for gemini-3.5-flash.',
             }),
         })
         .optional()
         .meta({
           title: 'Provider Options',
-          description: 'Provider-specific options accepted for gemini-3-flash-preview.',
+          description: 'Provider-specific options accepted for gemini-3.5-flash.',
         }),
     }),
     z.strictObject({
       maxOutputTokens: z.number().int().positive().optional().meta({
         title: 'Max Output Tokens',
-        description: 'Maximum output token cap for gemini-3-flash-preview.',
+        description: 'Maximum output token cap for gemini-3.5-flash.',
       }),
       stopSequences: z.array(z.string()).max(5).optional().meta({
         title: 'Stop Sequences',
-        description: 'Up to five stop sequences for gemini-3-flash-preview.',
+        description: 'Up to five stop sequences for gemini-3.5-flash.',
       }),
       serviceTier: z.literal('standard').optional().meta({
         title: 'Service Tier',
-        description: 'Standard tier or omitted tier for gemini-3-flash-preview.',
+        description: 'Standard tier or omitted tier for gemini-3.5-flash.',
       }),
       reasoning: z
         .union([
@@ -135,7 +134,7 @@ export const Gemini3FlashPreviewConfigSchema = z
             effort: z.enum(['none', 'low', 'medium', 'high']).meta({
               title: 'Reasoning Effort',
               description:
-                'Reasoning effort for gemini-3-flash-preview; none maps to minimal thinking.',
+                'Reasoning effort for gemini-3.5-flash; none maps to minimal thinking.',
             }),
             includeThoughts: z.boolean().optional().meta({
               title: 'Include Thoughts',
@@ -152,7 +151,7 @@ export const Gemini3FlashPreviewConfigSchema = z
         .optional()
         .meta({
           title: 'Reasoning',
-          description: 'Gemini 3 Flash Preview thinkingLevel configuration.',
+          description: 'Gemini 3.5 Flash thinkingLevel configuration.',
         }),
       timeoutMs: z.number().int().positive().optional().meta({
         title: 'Timeout',
@@ -197,7 +196,7 @@ export const Gemini3FlashPreviewConfigSchema = z
                 .optional()
                 .meta({
                   title: 'Tools',
-                  description: 'Allowlisted Google tools for gemini-3-flash-preview.',
+                  description: 'Allowlisted Google tools for gemini-3.5-flash.',
                 }),
               httpOptions: z
                 .strictObject({
@@ -215,20 +214,19 @@ export const Gemini3FlashPreviewConfigSchema = z
             .optional()
             .meta({
               title: 'Google Provider Options',
-              description:
-                'Allowlisted Google provider options for gemini-3-flash-preview.',
+              description: 'Allowlisted Google provider options for gemini-3.5-flash.',
             }),
         })
         .optional()
         .meta({
           title: 'Provider Options',
-          description: 'Provider-specific options accepted for gemini-3-flash-preview.',
+          description: 'Provider-specific options accepted for gemini-3.5-flash.',
         }),
     }),
   ])
   .meta({
-    title: 'Gemini3FlashPreviewConfig',
+    title: 'Gemini35FlashConfig',
     description:
-      'Strict generateContent config for model gemini-3-flash-preview. Level reasoning, fixed sampling, flex/standard tiers, structured output, grounding, priced.',
-    examples: [{ serviceTier: 'flex', reasoning: { effort: 'medium' } }],
+      'Strict generateContent config for model gemini-3.5-flash. Level reasoning, fixed sampling, flex/standard tiers, structured output, grounding, priced.',
+    examples: [{ serviceTier: 'flex', reasoning: { effort: 'high' } }],
   })

@@ -1,25 +1,88 @@
 /**
- * Tests for cost computation in @gullabs/core.
+ * Tests for computeCost — the generic, provider-agnostic cost engine in
+ * @gullabs/core.
+ *
+ * Core has zero pricing tables of its own: every test here supplies a small
+ * synthetic rates table + tier-factor map as explicit parameters, proving the
+ * seam is genuinely provider-neutral. Gemini-specific pricing assertions
+ * (real published rates, `geminiPricingSource`) live in
+ * `packages/google/src/pricing.test.ts`.
  *
  * Covers:
- * - The codex-mandated 250k/100k/5k/2k scenario (no double-counting).
+ * - The double-counting scenario (billable input = gross − cached).
  * - Long-context tier boundary at exactly 200k (base rate applies).
  * - cached === input (billable input = 0).
  * - cached > input (defensive clamp; no negative cost).
  * - Zero tokens everywhere.
  * - Unknown model → microUsd null + confidence estimated.
+ * - Unknown (but defined) tier → unpriced, never mapped to standard.
  * - Flat (non-tiered) model pricing.
  * - Property: sum(details) === microUsd for arbitrary usages on a known model.
  */
 
 import { describe, it, expect } from 'vitest'
-import { computeCost, geminiPricingSource } from './cost.js'
-import { pricingVersion, GEMINI_PRICING } from './pricing.js'
+import { computeCost } from './cost.js'
+import type { CostRatesLookup } from './cost.js'
+import type { ModelRates } from './pricing.js'
 import type { Usage } from './types.js'
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Synthetic fixtures — deliberately NOT real provider pricing data.
 // ---------------------------------------------------------------------------
+
+const TEST_TIER_FACTOR: Readonly<Record<string, number>> = Object.freeze({
+  standard: 1,
+  flex: 0.5,
+  batch: 0.5,
+})
+
+const TEST_PRICING_VERSION = 'test-pricing-2026-01-01'
+
+const TEST_RATES: Readonly<Record<string, ModelRates>> = Object.freeze({
+  'acme-large': {
+    inputPerM: 1_250_000,
+    cachedPerM: 125_000,
+    outputPerM: 10_000_000,
+    gt200k: {
+      inputPerM: 2_500_000,
+      cachedPerM: 250_000,
+      outputPerM: 15_000_000,
+    },
+  },
+  'acme-flat': {
+    inputPerM: 300_000,
+    cachedPerM: 30_000,
+    outputPerM: 2_500_000,
+  },
+})
+
+/** Exact-then-longest-prefix lookup against {@link TEST_RATES}. */
+const lookupTestRates: CostRatesLookup = (model: string): ModelRates | undefined => {
+  const exact = TEST_RATES[model]
+  if (exact !== undefined) return exact
+
+  let bestKey = ''
+  let bestRates: ModelRates | undefined
+  for (const key of Object.keys(TEST_RATES)) {
+    if (model.startsWith(key) && key.length > bestKey.length) {
+      bestKey = key
+      bestRates = TEST_RATES[key]
+    }
+  }
+  return bestRates
+}
+
+/** computeCost, pre-bound to the synthetic rates/tier-factor/version above. */
+function cost(model: string, usage: Usage, tier?: string) {
+  return computeCost(
+    model,
+    usage,
+    tier,
+    lookupTestRates,
+    TEST_TIER_FACTOR,
+    TEST_PRICING_VERSION,
+  )
+}
 
 /** Build a minimal Usage with the open details map and raw blob. */
 function makeUsage(fields: {
@@ -36,13 +99,9 @@ function makeUsage(fields: {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Helper: expected per-component micro-USD
-// ---------------------------------------------------------------------------
-
 /**
  * Reference computation used inside tests.
- * Mirrors the cost.ts algorithm so assertions remain tightly coupled to the spec.
+ * Mirrors the computeCost algorithm so assertions remain tightly coupled to the spec.
  */
 function expectedComponents(
   inputPerM: number,
@@ -64,12 +123,11 @@ function expectedComponents(
 }
 
 // ---------------------------------------------------------------------------
-// The codex-mandated high-risk test
+// Double-counting scenario
 // ---------------------------------------------------------------------------
 
-describe('computeCost — codex-mandated double-counting scenario', () => {
-  it('usage {input:250k, cached:100k, output:5k, thinking:2k} on gemini-2.5-pro', () => {
-    // GIVEN
+describe('computeCost — double-counting scenario', () => {
+  it('usage {input:250k, cached:100k, output:5k, thinking:2k} on a >200k-tiered model', () => {
     const usage = makeUsage({
       inputTokens: 250_000,
       cachedInputTokens: 100_000,
@@ -77,17 +135,9 @@ describe('computeCost — codex-mandated double-counting scenario', () => {
       thinkingTokens: 2_000,
     })
 
-    // WHEN
-    const cost = computeCost('gemini-2.5-pro', usage)
+    const result = cost('acme-large', usage)
 
-    // Assert: gross input (250k) > 200k → >200k tier MUST be chosen.
-    // We verify by using the gt200k rates from the snapshot.
-    const proRates = GEMINI_PRICING['gemini-2.5-pro']
-    expect(proRates).toBeDefined()
-    expect(proRates?.gt200k).toBeDefined()
-    const gt200k = proRates!.gt200k!
-
-    // Billable input = 250k − 100k = 150k (not 250k, not 100k alone).
+    const gt200k = TEST_RATES['acme-large']!.gt200k!
     const billableInput = 150_000
     const cached = 100_000
     const outputTokens = 5_000
@@ -101,48 +151,29 @@ describe('computeCost — codex-mandated double-counting scenario', () => {
       outputTokens,
     )
 
-    // microUsd must be a number (not null).
-    expect(cost.microUsd).not.toBeNull()
-    expect(typeof cost.microUsd).toBe('number')
+    expect(result.microUsd).not.toBeNull()
+    expect(result.microUsd).toBe(expected.microUsd)
+    expect(result.details.input).toBe(expected.inputCost)
+    expect(result.details.cached).toBe(expected.cachedCost)
+    expect(result.details.output).toBe(expected.outputCost)
 
-    // Assert tier: cost.microUsd must equal the >200k-tier calculation.
-    expect(cost.microUsd).toBe(expected.microUsd)
-
-    // Assert each component individually.
-    expect(cost.details.input).toBe(expected.inputCost) // 150k billed at >200k input rate
-    expect(cost.details.cached).toBe(expected.cachedCost) // 100k at cached rate
-    expect(cost.details.output).toBe(expected.outputCost) // 5k billed once at output rate
-
-    // Assert: thinkingTokens (2k) adds ZERO incremental cost.
-    // Verify: same result with thinkingTokens stripped out.
+    // thinkingTokens adds zero incremental cost — it's inside outputTokens already.
     const noThinkingUsage = makeUsage({
       inputTokens: 250_000,
       cachedInputTokens: 100_000,
-      outputTokens: 5_000, // same outputTokens; thinkingTokens is just metadata
+      outputTokens: 5_000,
     })
-    const costNoThinking = computeCost('gemini-2.5-pro', noThinkingUsage)
-    expect(cost.microUsd).toBe(costNoThinking.microUsd)
-    expect(cost.details).toEqual(costNoThinking.details)
+    const costNoThinking = cost('acme-large', noThinkingUsage)
+    expect(result.microUsd).toBe(costNoThinking.microUsd)
+    expect(result.details).toEqual(costNoThinking.details)
 
-    // Assert sum invariant — the critical constraint.
-    expect(cost.details.input + cost.details.cached + cost.details.output).toBe(
-      cost.microUsd,
+    // Sum invariant.
+    expect(result.details.input + result.details.cached + result.details.output).toBe(
+      result.microUsd,
     )
 
-    // Confirm >200k rates produce a higher cost than base rates would.
-    const baseExpected = expectedComponents(
-      proRates!.inputPerM,
-      proRates!.cachedPerM,
-      proRates!.outputPerM,
-      billableInput,
-      cached,
-      outputTokens,
-    )
-    expect(cost.microUsd as number).toBeGreaterThan(baseExpected.microUsd)
-
-    // Confidence and version.
-    expect(cost.confidence).toBe('exact')
-    expect(cost.pricingVersion).toBe(pricingVersion)
+    expect(result.confidence).toBe('exact')
+    expect(result.pricingVersion).toBe(TEST_PRICING_VERSION)
   })
 })
 
@@ -153,40 +184,34 @@ describe('computeCost — codex-mandated double-counting scenario', () => {
 describe('computeCost — tier boundary', () => {
   it('GROSS input exactly at 200k uses base rate (not >200k)', () => {
     const usage = makeUsage({ inputTokens: 200_000, outputTokens: 1_000 })
-    const cost = computeCost('gemini-2.5-pro', usage)
+    const result = cost('acme-large', usage)
 
-    const proRates = GEMINI_PRICING['gemini-2.5-pro']!
+    const rates = TEST_RATES['acme-large']!
     const expected = expectedComponents(
-      proRates.inputPerM,
-      proRates.cachedPerM,
-      proRates.outputPerM,
+      rates.inputPerM,
+      rates.cachedPerM,
+      rates.outputPerM,
       200_000,
       0,
       1_000,
     )
-    expect(cost.microUsd).toBe(expected.microUsd)
-    expect(cost.details.input + cost.details.cached + cost.details.output).toBe(
-      cost.microUsd,
-    )
+    expect(result.microUsd).toBe(expected.microUsd)
   })
 
   it('GROSS input one token above 200k triggers >200k tier', () => {
     const usage = makeUsage({ inputTokens: 200_001, outputTokens: 1_000 })
-    const cost = computeCost('gemini-2.5-pro', usage)
+    const result = cost('acme-large', usage)
 
-    const proRates = GEMINI_PRICING['gemini-2.5-pro']!
+    const rates = TEST_RATES['acme-large']!
     const expected = expectedComponents(
-      proRates.gt200k!.inputPerM,
-      proRates.gt200k!.cachedPerM,
-      proRates.gt200k!.outputPerM,
+      rates.gt200k!.inputPerM,
+      rates.gt200k!.cachedPerM,
+      rates.gt200k!.outputPerM,
       200_001,
       0,
       1_000,
     )
-    expect(cost.microUsd).toBe(expected.microUsd)
-    expect(cost.details.input + cost.details.cached + cost.details.output).toBe(
-      cost.microUsd,
-    )
+    expect(result.microUsd).toBe(expected.microUsd)
   })
 })
 
@@ -201,140 +226,133 @@ describe('computeCost — edge cases', () => {
       cachedInputTokens: 50_000,
       outputTokens: 2_000,
     })
-    const cost = computeCost('gemini-2.5-flash', usage)
+    const result = cost('acme-flat', usage)
 
-    expect(cost.microUsd).not.toBeNull()
-    expect(cost.details.input).toBe(0) // 0 billable input tokens
-    expect(cost.details.input + cost.details.cached + cost.details.output).toBe(
-      cost.microUsd,
+    expect(result.microUsd).not.toBeNull()
+    expect(result.details.input).toBe(0)
+    expect(result.details.input + result.details.cached + result.details.output).toBe(
+      result.microUsd,
     )
   })
 
   it('cached > input → clamps to zero billable input (no negative cost)', () => {
-    // Defensive: violates GROSS invariant but must not throw or produce negative cost.
     const usage = makeUsage({
       inputTokens: 1_000,
-      cachedInputTokens: 5_000, // more than input — invalid but handled defensively
+      cachedInputTokens: 5_000,
       outputTokens: 500,
     })
-    const cost = computeCost('gemini-2.5-flash', usage)
+    const result = cost('acme-flat', usage)
 
-    expect(cost.microUsd).not.toBeNull()
-    expect(cost.details.input).toBeGreaterThanOrEqual(0) // never negative
-    expect(cost.details.input + cost.details.cached + cost.details.output).toBe(
-      cost.microUsd,
-    )
+    expect(result.microUsd).not.toBeNull()
+    expect(result.details.input).toBeGreaterThanOrEqual(0)
   })
 
   it('zero tokens everywhere → microUsd = 0', () => {
     const usage = makeUsage({ inputTokens: 0, outputTokens: 0 })
-    const cost = computeCost('gemini-2.5-flash', usage)
+    const result = cost('acme-flat', usage)
 
-    expect(cost.microUsd).toBe(0)
-    expect(cost.details).toEqual({ input: 0, cached: 0, output: 0 })
-    expect(cost.details.input + cost.details.cached + cost.details.output).toBe(
-      cost.microUsd,
-    )
+    expect(result.microUsd).toBe(0)
+    expect(result.details).toEqual({ input: 0, cached: 0, output: 0 })
   })
 
   it('unknown model → microUsd null, confidence estimated, details zero', () => {
     const usage = makeUsage({ inputTokens: 10_000, outputTokens: 500 })
-    const cost = computeCost('some-future-model-xyz', usage)
+    const result = cost('some-future-model-xyz', usage)
 
-    expect(cost.microUsd).toBeNull()
-    expect(cost.confidence).toBe('estimated')
-    expect(cost.details).toEqual({ input: 0, cached: 0, output: 0 })
-    expect(cost.pricingVersion).toBe(pricingVersion)
+    expect(result.microUsd).toBeNull()
+    expect(result.confidence).toBe('estimated')
+    expect(result.details).toEqual({ input: 0, cached: 0, output: 0 })
+    expect(result.pricingVersion).toBe(TEST_PRICING_VERSION)
+    expect(result.unpricedReason).toContain('some-future-model-xyz')
   })
 
-  it('Gemma 4 models remain unpriced until exact Google token rates are added', () => {
-    const usage = makeUsage({ inputTokens: 10_000, outputTokens: 500 })
-    const cost = computeCost('gemma-4-31b-it', usage, 'standard')
-
-    expect(cost.microUsd).toBeNull()
-    expect(cost.usd).toBeNull()
-    expect(cost.confidence).toBe('estimated')
-    expect(cost.details).toEqual({ input: 0, cached: 0, output: 0 })
-  })
-
-  it('flat (non-tiered) model: gemini-2.5-flash-lite', () => {
+  it('flat (non-tiered) model', () => {
     const usage = makeUsage({
       inputTokens: 1_000_000,
       cachedInputTokens: 200_000,
       outputTokens: 50_000,
     })
-    const cost = computeCost('gemini-2.5-flash-lite', usage)
+    const result = cost('acme-flat', usage)
 
-    const liteRates = GEMINI_PRICING['gemini-2.5-flash-lite']!
-    // No gt200k tier exists on flash-lite.
-    expect(liteRates.gt200k).toBeUndefined()
+    const rates = TEST_RATES['acme-flat']!
+    expect(rates.gt200k).toBeUndefined()
 
     const expected = expectedComponents(
-      liteRates.inputPerM,
-      liteRates.cachedPerM,
-      liteRates.outputPerM,
-      800_000, // 1_000_000 − 200_000
+      rates.inputPerM,
+      rates.cachedPerM,
+      rates.outputPerM,
+      800_000,
       200_000,
       50_000,
     )
-
-    expect(cost.microUsd).toBe(expected.microUsd)
-    expect(cost.confidence).toBe('exact')
-    expect(cost.details.input + cost.details.cached + cost.details.output).toBe(
-      cost.microUsd,
-    )
+    expect(result.microUsd).toBe(expected.microUsd)
+    expect(result.confidence).toBe('exact')
   })
 
-  it('prefix match: gemini-2.5-pro-001 → matched to gemini-2.5-pro rates', () => {
+  it('unknown (but defined) service tier → unpriced, never silently mapped to standard', () => {
     const usage = makeUsage({ inputTokens: 10_000, outputTokens: 500 })
-    const costFull = computeCost('gemini-2.5-pro', usage)
-    const costVersioned = computeCost('gemini-2.5-pro-001', usage)
+    const result = cost('acme-large', usage, 'enterprise-super-tier')
+
+    expect(result.microUsd).toBeNull()
+    expect(result.usd).toBeNull()
+    expect(result.confidence).toBe('estimated')
+    expect(result.details).toEqual({ input: 0, cached: 0, output: 0 })
+    expect(result.unpricedReason).toContain('enterprise-super-tier')
+  })
+
+  it('undefined tier defaults to standard (factor 1) — not a mapping', () => {
+    const usage = makeUsage({ inputTokens: 10_000, outputTokens: 500 })
+    const costUndefined = cost('acme-large', usage)
+    const costStandard = cost('acme-large', usage, 'standard')
+
+    expect(costUndefined.microUsd).not.toBeNull()
+    expect(costUndefined.microUsd).toBe(costStandard.microUsd)
+    expect(costUndefined.confidence).toBe('exact')
+    expect(costUndefined.unpricedReason).toBeUndefined()
+  })
+
+  it('known tiers (standard/flex/batch) all price; flex/batch apply the tier-factor discount', () => {
+    const usage = makeUsage({ inputTokens: 10_000, outputTokens: 500 })
+
+    for (const tier of Object.keys(TEST_TIER_FACTOR)) {
+      const result = cost('acme-large', usage, tier)
+      expect(result.microUsd).not.toBeNull()
+      expect(result.confidence).toBe('exact')
+    }
+
+    const standard = cost('acme-large', usage, 'standard')
+    const flex = cost('acme-large', usage, 'flex')
+    const batch = cost('acme-large', usage, 'batch')
+    expect(flex.microUsd).toBe(Math.round((standard.microUsd as number) * 0.5))
+    expect(batch.microUsd).toBe(flex.microUsd)
+  })
+
+  it('prefix match: acme-large-001 → matched to acme-large rates', () => {
+    const usage = makeUsage({ inputTokens: 10_000, outputTokens: 500 })
+    const costFull = cost('acme-large', usage)
+    const costVersioned = cost('acme-large-001', usage)
 
     expect(costVersioned.microUsd).toBe(costFull.microUsd)
     expect(costVersioned.confidence).toBe('exact')
   })
-})
 
-// ---------------------------------------------------------------------------
-// geminiPricingSource() port implementation
-// ---------------------------------------------------------------------------
+  it('rates lookup is invoked exactly once per computeCost call', () => {
+    let calls = 0
+    const countingLookup: CostRatesLookup = (model) => {
+      calls++
+      return TEST_RATES[model]
+    }
+    const usage = makeUsage({ inputTokens: 10_000, outputTokens: 500 })
+    computeCost(
+      'acme-flat',
+      usage,
+      undefined,
+      countingLookup,
+      TEST_TIER_FACTOR,
+      TEST_PRICING_VERSION,
+    )
 
-describe('geminiPricingSource', () => {
-  it('implements PricingSource: version matches pricingVersion', () => {
-    const src = geminiPricingSource()
-    expect(src.version).toBe(pricingVersion)
-  })
-
-  it('price() delegates to computeCost correctly', () => {
-    const src = geminiPricingSource()
-    const usage = makeUsage({ inputTokens: 100_000, outputTokens: 5_000 })
-    const direct = computeCost('gemini-2.5-flash', usage)
-    const viaSrc = src.price('gemini-2.5-flash', usage)
-
-    expect(viaSrc).toEqual(direct)
-  })
-
-  it('price() handles unknown model consistently with computeCost', () => {
-    const src = geminiPricingSource()
-    const usage = makeUsage({ inputTokens: 1_000, outputTokens: 100 })
-    const cost = src.price('totally-unknown-model', usage, 'flex')
-
-    expect(cost.microUsd).toBeNull()
-    expect(cost.confidence).toBe('estimated')
-  })
-
-  it('hasModel uses the same exact and prefix matching as price()', () => {
-    const src = geminiPricingSource()
-
-    expect(src.hasModel('gemini-2.5-pro')).toBe(true)
-    expect(src.hasModel('gemini-2.5-pro-001')).toBe(true)
-    expect(src.hasModel('gemma-4-31b-it')).toBe(false)
-  })
-
-  it('listModels returns the exact pricing-table keys', () => {
-    const src = geminiPricingSource()
-
-    expect(src.listModels()).toEqual(Object.keys(GEMINI_PRICING))
+    expect(calls).toBe(1)
   })
 })
 
@@ -343,11 +361,7 @@ describe('geminiPricingSource', () => {
 // ---------------------------------------------------------------------------
 
 describe('property — sum(details) === microUsd', () => {
-  const KNOWN_MODELS = [
-    'gemini-2.5-pro',
-    'gemini-2.5-flash',
-    'gemini-2.5-flash-lite',
-  ] as const
+  const KNOWN_MODELS = ['acme-large', 'acme-flat'] as const
 
   // Deterministic pseudo-random number generator (LCG) so tests are
   // reproducible without importing a random library.
@@ -378,18 +392,17 @@ describe('property — sum(details) === microUsd', () => {
         ...(thinkingTokens > 0 ? { thinkingTokens } : {}),
       })
 
-      const cost = computeCost(model, usage)
+      const result = cost(model, usage)
 
-      if (cost.microUsd === null) {
-        // Unknown model shouldn't appear here, but skip gracefully.
+      if (result.microUsd === null) {
         continue
       }
 
-      const sum = cost.details.input + cost.details.cached + cost.details.output
-      if (sum !== cost.microUsd) {
+      const sum = result.details.input + result.details.cached + result.details.output
+      if (sum !== result.microUsd) {
         failures.push(
           `i=${i} model=${model} input=${inputTokens} cached=${cachedInputTokens} output=${outputTokens}` +
-            ` → sum=${sum} !== microUsd=${cost.microUsd}`,
+            ` → sum=${sum} !== microUsd=${result.microUsd}`,
         )
       }
     }
@@ -405,29 +418,27 @@ describe('property — sum(details) === microUsd', () => {
 describe('Cost.usd — derived convenience field', () => {
   it('usd === microUsd / 1e6 for a priced call (round-trip within 1 µUSD)', () => {
     const usage = makeUsage({ inputTokens: 100_000, outputTokens: 5_000 })
-    const cost = computeCost('gemini-2.5-flash', usage)
+    const result = cost('acme-flat', usage)
 
-    expect(cost.microUsd).not.toBeNull()
-    expect(cost.usd).not.toBeNull()
-    // Round-trip: converting usd back to µUSD must equal the canonical value.
-    expect(Math.round(cost.usd! * 1_000_000)).toBe(cost.microUsd)
+    expect(result.microUsd).not.toBeNull()
+    expect(result.usd).not.toBeNull()
+    expect(Math.round(result.usd! * 1_000_000)).toBe(result.microUsd)
   })
 
   it('usd === null when model is unpriced (microUsd null)', () => {
     const usage = makeUsage({ inputTokens: 10_000, outputTokens: 500 })
-    const cost = computeCost('some-future-model-xyz', usage)
+    const result = cost('some-future-model-xyz', usage)
 
-    expect(cost.microUsd).toBeNull()
-    expect(cost.usd).toBeNull()
+    expect(result.microUsd).toBeNull()
+    expect(result.usd).toBeNull()
   })
 
   it('usd is exact division without rounding (microUsd / 1_000_000)', () => {
-    // Use a model and token count that produces a non-round microUsd.
     const usage = makeUsage({ inputTokens: 1_000, outputTokens: 333 })
-    const cost = computeCost('gemini-2.5-flash', usage)
+    const result = cost('acme-flat', usage)
 
-    if (cost.microUsd !== null) {
-      expect(cost.usd).toBe(cost.microUsd / 1_000_000)
+    if (result.microUsd !== null) {
+      expect(result.usd).toBe(result.microUsd / 1_000_000)
     }
   })
 })

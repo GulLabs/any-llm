@@ -50,14 +50,13 @@ Set `operationId` once for a workflow operation and reuse it on every correlated
 ## Shared wiring
 
 ```ts
-import { createClient, geminiPricingSource, retryMiddleware } from '@gullabs/any-llm'
-import { geminiAdapter } from '@gullabs/google'
+import { createClient, composeProviders, retryMiddleware } from '@gullabs/any-llm'
+import { googleProvider } from '@gullabs/google'
 import { drizzleUsageSink, llmCalls } from '@gullabs/drizzle'
 
 function baseClientConfig(db: DbLike) {
   return {
-    adapters: [geminiAdapter()],
-    pricingSources: { google: geminiPricingSource() },
+    ...composeProviders([googleProvider()]),
     sink: drizzleUsageSink(db, llmCalls),
   }
 }

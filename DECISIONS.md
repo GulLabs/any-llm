@@ -975,3 +975,281 @@ Identity is the explicit pair (`provider`, `model`) — structured fields, never
   matching the persistence layer, which already stored provider and model as separate columns.
 - Breaking change to `LlmRequest`, `CallSite`, `ModelRegistry`, `ModelDescriptor`, and
   `ClientConfig` (pre-1.0, per the P0 no-legacy rule: no compatibility shims).
+
+---
+
+## ADR-023: Provider Packages as Self-Contained Plugins
+
+**Status:** Accepted
+
+**Context:**
+ADR-022 made model identity provider-qualified — the registry, router, and pricing lookup are
+keyed by `(provider, model)`. But the closed TypeScript surface had not caught up: `ProviderOptions`
+was a hand-maintained union in `@gullabs/core` (`type ProviderOptions = { google?:
+GoogleProviderOptions }`), so adding a provider's typed extension lane required editing a core file.
+Similarly, `GenConfig.serviceTier` was typed as Google's literal union (`'flex' | 'standard'`),
+`ModelDescriptor.capabilities.serviceTiers` was untyped/implicitly Google-shaped, and retry-tier
+pinning logic and an engine-level guard both encoded Google-specific assumptions directly in core.
+Core also still exported every Google/Gemini/Gemma-named symbol — pricing tables, model config
+schema factories, provider option types — even though ADR-022 had already made the registry and
+pricing provider-scoped in principle. The `@gullabs/claude-cli` and `@gullabs/codex-cli` dev-only
+CLI packages (see the "dev-only CLI providers" work referenced in the changelog) had already proven
+that a provider could ship as a self-contained package — adapter, descriptors, zero core edits —
+but core itself still had Google baked in, so the pattern was proven only for providers that needed
+no pricing or typed options. Consumer feedback after adopting the library (see ADR-024) surfaced
+more of the same friction: gaps only visible once a second/third provider or a real consumer tried
+to extend the library without touching `@gullabs/core`.
+
+**Decision:**
+Core ships zero provider knowledge. Every provider-specific concern is expressed as an extensible
+seam that provider packages fill in, never as a hardcoded case inside `@gullabs/core`.
+
+1. **`ProviderOptionsMap` module augmentation.** The old closed `ProviderOptions` union is gone.
+   `packages/core/src/types.ts` now declares `ProviderOptionsMap` as an empty, augmentable interface
+   (`export interface ProviderOptionsMap {}`) and `type ProviderOptions = ProviderOptionsMap`.
+   Provider packages extend it via TypeScript declaration merging:
+
+   ```ts
+   declare module '@gullabs/core' {
+     interface ProviderOptionsMap {
+       google?: GoogleProviderOptions
+     }
+   }
+   ```
+
+   (see `packages/google/src/types.ts`, whose module comment notes that importing anything from
+   `@gullabs/google` — including this type-only re-export — pulls in the augmentation, and that
+   `packages/google/src/index.ts` re-exports it unconditionally so the augmentation always loads).
+   **Runtime enforcement is unchanged.** The closed TS union never provided runtime safety — only
+   compile-time ergonomics. Runtime safety was, and remains, solely the per-model strict Zod schema
+   (ADR-010): a model whose schema does not admit a `providerOptions` key rejects it at parse time
+   regardless of what the TS type permits.
+
+2. **`ProviderPlugin` + `composeProviders`** (`packages/core/src/plugin.ts`). A `ProviderPlugin` is
+   `{ adapter: ProviderAdapter; modelDescriptors: ModelDescriptor[]; pricingSource?: PricingSource }`.
+   `composeProviders(plugins: ProviderPlugin[])` returns `{ adapters, modelRegistry, pricingSources }`
+   — the exact slice of `ClientConfig` a host spreads into `createClient`. It enforces one invariant
+   eagerly, at composition time, because it can no longer be recovered once descriptors are
+   flattened into a single registry: **every plugin's descriptors must be self-owned** — each
+   descriptor's `provider` field must equal that plugin's own `adapter.id`. Two plugins sharing the
+   same `adapter.id` throws `LlmError('Duplicate adapter id "..."', { kind: 'bad_request', retryable:
+false })`; a plugin contributing a descriptor whose `provider` does not match its own adapter id
+   throws `LlmError('Plugin "..." contributed a descriptor for model "..." with provider "..."
+(expected provider "...")', { kind: 'bad_request', retryable: false })`. An empty plugin list
+   composes to an empty config on purpose — `composeProviders` does not duplicate `createClient`'s
+   own "no adapters configured" check.
+
+3. **Provider-neutral service tiers.** `GenConfig.serviceTier` (`packages/core/src/types.ts`) is now
+   an opaque provider-defined `string`, not Google's literal union — admitted values are constrained
+   entirely by each model's strict config schema (fixed-sampling or tierless models simply omit the
+   key from their schema). `ModelDescriptor.capabilities.serviceTiers` (`packages/core/src/registry.ts`)
+   widened to `readonly string[]`. Retry-tier pinning (`revalidatePinnedServiceTier` in
+   `packages/core/src/retry.ts`) reads the pinned tier back against
+   `req.modelDescriptor?.capabilities?.serviceTiers` — fully descriptor-driven, no hardcoded Google
+   tier literals anywhere in the retry path. `flexFallback` moved out of core `GenConfig` entirely
+   into `providerOptions.google.flexFallback` (`packages/google/src/types.ts`) — it is Google-only
+   capacity-retry behavior and has no cross-provider meaning. The engine-level guard that used to
+   reject `flexFallback` when `serviceTier !== 'flex'` was deleted from
+   `packages/core/src/engine.ts` (it does not appear there any more; `git log` confirms it was
+   removed in the "provider-neutral service tiers" commit on this branch) — the per-model Gemini
+   config schema now enforces the same constraint at the correct layer (the provider's own schema),
+   not a Google-shaped `if` in the provider-agnostic engine.
+
+   Unknown/unrecognized tiers resolve to unpriced, not a mapped default — this is a
+   provider-general pattern, not a Google-specific quirk. `computeCost` in `packages/core/src/cost.ts`
+   treats a _defined_ tier absent from the caller-supplied `tierFactors` map as unpriced (with
+   `Cost.unpricedReason` naming the tier), never silently coerced to `standard`. `packages/xai/src/
+pricing.ts`'s `computeXaiCost` is a second, independent example of the same pattern: xAI has no
+   service-tier concept at all, so `computeXaiCost` treats _any_ defined `tier` as unpriced
+   (`unpricedReason: 'Unknown service tier "..."; xai has no service tiers, refusing to guess a
+pricing multiplier.'`) while `undefined` (no tier requested) prices normally — proving the
+   reject-don't-map tier convention is a core contract, not a Google special case.
+
+4. **All Google knowledge moved to `packages/google`.** `packages/core/src` exports zero Google/
+   Gemini/Gemma-named symbols (verified by grepping `packages/core/src` for `Google|Gemini|Gemma`:
+   every remaining hit is a code comment or a test asserting the _absence_ of these symbols from the
+   public surface, e.g. `packages/core/src/index.surface.test.ts`'s
+   `removedGoogleProviderOptions`/`removedGoogleSafetySetting`/`removedGoogleSearchTool` checks).
+   `computeCost` (`packages/core/src/cost.ts`) is a pure, parameterized function — it takes `rates`
+   (a `CostRatesLookup`), `tierFactors`, and `pricingVersion` as explicit arguments instead of
+   reading a module-level Gemini table. `packages/google/src/cost.ts`'s `geminiPricingSource` wraps
+   it, supplying `packages/google/src/pricing.ts`'s `GEMINI_PRICING` table, `TIER_FACTOR` map, and
+   `pricingVersion` as those parameters — core carries zero Gemini pricing knowledge. `ClientConfig.
+modelRegistry` (`packages/core/src/engine.ts`) is a required field (`modelRegistry: ModelRegistry`,
+   no `?`) — there is no default registry inside core for `createClient` to fall back to; every host
+   must supply one, typically via `composeProviders`.
+
+5. **Shared `assertRegistryInvariants`** (`packages/testing/src/registry-invariants.ts`). Extracted
+   from checks that used to live in `packages/core/src/registry.test.ts` and now live in each
+   provider package's own model tests. It asserts, given a provider's descriptor array: every
+   descriptor carries all three schema artifacts (`configSchema`/`configJsonSchema`/`validateConfig`);
+   `configJsonSchema` is not stale relative to `configSchema` (deep-equal against a fresh
+   `toConfigJsonSchema(descriptor.configSchema)`); the registered model-id list matches a pinned,
+   explicit `expectedModelIds` list exactly and in order (guards against silently adding, removing,
+   or reordering models); when a `pricingSource` is supplied, every model is either priced
+   (`pricingSource.hasModel`) or present in an explicit `explicitlyUnpriced` set (never silently
+   unpriced by omission); and when fixture-list options (`adapterFixtureModelIds`,
+   `negativeContractFixtureModelIds`) are supplied, every model appears in them. It is
+   framework-agnostic by design — it throws plain `node:assert/strict` `AssertionError`s rather than
+   depending on vitest, so it runs unmodified inside any test runner's `it(...)` block, from any
+   provider package.
+
+6. **Driver: zero core edits per provider onboarding.** A new provider ships as one self-contained
+   package: adapter, model descriptors, strict per-model Zod schemas, a pricing source (if priced),
+   and typed provider options — registered into a host's `ClientConfig` via one `xyzProvider()`
+   factory composed with `composeProviders`. The `@gullabs/claude-cli` and `@gullabs/codex-cli`
+   dev-only CLI packages already demonstrated this shape (self-contained descriptors, zero core
+   edits) for unpriced providers; this ADR formalizes the pattern and extends it to priced providers
+   and typed provider-option extension lanes, closing the last category of provider onboarding that
+   still required editing `@gullabs/core`.
+
+**References:** ADR-001 (ports & adapters — the architectural precedent for pluggable provider
+implementations behind narrow interfaces); ADR-006 (registry); ADR-010 (model-bound, schema-described
+config — the runtime enforcement layer this ADR leans on now that the TS type is open); ADR-013
+(typed provider extensions — the precedent `flexFallback` follows into its new home in
+`providerOptions.google`); ADR-019 (auth is per-call, not ambient — an earlier instance of the same
+lesson: a closed, convenience-shaped surface in core was never the actual safety net); ADR-022
+(provider-qualified identity — this ADR builds directly on it: the registry and pricing sources were
+already provider-scoped in principle from ADR-022, this ADR finishes the job by making the
+_packaging_ — types, composition, and core's own export surface — provider-scoped too).
+
+**Consequences:**
+
+- **Breaking, pre-1.0, no compatibility shims (per the P0 no-legacy rule):**
+  - `ProviderOptions` as a closed union is removed; it is now `ProviderOptionsMap`, an empty
+    interface each provider package augments via declaration merging.
+  - `GenConfig.serviceTier` widens from Google's `'flex' | 'standard'` literal union to `string`.
+    Downstream narrowings widen accordingly — `packages/drizzle/src/schema.ts`'s `service_tier`
+    column was already `text('service_tier')` (never a narrower SQL enum type), so no drizzle schema
+    migration is needed; it was provider-neutral at the SQL layer from the start.
+  - `GenConfig.flexFallback` is removed from core; it now lives only at
+    `providerOptions.google.flexFallback`.
+  - The engine-level guard that rejected `flexFallback` outside `serviceTier: 'flex'` is removed from
+    `packages/core/src/engine.ts`; the Gemini per-model schema enforces the equivalent constraint.
+  - `packages/core/src` exports zero Google-named symbols. Moved to `packages/google`: `Google
+ProviderOptions`, `GoogleSafetySetting`, `GoogleSearchTool`, the Gemini/Gemma model descriptors,
+    the per-model config schemas, `GEMINI_PRICING`, `TIER_FACTOR`, `geminiPricingSource`, and the
+    default Gemini/Gemma model registry.
+  - `ClientConfig.modelRegistry` is now a required field; there is no core-side default registry.
+  - New core exports: `ProviderPlugin`, `composeProviders`, `ProviderOptionsMap`.
+- `@gullabs/any-llm`'s facade (`packages/any-llm/src/index.ts`) re-exports both `@gullabs/core` and
+  `@gullabs/google` (`export * from '@gullabs/core'; export * from '@gullabs/google'`), so consumers
+  of the facade package still see `googleProvider`, `geminiPricingSource`, and every other
+  Google-named symbol at the same import path as before — only the _home package_ of that surface
+  changed (from `@gullabs/core` to `@gullabs/google`), not its availability through the facade.
+- Adding a new provider (a real API provider, not just a dev-only CLI shim) with pricing and typed
+  options no longer requires any `@gullabs/core` edit — the plugin composes in via `ProviderPlugin`
+  and the `declare module '@gullabs/core'` augmentation.
+- Hosts that previously imported Google types from `@gullabs/core` must import them from
+  `@gullabs/google` (or `@gullabs/any-llm`, which re-exports both) instead.
+
+---
+
+## ADR-024: `countTokens`, Cache Pre-Flight, and `geminiContentToMessages` — Closing the Adoption Gap
+
+**Status:** Accepted
+
+**Context:**
+This ADR is driven by consumer feedback surfaced after adopting the library — gaps that were only
+visible once real callers tried to use `@gullabs/google`'s stateful helpers (ADR-011) and migrate
+existing hand-authored `@google/genai` prompt-building code onto any-llm's normalized shape. Three
+gaps were reported: (1) there was no library-native way to count tokens for a prospective request
+without paying for a full generation call — callers who wanted to estimate cost or check a payload
+against Gemini's context-cache minimum-token threshold had to hand-roll a raw SDK call; (2)
+`GoogleCacheStore.create()`/`getOrCreate()` (ADR-011) would dispatch a `caches.create` call to Gemini
+even when the payload was obviously too small, only to have Gemini reject it — wasting a network
+round-trip on a failure that was knowable client-side (Gemini 3.x's context-cache `minTokens` is
+2048, encoded per-model on `ModelDescriptor.capabilities.caching.minTokens` in
+`packages/google/src/models.ts`); and (3) consumers migrating existing `@google/genai`-based prompt
+code onto any-llm had no supported conversion path from raw SDK `Content[]`/`Part[]` shapes into
+any-llm's normalized `{ system?, messages }` request shape, and were tempted to hand-rewrite prompts
+by hand (a lossy, error-prone process) instead.
+
+Since core ships zero provider knowledge (ADR-023), all three additions had to live in
+`packages/google` — this ADR is entirely new google-package surface plus one small, optional
+core port.
+
+**Decision:**
+
+1. **`countTokens` port.** `ProviderAdapter` (`packages/core/src/ports.ts`) gains an OPTIONAL
+   `countTokens?(req: TokenCountRequest, ctx: AdapterCtx): Promise<TokenCount>` method. `TokenCountRequest`
+   is deliberately narrower than `ResolvedRequest`: just `provider`, `model`, optional `system`, and
+   `messages` — no `config`, no `outputJsonSchema`, no `modelDescriptor`, because token counting only
+   needs the text-bearing payload plus model identity. `TokenCount` is `{ totalTokens: number;
+details?: Record<string, number>; raw: JsonValue }`. The engine (`packages/core/src/engine.ts`)
+   exposes `Client.countTokens(request, opts)`, mirroring `generate()`'s auth/signal/registry/routing
+   semantics — it resolves the descriptor, routes to the adapter, asserts the router-returned
+   adapter's id matches the request's provider — but with **no cost computation and no sink/record
+   emission**: token counting is a dry-run query, not a billed, auditable call, so it never touches
+   `PricingSource` or `UsageSink`. If the routed adapter does not implement `countTokens`, the engine
+   throws `LlmError('Provider "..." does not support token counting.', { kind: 'bad_request',
+retryable: false })`. Implemented for Google via `@google/genai`'s `models.countTokens`
+   (`packages/google/src/adapter.ts`), sharing `mapMessagesToGeminiContents` with `run()` so both
+   code paths map messages identically — a divergence here would make a token count unrepresentative
+   of the actual generation call it is meant to estimate.
+
+2. **`GoogleCacheStore` token pre-flight.** `GoogleCacheStoreOptions.preflight` (`packages/google/src/
+cache-store.ts`) is an optional `{ minTokens: number; countTokens: (payload) => Promise<number> }`
+   gate. When set, `create()` counts tokens for the exact token-bearing payload of the impending
+   create (`model` + `contents` + `systemInstruction` only — `ttl` and `displayName` are excluded, as
+   they carry no tokens) and throws `LlmError('GoogleCacheStore preflight: counted N token(s), below
+the configured minimum of M...', { kind: 'bad_request', retryable: false })` before any SDK call
+   if the count is below `minTokens`. Because `create()` is the single method both the direct path and
+   the coalesced `getOrCreate()` path delegate to, the gate is enforced exactly once, with no separate
+   "in-flight" gap where the coalesced path could bypass it. The `preflight.countTokens` callback
+   receives genai-native `Content[]`/`Content | string`, not the library's `Message[]` — this is an
+   explicit seam, by design: hosts using genai-native content directly can wire this straight to a raw
+   `client.models.countTokens` call, while hosts building from `Message[]` are expected to use
+   `@gullabs/core`'s new `Client.countTokens` (item 1) rather than expect this callback to convert for
+   them. This prevents callers from discovering a cache-creation failure only after paying for a
+   failed create-cache round-trip that Gemini would reject anyway below its minimum token threshold
+   (2048 for the Gemini 3.x models registered in `packages/google/src/models.ts`).
+
+3. **`geminiContentToMessages` migration utility** (`packages/google/src/content-to-messages.ts`).
+   Converts hand-authored `@google/genai` `Content[]`/`Part[]` prompts (plus an optional
+   `systemInstruction`) into any-llm's normalized `{ system?, messages }` shape, for consumers
+   migrating existing raw-SDK prompt-building code onto any-llm. Uses `@google/genai` types only (no
+   runtime SDK dependency — it is a peer dep, imported with `import type`). Reject-don't-map
+   throughout, per the repo's established convention (ADR-009/ADR-010's schema-boundary discipline
+   applied here to a conversion boundary instead of a config boundary): a missing or unrecognized
+   `Content.role` throws (only `'user'` and `'model'` are recognized — any-llm never infers a missing
+   role); `system` is derived ONLY from the explicit `systemInstruction` input, never inferred from
+   `contents`; and the part converter does an exhaustive own-defined-key scan per `Part`, so every
+   part kind or sub-field it cannot losslessly represent — function calling (`functionCall`,
+   `functionResponse`), executable code (`executableCode`, `codeExecutionResult`), tool-result shapes,
+   thought-flagged parts, `thoughtSignature`, `videoMetadata`, `partMetadata`,
+   `inlineData`/`fileData.displayName`, `mediaResolution.numTokens`, and any `mediaResolution.level`
+   value outside `MEDIA_RESOLUTION_LOW`/`MEDIUM`/`HIGH` — throws `LlmError('bad_request')` naming the
+   offending field or key instead of silently dropping it.
+
+4. **Provider-payload error-taxonomy correction.** `packages/google/src/cache-store.ts`'s `create()`
+   and `packages/google/src/file-store.ts`'s `upload()` previously classified a malformed-provider-
+   payload response (the SDK call succeeded, but the response is missing a field the store's contract
+   requires — `name` for a cache, `name`/`uri` for a file) as `kind: 'bad_request'`. Per the
+   `LlmErrorKind` taxonomy in `packages/core/src/errors.ts` (`'bad_request'` = "the request itself is
+   malformed"; `'server'` = "transient provider error"), a malformed _response_ from a _successful_
+   provider call is a provider fault, not a caller fault — the caller's request was accepted; the
+   provider's own reply is broken. Both call sites are reclassified to `LlmError('...', { kind:
+'server', retryable: false, provider: 'google' })`. Unlike the read-only `adapter.countTokens`
+   path (item 1), which can safely retry because it has no side effect to duplicate, these two paths
+   stay `retryable: false` deliberately: `create()` and `upload()` are side-effecting and not
+   idempotent — the provider may have already created the cache or stored the file even though the
+   payload it returned carries no handle, so an automatic retry could orphan or duplicate
+   provider-side resources instead of recovering cleanly.
+
+**References:** ADR-023 (this ADR builds directly on the plugin architecture — `@gullabs/google` is
+where all of this new surface had to live, since `@gullabs/core` ships zero provider knowledge and
+none of these three additions are cross-provider concepts).
+
+**Consequences:**
+
+- **Breaking, pre-1.0, no compatibility shim (per the P0 no-legacy rule):** `GeminiClientLike.
+countTokens` (`packages/google/src/client.ts`) is a REQUIRED addition to the structural client
+  interface — any test fake or injected client implementing `GeminiClientLike` must now implement
+  `countTokens` alongside `generateContent`; there is no default/optional fallback.
+- New public core surface: `Client.countTokens`, `TokenCountRequest`, `TokenCount`.
+- New public google surface: `geminiContentToMessages`, and the `preflight` option on
+  `GoogleCacheStoreOptions`.
+- Cache-store and file-store callers that previously branched on `kind === 'bad_request'` for a
+  malformed-payload failure must branch on `kind === 'server'` instead; the `retryable: false`
+  behavior is unchanged.

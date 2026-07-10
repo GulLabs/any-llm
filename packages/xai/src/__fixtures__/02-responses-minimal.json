@@ -1,0 +1,96 @@
+{
+  "status": 200,
+  "headers": {
+    "x-ratelimit-limit-requests": "41000",
+    "x-ratelimit-limit-tokens": "150000000",
+    "x-ratelimit-remaining-requests": "41000",
+    "x-ratelimit-remaining-tokens": "150000000",
+    "x-request-id": "dc98d031-6185-9dc1-b827-f16e5875d2e7"
+  },
+  "body": {
+    "created_at": 1783643291,
+    "completed_at": 1783643291,
+    "id": "dc98d031-6185-9dc1-b827-f16e5875d2e7",
+    "max_output_tokens": 200,
+    "model": "grok-4.5",
+    "object": "response",
+    "output": [
+      {
+        "id": "rs_dc98d031-6185-9dc1-b827-f16e5875d2e7",
+        "summary": [
+          {
+            "text": "The user said: \"Say hi\"\n",
+            "type": "summary_text"
+          }
+        ],
+        "type": "reasoning",
+        "status": "completed"
+      },
+      {
+        "content": [
+          {
+            "type": "output_text",
+            "text": "Hi! 👋 How's it going?",
+            "logprobs": [],
+            "annotations": []
+          }
+        ],
+        "id": "msg_dc98d031-6185-9dc1-b827-f16e5875d2e7",
+        "role": "assistant",
+        "type": "message",
+        "status": "completed"
+      }
+    ],
+    "parallel_tool_calls": true,
+    "previous_response_id": null,
+    "reasoning": {
+      "effort": "high",
+      "summary": "detailed"
+    },
+    "temperature": 0.7,
+    "text": {
+      "format": {
+        "type": "text"
+      }
+    },
+    "tool_choice": "auto",
+    "tools": [],
+    "top_p": 0.95,
+    "usage": {
+      "input_tokens": 208,
+      "input_tokens_details": {
+        "cached_tokens": 128
+      },
+      "output_tokens": 42,
+      "output_tokens_details": {
+        "reasoning_tokens": 33
+      },
+      "total_tokens": 250,
+      "num_sources_used": 0,
+      "num_server_side_tools_used": 0,
+      "cost_in_usd_ticks": 4760000,
+      "context_details": {
+        "input_tokens": 208,
+        "output_tokens": 42
+      }
+    },
+    "user": null,
+    "incomplete_details": null,
+    "status": "completed",
+    "store": false,
+    "metadata": {
+      "system_fingerprint": "fp_a39489019fa99b6e"
+    },
+    "background": false,
+    "service_tier": "default",
+    "truncation": "disabled",
+    "top_logprobs": 0,
+    "presence_penalty": 0,
+    "frequency_penalty": 0,
+    "prompt_cache_key": null,
+    "max_tool_calls": null,
+    "safety_identifier": null,
+    "error": null,
+    "instructions": null
+  }
+}

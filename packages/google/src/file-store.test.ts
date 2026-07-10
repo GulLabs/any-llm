@@ -553,7 +553,7 @@ describe('GoogleFileStore', () => {
   })
 
   // NEW: upload validation — missing/empty name and uri variants
-  it('throws LlmError bad_request when upload response name is undefined', async () => {
+  it('throws LlmError server when upload response name is undefined', async () => {
     const client = makeClient({
       upload: vi.fn().mockResolvedValue({
         uri: 'https://example.com/files/abc123',
@@ -564,15 +564,16 @@ describe('GoogleFileStore', () => {
     const store = new GoogleFileStore({ auth: fakeAuth, client, sleep: fastSleep })
     await expect(store.upload(new Uint8Array([1]), 'image/png')).rejects.toMatchObject({
       message: 'File upload response missing required fields (name or uri)',
-      kind: 'bad_request',
+      kind: 'server',
       retryable: false,
+      provider: 'google',
     })
     await expect(store.upload(new Uint8Array([1]), 'image/png')).rejects.toBeInstanceOf(
       LlmError,
     )
   })
 
-  it('throws LlmError bad_request when upload response name is an empty string', async () => {
+  it('throws LlmError server when upload response name is an empty string', async () => {
     const client = makeClient({
       upload: vi.fn().mockResolvedValue({
         name: '',
@@ -584,12 +585,13 @@ describe('GoogleFileStore', () => {
     const store = new GoogleFileStore({ auth: fakeAuth, client, sleep: fastSleep })
     await expect(store.upload(new Uint8Array([1]), 'image/png')).rejects.toMatchObject({
       message: 'File upload response missing required fields (name or uri)',
-      kind: 'bad_request',
+      kind: 'server',
       retryable: false,
+      provider: 'google',
     })
   })
 
-  it('throws LlmError bad_request when upload response uri is undefined', async () => {
+  it('throws LlmError server when upload response uri is undefined', async () => {
     const client = makeClient({
       upload: vi.fn().mockResolvedValue({
         name: 'files/abc123',
@@ -600,12 +602,13 @@ describe('GoogleFileStore', () => {
     const store = new GoogleFileStore({ auth: fakeAuth, client, sleep: fastSleep })
     await expect(store.upload(new Uint8Array([1]), 'image/png')).rejects.toMatchObject({
       message: 'File upload response missing required fields (name or uri)',
-      kind: 'bad_request',
+      kind: 'server',
       retryable: false,
+      provider: 'google',
     })
   })
 
-  it('throws LlmError bad_request when upload response uri is an empty string', async () => {
+  it('throws LlmError server when upload response uri is an empty string', async () => {
     const client = makeClient({
       upload: vi.fn().mockResolvedValue({
         name: 'files/abc123',
@@ -617,8 +620,9 @@ describe('GoogleFileStore', () => {
     const store = new GoogleFileStore({ auth: fakeAuth, client, sleep: fastSleep })
     await expect(store.upload(new Uint8Array([1]), 'image/png')).rejects.toMatchObject({
       message: 'File upload response missing required fields (name or uri)',
-      kind: 'bad_request',
+      kind: 'server',
       retryable: false,
+      provider: 'google',
     })
   })
 

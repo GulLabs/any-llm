@@ -9,7 +9,12 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { claudeCliAdapter, claudeCliRegistry, buildClaudeCliRunner } from './index.js'
+import {
+  claudeCliAdapter,
+  claudeCliRegistry,
+  buildClaudeCliRunner,
+  claudeCliProvider,
+} from './index.js'
 
 describe('@gullabs/claude-cli package surface', () => {
   it('claudeCliAdapter is a function', () => {
@@ -18,6 +23,10 @@ describe('@gullabs/claude-cli package surface', () => {
 
   it('buildClaudeCliRunner is a function', () => {
     expect(typeof buildClaudeCliRunner).toBe('function')
+  })
+
+  it('claudeCliProvider is a function', () => {
+    expect(typeof claudeCliProvider).toBe('function')
   })
 
   it('claudeCliRegistry.resolve returns a descriptor for a known model id', () => {

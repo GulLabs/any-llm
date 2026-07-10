@@ -1,0 +1,59 @@
+{
+  "name": "@gullabs/xai",
+  "version": "0.1.0",
+  "description": "xAI Grok provider adapter for any-llm — Responses API, reasoning, structured output, vision.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gullabs/any-llm.git",
+    "directory": "packages/xai"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup"
+  },
+  "dependencies": {
+    "@gullabs/core": "workspace:*",
+    "zod": "^4.4.3"
+  },
+  "peerDependencies": {
+    "openai": "^6"
+  },
+  "devDependencies": {
+    "openai": "^6",
+    "@gullabs/testing": "workspace:*"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "sideEffects": false,
+  "keywords": [
+    "llm",
+    "xai",
+    "grok",
+    "ai",
+    "tokens",
+    "cost",
+    "usage",
+    "observability",
+    "typescript"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://github.com/gullabs/any-llm/tree/main/packages/xai#readme",
+  "bugs": "https://github.com/gullabs/any-llm/issues"
+}

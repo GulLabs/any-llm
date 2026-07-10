@@ -7,16 +7,20 @@
 
 ## v1 goals (the entire scope)
 
-1. Call **Google-hosted models** through `@google/genai` (Gemini with Flex where supported; Gemma
-   without Gemini-only Flex assumptions).
+1. Call **provider-hosted models** through self-contained provider packages composed via
+   `composeProviders` (ADR-023): `@gullabs/google` over `@google/genai` (Gemini with Flex where
+   supported; Gemma without Gemini-only Flex assumptions), `@gullabs/xai` over the `openai`
+   SDK's Responses API (grok-4.5), plus the dev-only CLI providers (`@gullabs/claude-cli`,
+   `@gullabs/codex-cli`). The core engine ships zero provider knowledge.
 2. **Record token usage** (input / output / cached / **thinking**).
 3. Capture **thinking** — thinking _token usage_ always; the provider-returned _thought-summary
    text_ when `reasoning.includeThoughts` is set — plus **postmortems** (per-call diagnostics on
    success and failure).
-4. **Track cost** (public Gemini pricing → micro-USD, frozen per record).
+4. **Track cost** (provider-scoped pricing snapshots → micro-USD, frozen per record; each
+   provider package ships its own `PricingSource`).
 
-Everything else from DESIGN.md is OUT of v1 (no other provider adapters, no streaming, no tools).
-Seams are present; machinery is intentionally small.
+Everything else from DESIGN.md is OUT of scope for now (no streaming, no tools/function-calling
+seam). Seams are present; machinery is intentionally small.
 
 ## Non-negotiable invariants
 
@@ -28,7 +32,8 @@ Seams are present; machinery is intentionally small.
 - **Cost is frozen at write time:** integer micro-USD + `pricingVersion` on every record.
 - **Side effects fail-open; the call fails-closed.** A broken sink/telemetry/cost never fails
   the LLM call; a broken call throws a typed `LlmError`.
-- **No real network in tests.** The Gemini SDK is mocked; we stress the surface, not Google.
+- **No real network in tests.** Provider SDKs are mocked via structural fakes
+  (`makeFakeGemini`, `makeFakeXai`); we stress the surface, not the providers.
 
 ---
 
@@ -36,11 +41,20 @@ Seams are present; machinery is intentionally small.
 
 ```
 packages/
-  core/      @gullabs/core      # types, ports, engine, callsite, cost, errors, record  (no provider deps)
-  google/    @gullabs/google    # GeminiAdapter over @google/genai  (peerDep @google/genai)
-  drizzle/   @gullabs/drizzle   # reference llm_calls schema + drizzleUsageSink  (peerDep drizzle-orm)
-  testing/   @gullabs/testing   # FakeClock, FakeIds, RecordingSink, fakeGemini, scenario fixtures
+  core/       @gullabs/core       # types, ports, engine, callsite, computeCost, errors, record  (no provider deps)
+  google/     @gullabs/google     # googleProvider: geminiAdapter over @google/genai + model configs + pricing  (peerDep @google/genai)
+  xai/        @gullabs/xai        # xaiProvider: grok-4.5 over the openai SDK's Responses API  (peerDep openai)
+  claude-cli/ @gullabs/claude-cli # dev-only provider over a local claude CLI session (never production)
+  codex-cli/  @gullabs/codex-cli  # dev-only provider over a local codex CLI session (never production)
+  any-llm/    @gullabs/any-llm    # batteries-included facade: re-exports core + google
+  drizzle/    @gullabs/drizzle    # reference llm_calls schema + drizzleUsageSink  (peerDep drizzle-orm)
+  quota/      @gullabs/quota      # provider quota middleware
+  testing/    @gullabs/testing    # FakeClock, FakeIds, RecordingSink, makeFakeGemini, makeFakeXai, assertRegistryInvariants
 ```
+
+Each provider package is a self-contained plugin (ADR-023): adapter + model descriptors +
+strict per-model Zod config schemas + pricing source + typed provider options, wired via
+`composeProviders([...])` with zero `@gullabs/core` edits.
 
 Tooling: TypeScript (strict, `exactOptionalPropertyTypes`), **vitest**, **tsup** (ESM+CJS+d.ts),
 Node ≥20. Provider SDKs are **peerDependencies** (a host that only uses Gemini never pulls others).
@@ -61,13 +75,20 @@ export interface LlmRequest {
   provider: string // explicit routing key; must match a configured adapter id
   model: string // bare provider-native string; identity is the (provider, model) pair
   system?: string
-  messages: Message[] // v1: text parts only (seam: image/file/audio parts later)
+  messages: Message[] // multimodal parts; adapters reject media kinds/constraints they can't honor
   output?: { jsonSchema: JsonValue } // forward-only hint; adapter forwards it, engine never validates
   config?: GenConfig
   metadata?: CallMetadata // host anchors: tenantId, runId, callSiteId, traceId…
 }
-export type Message = { role: 'user' | 'assistant'; parts: TextPart[] }
-export type TextPart = { kind: 'text'; text: string } // union kept open for future part kinds
+export type Message = { role: 'user' | 'assistant'; parts: Part[] }
+export type Part = TextPart | InlineMediaPart | FileUriPart // reject-don't-map per adapter
+export type TextPart = { kind: 'text'; text: string }
+export type InlineMediaPart = {
+  kind: 'inline-media'
+  mimeType: string
+  data: string /* base64 */
+}
+export type FileUriPart = { kind: 'file-uri'; mimeType: string; uri: string } // provider-hosted or public URL
 
 // ---- config (typed common knobs + quarantined raw passthrough) ----
 export interface GenConfig {
@@ -77,9 +98,9 @@ export interface GenConfig {
   maxOutputTokens?: number
   stopSequences?: string[]
   reasoning?: ReasoningIntent // best-effort intent; adapter maps + may warn (not a guarantee)
-  serviceTier?: 'flex' | 'standard' // v1 default 'flex'
+  serviceTier?: string // opaque provider-defined tier vocabulary; per-model strict schemas constrain admitted values (Gemini: 'flex' | 'standard'); omitted stays omitted
   timeoutMs?: number
-  providerOptions?: Record<string, JsonValue> // forwarded verbatim to the raw SDK; logged when used
+  providerOptions?: ProviderOptionsMap // open interface; each provider package augments it via declaration merging and enforces its own strict per-model allowlist (not a raw SDK passthrough)
 }
 export interface ReasoningIntent {
   effort?: 'none' | 'low' | 'medium' | 'high' // gemini-2.5 → thinkingBudget; gemini-3 → thinkingLevel
@@ -171,7 +192,7 @@ export interface ResolvedRequest {
   system?: string
   messages: Message[]
   outputJsonSchema?: JsonValue // adapter uses it to set provider responseSchema only
-  config: Required<Pick<GenConfig, 'serviceTier'>> & GenConfig
+  config: GenConfig // serviceTier optional; when omitted, adapters preserve provider-default behavior
   signal?: AbortSignal
 }
 export interface AdapterCtx {
@@ -232,7 +253,7 @@ streaming `stream()`. They can be added without changing the above.
 
 ```
 runStructured(callSite, vars?, opts?)  /  generate(request)
-  1. resolve config   (lib defaults → call-site defaults → per-call opts; deep-merge; serviceTier='flex' default)
+  1. resolve config   (lib defaults → call-site defaults → per-call opts; deep-merge; omitted serviceTier stays omitted)
   2. render prompts   (non-recursive interpolation; var values are NOT re-interpolated — anti-injection)
   3. ids              callId + attemptId
   4. telemetry.onStart + log 'llm.call.start'
@@ -276,7 +297,9 @@ details = { input, cached, output }   // thinking billed at output rate (folded 
 - Long-context tier: Gemini Pro charges a premium above 200k input tokens — `inputRate` selects by
   total `inputTokens`. (Flash-lite is flat; encode per-model.)
 - Unknown model → `cost = { microUsd: null, … }`; tokens + raw still recorded for later backfill.
-- v1 is **text-only**, so no per-modality input pricing is needed (the DESIGN regression is avoided).
+- Pricing is **token-count based** across modalities — media parts bill through the provider's
+  token accounting, so no per-modality input pricing lanes are needed (the DESIGN regression is
+  avoided).
 
 ---
 
@@ -343,7 +366,8 @@ Core imports no ORM; a host with a different store implements `UsageSink` direct
 - Maps: `serviceTier:'flex'` → Gemini Flex only when the model descriptor supports it; `reasoning`
   → `thinkingConfig` (budget for 2.5, level for 3.x); throws `LlmError('bad_request')` when the mapping cannot be applied;
   `output.jsonSchema` → `responseSchema` (`responseMimeType:'application/json'`) only when native
-  structured output is enabled; `providerOptions.google.*` forwarded verbatim.
+  structured output is enabled; `providerOptions.google.*` is a strict per-model allowlist mapped
+  field-by-field onto the SDK call, not forwarded verbatim.
 - Routes Gemini 2.5/3.x and two API-verified Gemma 4 models (`gemma-4-31b-it`,
   `gemma-4-26b-a4b-it`). Both Gemma 4 descriptors support multimodal parts, native structured
   output, grounding, and thinking (thinkingLevel). They do not support Gemini Flex or pricing.
@@ -356,10 +380,23 @@ Core imports no ORM; a host with a different store implements `UsageSink` direct
 
 ---
 
-## Testing strategy (`@gullabs/testing` + per-package suites) — NO real Gemini calls
+## xAI adapter (`@gullabs/xai`)
 
-- **Fakes:** `FakeClock`, `FakeIds`, `RecordingSink` (captures records), `fakeGemini` (a stub
-  `@google/genai` client returning scripted responses incl. usageMetadata with thoughtsTokenCount).
+- `xaiAdapter(): ProviderAdapter` over the `openai` SDK's Responses API pointed at
+  `https://api.x.ai/v1` (peerDep `openai@^6`), API-key auth only. Ships `grok-4.5`
+  (reasoning `low | high`, native structured output via `text.format`, vision, automatic
+  caching + `providerOptions.xai.promptCacheKey`, live-verified pricing incl. the >200k
+  long-context tier). Same contract as the Google adapter: strict per-model schema,
+  reject-don't-map, GROSS usage, never persists/loops. Full details in
+  `packages/xai/README.md`.
+
+---
+
+## Testing strategy (`@gullabs/testing` + per-package suites) — NO real provider calls
+
+- **Fakes:** `FakeClock`, `FakeIds`, `RecordingSink` (captures records), `makeFakeGemini` (a stub
+  `@google/genai` client returning scripted responses incl. usageMetadata with thoughtsTokenCount),
+  `makeFakeXai` (a structural `XaiClientLike` stub replaying Responses API payloads).
 - **Unit:** cost math (GROSS/net, >200k tier, cached discount, unknown-model→null); error
   classification; config resolution/merge; usage normalization; record building; JSON parse→outputParsed.
 - **The highest-risk test (codex-mandated, no network):** drive the engine with a fake adapter
@@ -368,8 +405,9 @@ Core imports no ORM; a host with a different store implements `UsageSink` direct
   only 150_000 input billed at input rate; 100_000 at cached rate; 5_000 output billed once;
   thinkingTokens persisted but adds ZERO cost; `sum(cost.details)===cost.microUsd`; and the persisted
   record's cost === returned `LlmResult.cost` exactly.
-- **Adapter contract tests:** drive `geminiAdapter` against `fakeGemini` scripted scenarios:
-  flex tier set, thinking captured, structured output, each error kind, warnings emitted.
+- **Adapter contract tests:** drive `geminiAdapter` against `makeFakeGemini` scripted scenarios
+  (flex tier set, thinking captured, structured output, each error kind, warnings emitted) and
+  `xaiAdapter` against `makeFakeXai` replaying sanitized live-captured Responses API fixtures.
 - **Engine integration (fakes):** end-to-end `generate()` → one record in `RecordingSink` with correct
   usage+cost+postmortem; success and every failure path.
 - **Surface stress (no network):** property/fuzz the public surface — malformed usageMetadata, missing

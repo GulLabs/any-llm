@@ -347,8 +347,13 @@ that proves the JSON Schema does not falsely advertise the invalid shape.
 
 ## Exact Schema Set
 
-Create `packages/core/src/model-config-schemas.ts` or a folder such as
-`packages/core/src/model-config/`.
+As shipped, these live in `@gullabs/google` (`packages/google/src/models.ts`), not
+in core — core owns only the generic registry/schema machinery
+(`ModelDescriptor`, `ModelRegistry`, `createModelRegistry`, `toConfigJsonSchema`,
+`zodToStandardSchema`) with zero provider knowledge. At design time this section
+proposed a core-owned location (`packages/core/src/model-config-schemas.ts` or a
+folder such as `packages/core/src/model-config/`); the provider-plugin split
+moved all provider-specific schemas out of core.
 
 Required exact schemas:
 
@@ -397,8 +402,10 @@ accepted by `GenConfig`, not just a projection. To avoid mixing model-owned and
 execution-owned concerns, define exact per-model schemas that include:
 
 - model-owned fields: sampling, token cap, stops, reasoning, service tier;
-- execution fields: `timeoutMs`, `flexFallback`;
-- provider allowlist: `providerOptions.google`.
+- execution fields: `timeoutMs` (core-owned);
+- provider allowlist: `providerOptions.google`, which owns `flexFallback` as
+  shipped (see "Provider Options Redesign" below) rather than a core
+  execution field.
 
 This makes one parse step authoritative:
 
@@ -454,6 +461,21 @@ export interface GenConfig {
   }
 }
 ```
+
+As shipped, this diverged from the sketch above in two ways, both driven by
+`@gullabs/core` becoming provider-agnostic:
+
+- `GenConfig.serviceTier` is an opaque `string` at the core level, not the
+  closed `'flex' | 'standard'` union — the union is still enforced, just one
+  layer down, by each Gemini model's own strict `configSchema`. A core type
+  closed to Google's tier names would block other providers from defining
+  their own.
+- `flexFallback` is not a core `GenConfig` field at all. It lives inside
+  `GoogleProviderOptions` (`packages/google/src/types.ts`) and is reached as
+  `providerOptions.google.flexFallback`. `ProviderOptionsMap` itself is an
+  open, augmentable interface (`packages/core/src/types.ts`) that provider
+  packages extend via declaration merging — not the closed
+  `{ google?: GoogleProviderOptions }` shape sketched here.
 
 `GoogleProviderOptions` should be allowlisted:
 
@@ -513,8 +535,9 @@ recheck after merge. Target flow:
 Execution-spine fields that are not model-owned need their own strict schema,
 not silent projection:
 
-- `timeoutMs`
-- `flexFallback`
+- `timeoutMs` (core-owned)
+- `flexFallback` (shipped as a Google provider-options field, not a core
+  execution field — see "Provider Options Redesign")
 - retry/middleware-owned fields if any are added later.
 
 ## Structured Output Boundary
@@ -612,9 +635,13 @@ Adapter tests:
   priority-tier schema/pricing/served-tier design ships.
 - Grounding + structured output behavior is tested per model/API mode.
 
-CI invariant:
+CI invariant (`defaultGeminiRegistry` is exported by `@gullabs/google`, not
+core — core only provides the generic `createModelRegistry`/`ModelRegistry`
+machinery that this registry is built from):
 
 ```ts
+import { defaultGeminiRegistry } from '@gullabs/google'
+
 const descriptors = defaultGeminiRegistry.listDescriptors()
 expect(descriptors.length).toBeGreaterThan(0)
 

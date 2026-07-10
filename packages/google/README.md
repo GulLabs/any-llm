@@ -12,23 +12,25 @@ pnpm add @gullabs/google @gullabs/core @google/genai
 
 ## Key exports
 
-| Export                       | What it is                                                                    |
-| ---------------------------- | ----------------------------------------------------------------------------- |
-| `geminiAdapter(opts?)`       | Creates the `ProviderAdapter` for Gemini                                      |
-| `GeminiAdapterOptions`       | `{ client?: GeminiClientLike }` — inject a pre-built or fake client           |
-| `GeminiClientLike`           | Structural interface the adapter depends on (satisfied by real SDK and fakes) |
-| `buildGoogleClient(auth)`    | Builds the real `@google/genai` client from `AuthMaterial`                    |
-| `isGeminiCapacityError(err)` | Detects Gemini Flex shared-capacity errors for built-in fallback              |
+| Export                                                                     | What it is                                                                            |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `googleProvider(opts?)`                                                    | `ProviderPlugin` factory — bundles the adapter, model descriptors, and pricing source |
+| `geminiAdapter(opts?)`                                                     | Creates the `ProviderAdapter` for Gemini                                              |
+| `GeminiAdapterOptions`                                                     | `{ client?: GeminiClientLike }` — inject a pre-built or fake client                   |
+| `GeminiClientLike`                                                         | Structural interface the adapter depends on (satisfied by real SDK and fakes)         |
+| `buildGoogleClient(auth)`                                                  | Builds the real `@google/genai` client from `AuthMaterial`                            |
+| `isGeminiCapacityError(err)`                                               | Detects Gemini Flex shared-capacity errors for built-in fallback                      |
+| `geminiModelDescriptors`, `gemmaModelDescriptors`, `defaultGeminiRegistry` | Built-in model descriptors + pre-built registry                                       |
+| `geminiPricingSource()`, `GEMINI_PRICING`, `TIER_FACTOR`                   | Built-in Gemini pricing snapshot and tier-factor map                                  |
 
 ## Quick example
 
 ```ts
-import { geminiAdapter } from '@gullabs/google'
-import { createClient, geminiPricingSource } from '@gullabs/core'
+import { createClient, composeProviders } from '@gullabs/core'
+import { googleProvider } from '@gullabs/google'
 
 const client = createClient({
-  adapters: [geminiAdapter()],
-  pricingSources: { google: geminiPricingSource() },
+  ...composeProviders([googleProvider()]),
 })
 
 // Auth is required per call — the library never reads environment variables.

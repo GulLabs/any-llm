@@ -1,0 +1,120 @@
+{
+  "text_format": {
+    "status": 200,
+    "body": {
+      "created_at": 1783643311,
+      "completed_at": 1783643312,
+      "id": "22685f10-c3ce-9c4f-a346-8abf9c63ec60",
+      "max_output_tokens": 150,
+      "model": "grok-4.5",
+      "object": "response",
+      "output": [
+        {
+          "id": "rs_22685f10-c3ce-9c4f-a346-8abf9c63ec60",
+          "summary": [
+            {
+              "text": "The user says: \"Give a person: name Bob, age 30\"\n",
+              "type": "summary_text"
+            }
+          ],
+          "type": "reasoning",
+          "status": "completed"
+        },
+        {
+          "content": [
+            {
+              "type": "output_text",
+              "text": "{\"name\":\"Bob\",\"age\":30}",
+              "logprobs": [],
+              "annotations": []
+            }
+          ],
+          "id": "msg_22685f10-c3ce-9c4f-a346-8abf9c63ec60",
+          "role": "assistant",
+          "type": "message",
+          "status": "completed"
+        }
+      ],
+      "parallel_tool_calls": true,
+      "previous_response_id": null,
+      "reasoning": {
+        "effort": "low",
+        "summary": "detailed"
+      },
+      "temperature": 0.7,
+      "text": {
+        "format": {
+          "type": "json_schema",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "age": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "name",
+              "age"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "tool_choice": "auto",
+      "tools": [],
+      "top_p": 0.95,
+      "usage": {
+        "input_tokens": 277,
+        "input_tokens_details": {
+          "cached_tokens": 128
+        },
+        "output_tokens": 137,
+        "output_tokens_details": {
+          "reasoning_tokens": 127
+        },
+        "total_tokens": 414,
+        "num_sources_used": 0,
+        "num_server_side_tools_used": 0,
+        "cost_in_usd_ticks": 11840000,
+        "context_details": {
+          "input_tokens": 277,
+          "output_tokens": 137
+        }
+      },
+      "user": null,
+      "incomplete_details": null,
+      "status": "completed",
+      "store": false,
+      "metadata": {
+        "system_fingerprint": "fp_a39489019fa99b6e"
+      },
+      "background": false,
+      "service_tier": "default",
+      "truncation": "disabled",
+      "top_logprobs": 0,
+      "presence_penalty": 0,
+      "frequency_penalty": 0,
+      "prompt_cache_key": null,
+      "max_tool_calls": null,
+      "safety_identifier": null,
+      "error": null,
+      "instructions": null
+    }
+  },
+  "response_format": {
+    "status": 400,
+    "body": {
+      "error": "'response_format' is not supported on /v1/responses — use 'text.format' on /v1/responses (this field exists on /v1/chat/completions only)"
+    }
+  },
+  "empty_enum": {
+    "status": 400,
+    "body": {
+      "code": "invalid-argument",
+      "error": "Invalid request content: Schema validation failed: [standard_violation] /properties/color/enum: [] has less than 1 item"
+    }
+  }
+}

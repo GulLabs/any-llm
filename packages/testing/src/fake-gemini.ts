@@ -241,6 +241,19 @@ export function fakeGeminiBlocked(opts: FakeGeminiBlockedOpts = {}): GeminiRespo
 }
 
 // ---------------------------------------------------------------------------
+// countTokens response shape
+// ---------------------------------------------------------------------------
+
+/**
+ * The structural shape of a Gemini `countTokens` response that the adapter
+ * consumes.  Mirrors the subset of `CountTokensResponse` we actually read.
+ */
+export interface GeminiCountTokensResponseLike {
+  totalTokens?: number
+  cachedContentTokenCount?: number
+}
+
+// ---------------------------------------------------------------------------
 // Script type for makeFakeGemini
 // ---------------------------------------------------------------------------
 
@@ -260,6 +273,20 @@ export type GeminiScript =
   | GeminiResponseLike[]
   | ((params: unknown) => GeminiResponseLike | Promise<GeminiResponseLike>)
 
+/**
+ * A script that controls what {@link makeFakeGemini}'s `countTokens` fake
+ * returns. Same shape convention as {@link GeminiScript}. Defaults to
+ * `{ totalTokens: 0 }` when `makeFakeGemini` is called without a second
+ * argument, so existing call sites that only exercise `generateContent`
+ * keep compiling and running unchanged.
+ */
+export type GeminiCountTokensScript =
+  | GeminiCountTokensResponseLike
+  | GeminiCountTokensResponseLike[]
+  | ((
+      params: unknown,
+    ) => GeminiCountTokensResponseLike | Promise<GeminiCountTokensResponseLike>)
+
 // ---------------------------------------------------------------------------
 // Fake client shape
 // ---------------------------------------------------------------------------
@@ -270,13 +297,14 @@ export type GeminiScript =
  */
 export interface FakeGeminiModels {
   generateContent(params: unknown): Promise<GeminiResponseLike>
+  countTokens(params: unknown): Promise<GeminiCountTokensResponseLike>
 }
 
 /**
  * The object returned by {@link makeFakeGemini}.
  *
  * Structurally compatible with the subset of `GoogleGenAI` the adapter uses.
- * The extra `calls` array is for test assertions.
+ * The extra `calls` / `countTokensCalls` arrays are for test assertions.
  */
 export interface FakeGeminiClient {
   /** Drop-in replacement for `new GoogleGenAI(...).models`. */
@@ -286,6 +314,11 @@ export interface FakeGeminiClient {
    * Inspect this in tests to assert the adapter constructed the right params.
    */
   readonly calls: unknown[]
+  /**
+   * Every argument object passed to `models.countTokens()`, in order.
+   * Inspect this in tests to assert the adapter constructed the right params.
+   */
+  readonly countTokensCalls: unknown[]
 }
 
 // ---------------------------------------------------------------------------
@@ -310,9 +343,14 @@ export interface FakeGeminiClient {
  * await expect(errorClient.models.generateContent({})).rejects.toMatchObject({ status: 429 })
  * ```
  */
-export function makeFakeGemini(script: GeminiScript): FakeGeminiClient {
+export function makeFakeGemini(
+  script: GeminiScript,
+  countTokensScript: GeminiCountTokensScript = { totalTokens: 0 },
+): FakeGeminiClient {
   const calls: unknown[] = []
+  const countTokensCalls: unknown[] = []
   let callIndex = 0
+  let countTokensCallIndex = 0
 
   const generateContent = async (params: unknown): Promise<GeminiResponseLike> => {
     calls.push(params)
@@ -338,8 +376,32 @@ export function makeFakeGemini(script: GeminiScript): FakeGeminiClient {
     return script
   }
 
+  const countTokens = async (params: unknown): Promise<GeminiCountTokensResponseLike> => {
+    countTokensCalls.push(params)
+
+    if (typeof countTokensScript === 'function') {
+      return await countTokensScript(params)
+    }
+
+    if (Array.isArray(countTokensScript)) {
+      const response = countTokensScript[countTokensCallIndex]
+      if (response === undefined) {
+        throw new RangeError(
+          `makeFakeGemini: countTokens script exhausted after ${countTokensCallIndex} call(s); ` +
+            `no response for call ${countTokensCallIndex + 1}`,
+        )
+      }
+      countTokensCallIndex += 1
+      return response
+    }
+
+    // Single response — always return the same value.
+    return countTokensScript
+  }
+
   return {
-    models: { generateContent },
+    models: { generateContent, countTokens },
     calls,
+    countTokensCalls,
   }
 }

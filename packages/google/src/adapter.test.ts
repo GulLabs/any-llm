@@ -8,14 +8,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import {
-  LlmError,
-  createClient,
-  geminiPricingSource,
-  retryMiddleware,
-  gemmaModelDescriptors,
-  geminiModelDescriptors,
-} from '@gullabs/core'
+import { LlmError, createClient, retryMiddleware } from '@gullabs/core'
 import type { ResolvedRequest, AdapterCtx, ModelDescriptor } from '@gullabs/core'
 import type { ProviderOptions } from '@gullabs/core'
 import {
@@ -31,6 +24,9 @@ import { isGeminiCapacityError } from './flex-fallback.js'
 import { FLEX_DEFAULT_TIMEOUT_MS } from './client.js'
 import type { GeminiClientLike, GeminiResponseShape } from './client.js'
 import { GOOGLE_REASONING_EFFORT_BUDGET } from './reasoning-budget.js'
+import { geminiPricingSource } from './cost.js'
+import { gemmaModelDescriptors, geminiModelDescriptors } from './models.js'
+import { defaultGeminiRegistry } from './models.js'
 import { makeTestDescriptor } from '../../core/src/test-model-descriptor.js'
 
 // ---------------------------------------------------------------------------
@@ -363,7 +359,12 @@ describe('flex fallback', () => {
 
     await expect(
       adapter.run(
-        makeResolvedReq({ config: { serviceTier: 'flex', flexFallback: false } }),
+        makeResolvedReq({
+          config: {
+            serviceTier: 'flex',
+            providerOptions: { google: { flexFallback: false } },
+          },
+        }),
         FAKE_CTX,
       ),
     ).rejects.toMatchObject({ kind: 'server', servedServiceTier: 'flex' })
@@ -391,6 +392,7 @@ describe('flex fallback', () => {
     const llmClient = createClient({
       adapters: [geminiAdapter({ client: fakeClient })],
       pricingSources: { google: geminiPricingSource() },
+      modelRegistry: defaultGeminiRegistry,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -1246,6 +1248,7 @@ describe('full-stack integration', () => {
     const client = createClient({
       adapters: [geminiAdapter({ client: fakeClient })],
       pricingSources: { google: geminiPricingSource() },
+      modelRegistry: defaultGeminiRegistry,
       sink,
       clock,
       ids,
@@ -1322,6 +1325,7 @@ describe('full-stack integration', () => {
     const client = createClient({
       adapters: [geminiAdapter({ client: fakeClient })],
       pricingSources: { google: geminiPricingSource() },
+      modelRegistry: defaultGeminiRegistry,
       sink,
     })
 
@@ -1381,6 +1385,7 @@ describe('JSON Schema structured output', () => {
     const llmClient = createClient({
       adapters: [geminiAdapter({ client })],
       pricingSources: { google: geminiPricingSource() },
+      modelRegistry: defaultGeminiRegistry,
     })
 
     const result = await llmClient.generate(
@@ -1405,6 +1410,7 @@ describe('JSON Schema structured output', () => {
     const llmClient = createClient({
       adapters: [geminiAdapter({ client })],
       pricingSources: { google: geminiPricingSource() },
+      modelRegistry: defaultGeminiRegistry,
     })
 
     const result = await llmClient.generate(
@@ -1879,6 +1885,7 @@ describe('grounding — model-aware tool guard', () => {
     const llmClient = createClient({
       adapters: [geminiAdapter({ client: fakeClient })],
       pricingSources: { google: geminiPricingSource() },
+      modelRegistry: defaultGeminiRegistry,
       sink,
     })
 
@@ -1996,6 +2003,7 @@ describe('grounding — providerMetadata merge', () => {
     const llmClient = createClient({
       adapters: [geminiAdapter({ client: fakeClient })],
       pricingSources: { google: geminiPricingSource() },
+      modelRegistry: defaultGeminiRegistry,
       sink,
     })
 
@@ -2131,6 +2139,9 @@ describe('FIX A-2: client-side flex AbortSignal ceiling', () => {
             sig?.addEventListener('abort', () => reject(sig.reason), { once: true })
           })
         },
+        countTokens() {
+          return Promise.resolve({ totalTokens: 0 })
+        },
       },
     }
 
@@ -2166,6 +2177,9 @@ describe('FIX A-2: client-side flex AbortSignal ceiling', () => {
             usageMetadata: {},
           })
         },
+        countTokens() {
+          return Promise.resolve({ totalTokens: 0 })
+        },
       },
     }
 
@@ -2200,6 +2214,9 @@ describe('FIX A-2: client-side flex AbortSignal ceiling', () => {
             }
             sig?.addEventListener('abort', () => reject(sig.reason), { once: true })
           })
+        },
+        countTokens() {
+          return Promise.resolve({ totalTokens: 0 })
         },
       },
     }

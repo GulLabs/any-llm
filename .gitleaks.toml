@@ -1,0 +1,13 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Repo-specific false positives"
+regexes = [
+  # "anyllm-probe-1" is our own recorded prompt_cache_key probe label used in
+  # xai live-API test fixtures to detect prompt-caching behavior. It is a
+  # constant, non-secret label (not an API key/token) that happens to match
+  # the generic-api-key heuristic. See packages/xai/src/__fixtures__/07-caching.json
+  # and packages/xai/src/adapter.fixtures.test.ts.
+  '''^anyllm-probe-1$''',
+]

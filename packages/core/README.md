@@ -13,25 +13,30 @@ pnpm add @gullabs/core
 
 ## Key exports
 
-| Export                  | What it is                                                               |
-| ----------------------- | ------------------------------------------------------------------------ |
-| `createClient(config)`  | Wires ports into a `{ generate, runStructured }` client                  |
-| `defaultGeminiRegistry` | Built-in descriptor registry, including strict model-config metadata     |
-| `defineCallSite(opts)`  | Defines a typed, reusable prompt template bound to a model               |
-| `geminiPricingSource()` | Returns a `PricingSource` backed by the built-in Gemini pricing snapshot |
-| `LlmError`              | Typed error class — always thrown on call failure                        |
-| `buildRecord(input)`    | Assembles an `LlmCallRecord` from engine state (used internally)         |
+| Export                       | What it is                                                               |
+| ---------------------------- | ------------------------------------------------------------------------ |
+| `createClient(config)`       | Wires ports into a `{ generate, runStructured }` client                  |
+| `composeProviders(plugins)`  | Merges one or more `ProviderPlugin`s into `ClientConfig` fields          |
+| `createModelRegistry(descs)` | Builds a `ModelRegistry` from an array of `ModelDescriptor`s             |
+| `defineCallSite(opts)`       | Defines a typed, reusable prompt template bound to a model               |
+| `computeCost(...)`           | Pure, provider-agnostic cost function (providers supply their own rates) |
+| `LlmError`                   | Typed error class — always thrown on call failure                        |
+| `buildRecord(input)`         | Assembles an `LlmCallRecord` from engine state (used internally)         |
+
+Core carries **no provider knowledge** — no Gemini/Google types, model descriptors, or pricing
+tables. `ClientConfig.modelRegistry` is required; supply it via a provider package's plugin, e.g.
+`googleProvider()` from `@gullabs/google`.
 
 Port interfaces you implement: `ProviderAdapter`, `UsageSink`, `PricingSource`, `RateLimiter`, `Clock`, `IdGenerator`, `Logger`, `Telemetry`.
 
 ## Quick example
 
 ```ts
-import { createClient, geminiPricingSource, defineCallSite } from '@gullabs/core'
+import { createClient, composeProviders, defineCallSite } from '@gullabs/core'
+import { googleProvider } from '@gullabs/google'
 
 const client = createClient({
-  adapters: [myAdapter],
-  pricingSources: { google: geminiPricingSource() },
+  ...composeProviders([googleProvider()]),
   sink: mySink,
 })
 
@@ -70,10 +75,12 @@ const result = await client.runStructured(
 
 ## Model config boundary
 
-Built-in descriptors own the model-config contract:
+Built-in descriptors own the model-config contract. Core owns only the generic
+`ModelRegistry`/`ModelDescriptor` machinery — the actual Gemini/Gemma descriptors live in
+`@gullabs/google`:
 
 ```ts
-import { defaultGeminiRegistry } from '@gullabs/core'
+import { defaultGeminiRegistry } from '@gullabs/google'
 
 const descriptor = defaultGeminiRegistry.resolve('google', 'gemini-3.5-flash')
 if (!descriptor) throw new Error('unknown model')
@@ -122,8 +129,7 @@ object-first `(o, m)` signature:
 import pino from 'pino'
 
 const client = createClient({
-  adapters: [myAdapter],
-  pricingSources: { google: geminiPricingSource() },
+  ...composeProviders([googleProvider()]),
   logger: pino(),
 })
 ```

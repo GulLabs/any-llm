@@ -285,6 +285,33 @@ export interface GeminiGenerateParams {
   config?: GeminiGenerateConfig
 }
 
+/**
+ * Parameters for models.countTokens.
+ * Real type: CountTokensParameters.
+ */
+export interface GeminiCountTokensParams {
+  model: string
+  contents: GeminiContent[]
+  config?: {
+    systemInstruction?: { parts: GeminiContentPart[] }
+    /**
+     * Real field: CountTokensConfig.abortSignal. countTokens has no
+     * tier-timeout dance (no flex/standard default ceilings) — `ctx.signal`
+     * is forwarded here directly, unlike `run()`'s combined timer signal.
+     */
+    abortSignal?: AbortSignal
+  }
+}
+
+/**
+ * Response shape for models.countTokens.
+ * Real type: CountTokensResponse.
+ */
+export interface GeminiCountTokensResponseShape {
+  totalTokens?: number
+  cachedContentTokenCount?: number
+}
+
 // ---------------------------------------------------------------------------
 // GeminiClientLike — structural interface (no @google/genai dependency)
 // ---------------------------------------------------------------------------
@@ -294,11 +321,13 @@ export interface GeminiGenerateParams {
  *
  * Satisfied by:
  * - The real GoogleGenAI client (via buildGoogleClient wrapper).
- * - FakeGeminiClient from @gullabs/testing (its generateContent accepts unknown).
+ * - FakeGeminiClient from @gullabs/testing (its generateContent/countTokens
+ *   accept unknown).
  */
 export interface GeminiClientLike {
   models: {
     generateContent(params: GeminiGenerateParams): Promise<GeminiResponseShape>
+    countTokens(params: GeminiCountTokensParams): Promise<GeminiCountTokensResponseShape>
   }
 }
 
@@ -329,6 +358,17 @@ export async function buildGoogleClient(auth: AuthMaterial): Promise<GeminiClien
         // Cast needed: our structural types are subsets of the real SDK types.
         const result = await (
           ai.models.generateContent as (params: unknown) => Promise<GeminiResponseShape>
+        )(params)
+        return result
+      },
+      async countTokens(
+        params: GeminiCountTokensParams,
+      ): Promise<GeminiCountTokensResponseShape> {
+        // Cast needed: our structural types are subsets of the real SDK types.
+        const result = await (
+          ai.models.countTokens as (
+            params: unknown,
+          ) => Promise<GeminiCountTokensResponseShape>
         )(params)
         return result
       },

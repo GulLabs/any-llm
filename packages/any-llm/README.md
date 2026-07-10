@@ -20,15 +20,14 @@ This installs the core engine, Gemini adapter, and `@google/genai`.
 ```ts
 import {
   createClient,
+  composeProviders,
   defaultGeminiRegistry,
   defineCallSite,
-  geminiAdapter,
-  geminiPricingSource,
+  googleProvider,
 } from '@gullabs/any-llm'
 
 const client = createClient({
-  adapters: [geminiAdapter()],
-  pricingSources: { google: geminiPricingSource() },
+  ...composeProviders([googleProvider()]),
 })
 
 const summarize = defineCallSite({
@@ -71,17 +70,20 @@ intended. `priority` remains rejected by the library for now.
 ## Key exports
 
 This package re-exports the full public API of `@gullabs/core` and `@gullabs/google` verbatim —
-`createClient`, `defineCallSite`, `geminiAdapter`, `geminiPricingSource`, `LlmError`, and every
-other named export from both packages. See their READMEs for details:
+`createClient`, `composeProviders`, `defineCallSite`, `googleProvider`, `geminiAdapter`,
+`geminiPricingSource`, `LlmError`, and every other named export from both packages. See their
+READMEs for details:
 
-| Export                  | What it is                                                 |
-| ----------------------- | ---------------------------------------------------------- |
-| `createClient(config)`  | Wires ports into a `{ generate, runStructured }` client    |
-| `defineCallSite(opts)`  | Defines a typed, reusable prompt template bound to a model |
-| `geminiAdapter(opts?)`  | The Gemini `ProviderAdapter`, from `@gullabs/google`       |
-| `geminiPricingSource()` | Built-in Gemini pricing snapshot                           |
-| `LlmError`              | Typed error class — always thrown on call failure          |
-| `ANY_LLM_VERSION`       | This package's version, sourced from `package.json`        |
+| Export                      | What it is                                                  |
+| --------------------------- | ----------------------------------------------------------- |
+| `createClient(config)`      | Wires ports into a `{ generate, runStructured }` client     |
+| `composeProviders(plugins)` | Merges `ProviderPlugin`s into `ClientConfig` fields         |
+| `defineCallSite(opts)`      | Defines a typed, reusable prompt template bound to a model  |
+| `googleProvider(opts?)`     | The Gemini `ProviderPlugin` factory, from `@gullabs/google` |
+| `geminiAdapter(opts?)`      | The Gemini `ProviderAdapter`, from `@gullabs/google`        |
+| `geminiPricingSource()`     | Built-in Gemini pricing snapshot, from `@gullabs/google`    |
+| `LlmError`                  | Typed error class — always thrown on call failure           |
+| `ANY_LLM_VERSION`           | This package's version, sourced from `package.json`         |
 
 Use `@gullabs/core` and `@gullabs/google` directly only when you want modular dependency control.
 

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const Gemini25FlashLiteConfigSchema = z
+export const Gemini25ProConfigSchema = z
   .union([
     z.strictObject({
       temperature: z
@@ -10,35 +10,36 @@ export const Gemini25FlashLiteConfigSchema = z
         .optional()
         .meta({
           title: 'Temperature',
-          description: 'Sampling temperature for gemini-2.5-flash-lite.',
+          description: 'Sampling temperature for gemini-2.5-pro.',
           examples: [0.7],
         }),
       topP: z.number().min(0).max(1).optional().meta({
         title: 'Top P',
-        description: 'Nucleus sampling probability for gemini-2.5-flash-lite.',
+        description: 'Nucleus sampling probability for gemini-2.5-pro.',
       }),
       topK: z.number().int().positive().optional().meta({
         title: 'Top K',
-        description: 'Top-k sampling limit for gemini-2.5-flash-lite.',
+        description: 'Top-k sampling limit for gemini-2.5-pro.',
       }),
       maxOutputTokens: z.number().int().positive().optional().meta({
         title: 'Max Output Tokens',
-        description: 'Maximum output token cap for gemini-2.5-flash-lite.',
+        description: 'Maximum output token cap for gemini-2.5-pro.',
       }),
       stopSequences: z.array(z.string()).max(5).optional().meta({
         title: 'Stop Sequences',
-        description: 'Up to five stop sequences for gemini-2.5-flash-lite.',
+        description: 'Up to five stop sequences for gemini-2.5-pro.',
       }),
       serviceTier: z.literal('flex').meta({
         title: 'Service Tier',
-        description: 'Explicit flex tier for gemini-2.5-flash-lite.',
+        description: 'Explicit flex tier for gemini-2.5-pro.',
       }),
       reasoning: z
         .union([
           z.strictObject({
-            effort: z.enum(['none', 'low', 'medium', 'high']).meta({
+            effort: z.enum(['low', 'medium', 'high']).meta({
               title: 'Reasoning Effort',
-              description: 'Reasoning effort for gemini-2.5-flash-lite.',
+              description:
+                'Reasoning effort for gemini-2.5-pro. Thinking off is not supported.',
             }),
             includeThoughts: z.boolean().optional().meta({
               title: 'Include Thoughts',
@@ -46,13 +47,10 @@ export const Gemini25FlashLiteConfigSchema = z
             }),
           }),
           z.strictObject({
-            budgetTokens: z
-              .union([z.literal(0), z.number().int().min(512).max(24576)])
-              .meta({
-                title: 'Reasoning Budget Tokens',
-                description:
-                  'thinkingBudget token range for gemini-2.5-flash-lite. Zero disables thinking; non-zero values must be 512..24576.',
-              }),
+            budgetTokens: z.number().int().min(128).max(32768).meta({
+              title: 'Reasoning Budget Tokens',
+              description: 'thinkingBudget token range for gemini-2.5-pro.',
+            }),
             includeThoughts: z.boolean().optional().meta({
               title: 'Include Thoughts',
               description: 'Return provider thought summaries when supported.',
@@ -68,16 +66,11 @@ export const Gemini25FlashLiteConfigSchema = z
         .optional()
         .meta({
           title: 'Reasoning',
-          description: 'Gemini 2.5 Flash-Lite thinkingBudget configuration.',
+          description: 'Gemini 2.5 Pro thinkingBudget configuration.',
         }),
       timeoutMs: z.number().int().positive().optional().meta({
         title: 'Timeout',
         description: 'Logical request timeout in milliseconds.',
-      }),
-      flexFallback: z.boolean().optional().meta({
-        title: 'Flex Fallback',
-        description:
-          'Allow provider fallback from flex when flex was explicitly selected.',
       }),
       providerOptions: z
         .strictObject({
@@ -118,7 +111,7 @@ export const Gemini25FlashLiteConfigSchema = z
                 .optional()
                 .meta({
                   title: 'Tools',
-                  description: 'Allowlisted Google tools for gemini-2.5-flash-lite.',
+                  description: 'Allowlisted Google tools for gemini-2.5-pro.',
                 }),
               httpOptions: z
                 .strictObject({
@@ -132,18 +125,22 @@ export const Gemini25FlashLiteConfigSchema = z
                   title: 'HTTP Options',
                   description: 'Allowlisted Google transport options.',
                 }),
+              flexFallback: z.boolean().optional().meta({
+                title: 'Flex Fallback',
+                description:
+                  'Allow provider fallback from flex when flex was explicitly selected.',
+              }),
             })
             .optional()
             .meta({
               title: 'Google Provider Options',
-              description:
-                'Allowlisted Google provider options for gemini-2.5-flash-lite.',
+              description: 'Allowlisted Google provider options for gemini-2.5-pro.',
             }),
         })
         .optional()
         .meta({
           title: 'Provider Options',
-          description: 'Provider-specific options accepted for gemini-2.5-flash-lite.',
+          description: 'Provider-specific options accepted for gemini-2.5-pro.',
         }),
     }),
     z.strictObject({
@@ -154,35 +151,36 @@ export const Gemini25FlashLiteConfigSchema = z
         .optional()
         .meta({
           title: 'Temperature',
-          description: 'Sampling temperature for gemini-2.5-flash-lite.',
+          description: 'Sampling temperature for gemini-2.5-pro.',
           examples: [0.7],
         }),
       topP: z.number().min(0).max(1).optional().meta({
         title: 'Top P',
-        description: 'Nucleus sampling probability for gemini-2.5-flash-lite.',
+        description: 'Nucleus sampling probability for gemini-2.5-pro.',
       }),
       topK: z.number().int().positive().optional().meta({
         title: 'Top K',
-        description: 'Top-k sampling limit for gemini-2.5-flash-lite.',
+        description: 'Top-k sampling limit for gemini-2.5-pro.',
       }),
       maxOutputTokens: z.number().int().positive().optional().meta({
         title: 'Max Output Tokens',
-        description: 'Maximum output token cap for gemini-2.5-flash-lite.',
+        description: 'Maximum output token cap for gemini-2.5-pro.',
       }),
       stopSequences: z.array(z.string()).max(5).optional().meta({
         title: 'Stop Sequences',
-        description: 'Up to five stop sequences for gemini-2.5-flash-lite.',
+        description: 'Up to five stop sequences for gemini-2.5-pro.',
       }),
       serviceTier: z.literal('standard').optional().meta({
         title: 'Service Tier',
-        description: 'Standard tier or omitted tier for gemini-2.5-flash-lite.',
+        description: 'Standard tier or omitted tier for gemini-2.5-pro.',
       }),
       reasoning: z
         .union([
           z.strictObject({
-            effort: z.enum(['none', 'low', 'medium', 'high']).meta({
+            effort: z.enum(['low', 'medium', 'high']).meta({
               title: 'Reasoning Effort',
-              description: 'Reasoning effort for gemini-2.5-flash-lite.',
+              description:
+                'Reasoning effort for gemini-2.5-pro. Thinking off is not supported.',
             }),
             includeThoughts: z.boolean().optional().meta({
               title: 'Include Thoughts',
@@ -190,13 +188,10 @@ export const Gemini25FlashLiteConfigSchema = z
             }),
           }),
           z.strictObject({
-            budgetTokens: z
-              .union([z.literal(0), z.number().int().min(512).max(24576)])
-              .meta({
-                title: 'Reasoning Budget Tokens',
-                description:
-                  'thinkingBudget token range for gemini-2.5-flash-lite. Zero disables thinking; non-zero values must be 512..24576.',
-              }),
+            budgetTokens: z.number().int().min(128).max(32768).meta({
+              title: 'Reasoning Budget Tokens',
+              description: 'thinkingBudget token range for gemini-2.5-pro.',
+            }),
             includeThoughts: z.boolean().optional().meta({
               title: 'Include Thoughts',
               description: 'Return provider thought summaries when supported.',
@@ -212,7 +207,7 @@ export const Gemini25FlashLiteConfigSchema = z
         .optional()
         .meta({
           title: 'Reasoning',
-          description: 'Gemini 2.5 Flash-Lite thinkingBudget configuration.',
+          description: 'Gemini 2.5 Pro thinkingBudget configuration.',
         }),
       timeoutMs: z.number().int().positive().optional().meta({
         title: 'Timeout',
@@ -257,7 +252,7 @@ export const Gemini25FlashLiteConfigSchema = z
                 .optional()
                 .meta({
                   title: 'Tools',
-                  description: 'Allowlisted Google tools for gemini-2.5-flash-lite.',
+                  description: 'Allowlisted Google tools for gemini-2.5-pro.',
                 }),
               httpOptions: z
                 .strictObject({
@@ -275,20 +270,19 @@ export const Gemini25FlashLiteConfigSchema = z
             .optional()
             .meta({
               title: 'Google Provider Options',
-              description:
-                'Allowlisted Google provider options for gemini-2.5-flash-lite.',
+              description: 'Allowlisted Google provider options for gemini-2.5-pro.',
             }),
         })
         .optional()
         .meta({
           title: 'Provider Options',
-          description: 'Provider-specific options accepted for gemini-2.5-flash-lite.',
+          description: 'Provider-specific options accepted for gemini-2.5-pro.',
         }),
     }),
   ])
   .meta({
-    title: 'Gemini25FlashLiteConfig',
+    title: 'Gemini25ProConfig',
     description:
-      'Strict generateContent config for model gemini-2.5-flash-lite. Budget reasoning, tunable sampling, flex/standard tiers, structured output, grounding, priced.',
-    examples: [{ serviceTier: 'flex', temperature: 0.7, reasoning: { budgetTokens: 0 } }],
+      'Strict generateContent config for model gemini-2.5-pro. Budget reasoning, tunable sampling, flex/standard tiers, structured output, grounding, priced.',
+    examples: [{ serviceTier: 'flex', temperature: 0.7, reasoning: { effort: 'high' } }],
   })
