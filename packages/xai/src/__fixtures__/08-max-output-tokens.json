@@ -1,0 +1,182 @@
+{
+  "huge_max": {
+    "status": 200,
+    "body": {
+      "created_at": 1783643425,
+      "completed_at": 1783643426,
+      "id": "915f0414-950c-9851-8518-e55f5e77ac7f",
+      "max_output_tokens": 100000000,
+      "model": "grok-4.5",
+      "object": "response",
+      "output": [
+        {
+          "id": "rs_915f0414-950c-9851-8518-e55f5e77ac7f",
+          "summary": [
+            {
+              "text": "The user said \"hi\". This is a simple greeting.\n",
+              "type": "summary_text"
+            }
+          ],
+          "type": "reasoning",
+          "status": "completed"
+        },
+        {
+          "content": [
+            {
+              "type": "output_text",
+              "text": "Hi! How can I help you today?",
+              "logprobs": [],
+              "annotations": []
+            }
+          ],
+          "id": "msg_915f0414-950c-9851-8518-e55f5e77ac7f",
+          "role": "assistant",
+          "type": "message",
+          "status": "completed"
+        }
+      ],
+      "parallel_tool_calls": true,
+      "previous_response_id": null,
+      "reasoning": {
+        "effort": "low",
+        "summary": "detailed"
+      },
+      "temperature": 0.7,
+      "text": {
+        "format": {
+          "type": "text"
+        }
+      },
+      "tool_choice": "auto",
+      "tools": [],
+      "top_p": 0.95,
+      "usage": {
+        "input_tokens": 207,
+        "input_tokens_details": {
+          "cached_tokens": 128
+        },
+        "output_tokens": 34,
+        "output_tokens_details": {
+          "reasoning_tokens": 25
+        },
+        "total_tokens": 241,
+        "num_sources_used": 0,
+        "num_server_side_tools_used": 0,
+        "cost_in_usd_ticks": 4260000,
+        "context_details": {
+          "input_tokens": 207,
+          "output_tokens": 34
+        }
+      },
+      "user": null,
+      "incomplete_details": null,
+      "status": "completed",
+      "store": false,
+      "metadata": {
+        "system_fingerprint": "fp_a39489019fa99b6e"
+      },
+      "background": false,
+      "service_tier": "default",
+      "truncation": "disabled",
+      "top_logprobs": 0,
+      "presence_penalty": 0,
+      "frequency_penalty": 0,
+      "prompt_cache_key": null,
+      "max_tool_calls": null,
+      "safety_identifier": null,
+      "error": null,
+      "instructions": null
+    }
+  },
+  "tiny_max": {
+    "status": 200,
+    "body": {
+      "created_at": 1783643426,
+      "completed_at": null,
+      "id": "6a1fabb2-b8be-9bf6-a6f7-c5a0ff4f337e",
+      "max_output_tokens": 16,
+      "model": "grok-4.5",
+      "object": "response",
+      "output": [
+        {
+          "id": "rs_6a1fabb2-b8be-9bf6-a6f7-c5a0ff4f337e",
+          "summary": [
+            {
+              "text": "The user asked: \"Write a long story about a dragon.\"\n",
+              "type": "summary_text"
+            }
+          ],
+          "type": "reasoning",
+          "status": "completed"
+        },
+        {
+          "content": [
+            {
+              "type": "output_text",
+              "text": "**The Ember of Aetheria**\n\nIn the age when mountains still whispered",
+              "logprobs": [],
+              "annotations": []
+            }
+          ],
+          "id": "msg_6a1fabb2-b8be-9bf6-a6f7-c5a0ff4f337e",
+          "role": "assistant",
+          "type": "message",
+          "status": "completed"
+        }
+      ],
+      "parallel_tool_calls": true,
+      "previous_response_id": null,
+      "reasoning": {
+        "effort": "low",
+        "summary": "detailed"
+      },
+      "temperature": 0.7,
+      "text": {
+        "format": {
+          "type": "text"
+        }
+      },
+      "tool_choice": "auto",
+      "tools": [],
+      "top_p": 0.95,
+      "usage": {
+        "input_tokens": 214,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens": 51,
+        "output_tokens_details": {
+          "reasoning_tokens": 35
+        },
+        "total_tokens": 265,
+        "num_sources_used": 0,
+        "num_server_side_tools_used": 0,
+        "cost_in_usd_ticks": 7340000,
+        "context_details": {
+          "input_tokens": 214,
+          "output_tokens": 51
+        }
+      },
+      "user": null,
+      "incomplete_details": {
+        "reason": "max_output_tokens"
+      },
+      "status": "incomplete",
+      "store": false,
+      "metadata": {
+        "system_fingerprint": "fp_a39489019fa99b6e"
+      },
+      "background": false,
+      "service_tier": "default",
+      "truncation": "disabled",
+      "top_logprobs": 0,
+      "presence_penalty": 0,
+      "frequency_penalty": 0,
+      "prompt_cache_key": null,
+      "max_tool_calls": null,
+      "safety_identifier": null,
+      "error": null,
+      "instructions": null
+    }
+  }
+}

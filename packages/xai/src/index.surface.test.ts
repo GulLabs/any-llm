@@ -1,24 +1,78 @@
 /**
  * Package-surface importability tests for @gullabs/xai.
  *
- * Proves that the commit-1 surface (client factory + auth helper) is
- * reachable from the package root index — catching export/re-export
- * mismatches at test time rather than at consumer build time. Mirrors
- * `packages/google/src/index.surface.test.ts`, adjusted for what actually
- * exists in commit 1 (no adapter/provider/pricing yet).
+ * Proves that the full package surface (client factory, auth helper,
+ * adapter, model descriptor/registry, pricing, and the `xaiProvider` plugin
+ * factory) is reachable from the package root index — catching export/
+ * re-export mismatches at test time rather than at consumer build time.
+ * Mirrors `packages/google/src/index.surface.test.ts`.
  *
  * @module
  */
 
 import { describe, it, expect } from 'vitest'
-import { buildXaiClient, requireApiKey } from './index.js'
+import {
+  buildXaiClient,
+  requireApiKey,
+  xaiAdapter,
+  classifyXaiError,
+  Grok45ConfigSchema,
+  grok45ModelDescriptor,
+  xaiModelDescriptors,
+  xaiRegistry,
+  XAI_PRICING,
+  xaiPricingVersion,
+  computeXaiCost,
+  xaiPricingSource,
+  xaiProvider,
+} from './index.js'
 
-describe('@gullabs/xai package surface', () => {
+describe('@gullabs/xai package surface: commit 1', () => {
   it('buildXaiClient is a function reachable from the package root', () => {
     expect(typeof buildXaiClient).toBe('function')
   })
 
   it('requireApiKey is a function reachable from the package root', () => {
     expect(typeof requireApiKey).toBe('function')
+  })
+})
+
+describe('@gullabs/xai package surface: commit 2', () => {
+  it('xaiAdapter is a function reachable from the package root', () => {
+    expect(typeof xaiAdapter).toBe('function')
+  })
+
+  it('classifyXaiError is a function reachable from the package root', () => {
+    expect(typeof classifyXaiError).toBe('function')
+  })
+})
+
+describe('@gullabs/xai package surface: commit 3', () => {
+  it('Grok45ConfigSchema is reachable and parses an empty config', () => {
+    expect(Grok45ConfigSchema.safeParse({}).success).toBe(true)
+  })
+
+  it('grok45ModelDescriptor is reachable and scoped to xai/grok-4.5', () => {
+    expect(grok45ModelDescriptor.provider).toBe('xai')
+    expect(grok45ModelDescriptor.model).toBe('grok-4.5')
+  })
+
+  it('xaiModelDescriptors is reachable and pinned to grok-4.5', () => {
+    expect(xaiModelDescriptors.map((d) => d.model)).toEqual(['grok-4.5'])
+  })
+
+  it('xaiRegistry is reachable and resolves grok-4.5', () => {
+    expect(xaiRegistry.resolve('xai', 'grok-4.5')).toBeDefined()
+  })
+
+  it('XAI_PRICING, xaiPricingVersion, computeXaiCost, xaiPricingSource are reachable', () => {
+    expect(XAI_PRICING['grok-4.5']).toBeDefined()
+    expect(typeof xaiPricingVersion).toBe('string')
+    expect(typeof computeXaiCost).toBe('function')
+    expect(typeof xaiPricingSource).toBe('function')
+  })
+
+  it('xaiProvider is a function reachable from the package root', () => {
+    expect(typeof xaiProvider).toBe('function')
   })
 })

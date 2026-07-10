@@ -1,0 +1,269 @@
+{
+  "call1_with_key": {
+    "status": 200,
+    "body": {
+      "created_at": 1783643403,
+      "completed_at": 1783643406,
+      "id": "76a0d054-11ec-9b4a-a22f-6dff6f787a39",
+      "max_output_tokens": 50,
+      "model": "grok-4.5",
+      "object": "response",
+      "output": [
+        {
+          "id": "rs_76a0d054-11ec-9b4a-a22f-6dff6f787a39",
+          "summary": [
+            {
+              "text": "The user has repeated the same sentence many times: \"The quick brown fox jumps over the lazy dog near the riverbank while the sun sets slowly behind the distant mountains, painting the sky in brillian...",
+              "type": "summary_text"
+            }
+          ],
+          "type": "reasoning",
+          "status": "completed"
+        },
+        {
+          "content": [
+            {
+              "type": "output_text",
+              "text": "Fox jumps dog",
+              "logprobs": [],
+              "annotations": []
+            }
+          ],
+          "id": "msg_76a0d054-11ec-9b4a-a22f-6dff6f787a39",
+          "role": "assistant",
+          "type": "message",
+          "status": "completed"
+        }
+      ],
+      "parallel_tool_calls": true,
+      "previous_response_id": null,
+      "reasoning": {
+        "effort": "low",
+        "summary": "detailed"
+      },
+      "temperature": 0.7,
+      "text": {
+        "format": {
+          "type": "text"
+        }
+      },
+      "tool_choice": "auto",
+      "tools": [],
+      "top_p": 0.95,
+      "usage": {
+        "input_tokens": 1234,
+        "input_tokens_details": {
+          "cached_tokens": 128
+        },
+        "output_tokens": 326,
+        "output_tokens_details": {
+          "reasoning_tokens": 323
+        },
+        "total_tokens": 1560,
+        "num_sources_used": 0,
+        "num_server_side_tools_used": 0,
+        "cost_in_usd_ticks": 42320000,
+        "context_details": {
+          "input_tokens": 1234,
+          "output_tokens": 326
+        }
+      },
+      "user": null,
+      "incomplete_details": null,
+      "status": "completed",
+      "store": false,
+      "metadata": {
+        "system_fingerprint": "fp_a39489019fa99b6e"
+      },
+      "background": false,
+      "service_tier": "default",
+      "truncation": "disabled",
+      "top_logprobs": 0,
+      "presence_penalty": 0,
+      "frequency_penalty": 0,
+      "prompt_cache_key": "anyllm-probe-1",
+      "max_tool_calls": null,
+      "safety_identifier": null,
+      "error": null,
+      "instructions": null
+    }
+  },
+  "call2_with_key": {
+    "status": 200,
+    "body": {
+      "created_at": 1783643408,
+      "completed_at": 1783643411,
+      "id": "6353d4be-8c17-92e3-80c3-6ad5e48b865c",
+      "max_output_tokens": 50,
+      "model": "grok-4.5",
+      "object": "response",
+      "output": [
+        {
+          "id": "rs_6353d4be-8c17-92e3-80c3-6ad5e48b865c",
+          "summary": [
+            {
+              "text": "The user message is a long repetition of \"The quick brown fox jumps over the lazy dog near the riverbank while the sun sets slowly behind the distant mountains, painting the sky in brilliant shades of...",
+              "type": "summary_text"
+            }
+          ],
+          "type": "reasoning",
+          "status": "completed"
+        },
+        {
+          "content": [
+            {
+              "type": "output_text",
+              "text": "Fox jumps repeatedly",
+              "logprobs": [],
+              "annotations": []
+            }
+          ],
+          "id": "msg_6353d4be-8c17-92e3-80c3-6ad5e48b865c",
+          "role": "assistant",
+          "type": "message",
+          "status": "completed"
+        }
+      ],
+      "parallel_tool_calls": true,
+      "previous_response_id": null,
+      "reasoning": {
+        "effort": "low",
+        "summary": "detailed"
+      },
+      "temperature": 0.7,
+      "text": {
+        "format": {
+          "type": "text"
+        }
+      },
+      "tool_choice": "auto",
+      "tools": [],
+      "top_p": 0.95,
+      "usage": {
+        "input_tokens": 1234,
+        "input_tokens_details": {
+          "cached_tokens": 1152
+        },
+        "output_tokens": 297,
+        "output_tokens_details": {
+          "reasoning_tokens": 294
+        },
+        "total_tokens": 1531,
+        "num_sources_used": 0,
+        "num_server_side_tools_used": 0,
+        "cost_in_usd_ticks": 25220000,
+        "context_details": {
+          "input_tokens": 1234,
+          "output_tokens": 297
+        }
+      },
+      "user": null,
+      "incomplete_details": null,
+      "status": "completed",
+      "store": false,
+      "metadata": {
+        "system_fingerprint": "fp_a39489019fa99b6e"
+      },
+      "background": false,
+      "service_tier": "default",
+      "truncation": "disabled",
+      "top_logprobs": 0,
+      "presence_penalty": 0,
+      "frequency_penalty": 0,
+      "prompt_cache_key": "anyllm-probe-1",
+      "max_tool_calls": null,
+      "safety_identifier": null,
+      "error": null,
+      "instructions": null
+    }
+  },
+  "call3_without_key": {
+    "status": 200,
+    "body": {
+      "created_at": 1783643412,
+      "completed_at": 1783643414,
+      "id": "fe9f652f-a805-91da-b337-63f24e4a225a",
+      "max_output_tokens": 50,
+      "model": "grok-4.5",
+      "object": "response",
+      "output": [
+        {
+          "id": "rs_fe9f652f-a805-91da-b337-63f24e4a225a",
+          "summary": [
+            {
+              "text": "The user wants a summary of the repeated text in 3 words.\n",
+              "type": "summary_text"
+            }
+          ],
+          "type": "reasoning",
+          "status": "completed"
+        },
+        {
+          "content": [
+            {
+              "type": "output_text",
+              "text": "Fox jumps at sunset",
+              "logprobs": [],
+              "annotations": []
+            }
+          ],
+          "id": "msg_fe9f652f-a805-91da-b337-63f24e4a225a",
+          "role": "assistant",
+          "type": "message",
+          "status": "completed"
+        }
+      ],
+      "parallel_tool_calls": true,
+      "previous_response_id": null,
+      "reasoning": {
+        "effort": "low",
+        "summary": "detailed"
+      },
+      "temperature": 0.7,
+      "text": {
+        "format": {
+          "type": "text"
+        }
+      },
+      "tool_choice": "auto",
+      "tools": [],
+      "top_p": 0.95,
+      "usage": {
+        "input_tokens": 1234,
+        "input_tokens_details": {
+          "cached_tokens": 128
+        },
+        "output_tokens": 274,
+        "output_tokens_details": {
+          "reasoning_tokens": 270
+        },
+        "total_tokens": 1508,
+        "num_sources_used": 0,
+        "num_server_side_tools_used": 0,
+        "cost_in_usd_ticks": 39200000,
+        "context_details": {
+          "input_tokens": 1234,
+          "output_tokens": 274
+        }
+      },
+      "user": null,
+      "incomplete_details": null,
+      "status": "completed",
+      "store": false,
+      "metadata": {
+        "system_fingerprint": "fp_a39489019fa99b6e"
+      },
+      "background": false,
+      "service_tier": "default",
+      "truncation": "disabled",
+      "top_logprobs": 0,
+      "presence_penalty": 0,
+      "frequency_penalty": 0,
+      "prompt_cache_key": null,
+      "max_tool_calls": null,
+      "safety_identifier": null,
+      "error": null,
+      "instructions": null
+    }
+  }
+}

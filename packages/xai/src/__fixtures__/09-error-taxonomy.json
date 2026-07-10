@@ -1,0 +1,22 @@
+{
+  "nonexistent_model": {
+    "status": 400,
+    "body": {
+      "code": "invalid-argument",
+      "error": "Model not found: grok-99"
+    }
+  },
+  "malformed_body": {
+    "status": 422,
+    "body": {
+      "error": "Failed to deserialize the JSON body into the target type: data did not match any variant of untagged enum ModelInput"
+    }
+  },
+  "invalid_api_key": {
+    "status": 400,
+    "body": {
+      "code": "invalid-argument",
+      "error": "Incorrect API key provided. You can obtain an API key from https://console.x.ai."
+    }
+  }
+}
