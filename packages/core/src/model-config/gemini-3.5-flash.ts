@@ -44,11 +44,6 @@ export const Gemini35FlashConfigSchema = z
         title: 'Timeout',
         description: 'Logical request timeout in milliseconds.',
       }),
-      flexFallback: z.boolean().optional().meta({
-        title: 'Flex Fallback',
-        description:
-          'Allow provider fallback from flex when flex was explicitly selected.',
-      }),
       providerOptions: z
         .strictObject({
           google: z
@@ -102,6 +97,11 @@ export const Gemini35FlashConfigSchema = z
                   title: 'HTTP Options',
                   description: 'Allowlisted Google transport options.',
                 }),
+              flexFallback: z.boolean().optional().meta({
+                title: 'Flex Fallback',
+                description:
+                  'Allow provider fallback from flex when flex was explicitly selected.',
+              }),
             })
             .optional()
             .meta({

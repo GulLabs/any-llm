@@ -14,7 +14,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { computeCost, geminiPricingSource } from './cost.js'
-import { pricingVersion, GEMINI_PRICING } from './pricing.js'
+import { pricingVersion, GEMINI_PRICING, TIER_FACTOR } from './pricing.js'
 import type { Usage } from './types.js'
 
 // ---------------------------------------------------------------------------
@@ -283,6 +283,56 @@ describe('computeCost — edge cases', () => {
     expect(cost.details.input + cost.details.cached + cost.details.output).toBe(
       cost.microUsd,
     )
+  })
+
+  it('unknown (but defined) service tier → unpriced, never silently mapped to standard', () => {
+    const usage = makeUsage({ inputTokens: 10_000, outputTokens: 500 })
+    const cost = computeCost('gemini-2.5-pro', usage, 'enterprise-super-tier')
+
+    expect(cost.microUsd).toBeNull()
+    expect(cost.usd).toBeNull()
+    expect(cost.confidence).toBe('estimated')
+    expect(cost.details).toEqual({ input: 0, cached: 0, output: 0 })
+    expect(cost.pricingVersion).toBe(pricingVersion)
+    // Warning-naming contract: unpricedReason must name the offending tier.
+    expect(cost.unpricedReason).toContain('enterprise-super-tier')
+  })
+
+  it('undefined tier defaults to standard (factor 1) — not a mapping', () => {
+    const usage = makeUsage({ inputTokens: 10_000, outputTokens: 500 })
+    const costUndefined = computeCost('gemini-2.5-pro', usage)
+    const costStandard = computeCost('gemini-2.5-pro', usage, 'standard')
+
+    expect(costUndefined.microUsd).not.toBeNull()
+    expect(costUndefined.microUsd).toBe(costStandard.microUsd)
+    expect(costUndefined.confidence).toBe('exact')
+    expect(costUndefined.unpricedReason).toBeUndefined()
+  })
+
+  it('known tiers (standard/flex/batch) price exactly as before', () => {
+    const usage = makeUsage({ inputTokens: 10_000, outputTokens: 500 })
+
+    for (const tier of Object.keys(TIER_FACTOR)) {
+      const cost = computeCost('gemini-2.5-pro', usage, tier)
+      expect(cost.microUsd).not.toBeNull()
+      expect(cost.confidence).toBe('exact')
+      expect(cost.unpricedReason).toBeUndefined()
+    }
+
+    // flex/batch apply the documented 50% discount relative to standard.
+    const standard = computeCost('gemini-2.5-pro', usage, 'standard')
+    const flex = computeCost('gemini-2.5-pro', usage, 'flex')
+    const batch = computeCost('gemini-2.5-pro', usage, 'batch')
+    expect(flex.microUsd).toBe(Math.round((standard.microUsd as number) * 0.5))
+    expect(batch.microUsd).toBe(flex.microUsd)
+  })
+
+  it('unknown model still reports an unpricedReason naming the model', () => {
+    const usage = makeUsage({ inputTokens: 10_000, outputTokens: 500 })
+    const cost = computeCost('some-future-model-xyz', usage)
+
+    expect(cost.microUsd).toBeNull()
+    expect(cost.unpricedReason).toContain('some-future-model-xyz')
   })
 
   it('prefix match: gemini-2.5-pro-001 → matched to gemini-2.5-pro rates', () => {

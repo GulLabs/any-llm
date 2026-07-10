@@ -31,6 +31,8 @@ export type GoogleProviderOptions = {
     /** Per-request Google transport timeout in milliseconds. */
     timeout?: number
   }
+  /** Allow provider fallback from flex when flex was explicitly selected. */
+  flexFallback?: boolean
 }
 
 declare module '@gullabs/core' {

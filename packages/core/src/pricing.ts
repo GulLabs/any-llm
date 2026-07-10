@@ -32,6 +32,13 @@ export const pricingVersion = 'gemini-2026-06-28' as const
 /**
  * Service-tier price multipliers. Batch and Flex are a flat 50% of standard
  * (per Google's pricing page: "Batch API — 50% cost reduction"; Flex matches Batch).
+ *
+ * `serviceTier` is an opaque, provider-defined string end-to-end — this map is
+ * the *only* place a tier name is resolved to a multiplier. A tier key not
+ * present here is never coerced to `standard`: `computeCost` (cost.ts) treats
+ * that as an unpriced call (reject-don't-map), not a mapping to this table's
+ * default. `undefined` (no tier requested) is the one case that legitimately
+ * defaults to `standard` — that is documented default behavior, not a guess.
  */
 export const TIER_FACTOR: Readonly<Record<string, number>> = Object.freeze({
   standard: 1,

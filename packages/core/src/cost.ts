@@ -98,20 +98,29 @@ function selectRates(
  *
  * **Algorithm:**
  * 1. Look up rates for `model`; if not found, return an `estimated` Cost with
- *    `microUsd: null` and zero-filled details.
- * 2. Determine which rate tier applies (base vs. `>200k` long-context).
- * 3. Compute billable input: `inputTokens − (cachedInputTokens ?? 0)`, clamped
+ *    `microUsd: null`, zero-filled details, and an `unpricedReason` naming
+ *    the model.
+ * 2. Resolve the service-tier multiplier from `tier`. `undefined` defaults to
+ *    standard (factor 1). A *defined* tier absent from {@link TIER_FACTOR} is
+ *    never coerced to standard — it short-circuits to the same unpriced shape
+ *    as step 1, with an `unpricedReason` naming the tier.
+ * 3. Determine which rate tier applies (base vs. `>200k` long-context).
+ * 4. Compute billable input: `inputTokens − (cachedInputTokens ?? 0)`, clamped
  *    to `0` if cached > input (defensive; the GROSS invariant should prevent
  *    this, but we protect against malformed adapter output).
- * 4. Round each component to the nearest integer micro-USD **independently**.
- * 5. Define `microUsd` as the sum of the three components — this guarantees
+ * 5. Round each component to the nearest integer micro-USD **independently**.
+ * 6. Define `microUsd` as the sum of the three components — this guarantees
  *    `details.input + details.cached + details.output === microUsd` exactly.
  *
  * @param model - Model identifier string used for routing (e.g. `"gemini-2.5-pro"`).
  * @param usage - GROSS token usage for the call.
- * @param tier - Service tier (`'flex'` | `'standard'` | `'batch'`). `flex`/`batch`
- *   apply a 50% discount on every rate (per Google pricing); unknown tiers are
- *   treated as `standard`. Defaults to `'standard'` when omitted.
+ * @param tier - Opaque, provider-defined service tier string (e.g. `'flex'`,
+ *   `'standard'`, `'batch'`). Only tiers present in {@link TIER_FACTOR} carry a
+ *   known pricing multiplier. `undefined` means "no tier specified" and
+ *   defaults to the `'standard'` multiplier (1×) — this is a documented
+ *   default, not a guess. A *defined* tier that is not a `TIER_FACTOR` key is
+ *   never mapped to `standard` (reject-don't-map): the call resolves to the
+ *   unpriced path instead, per the same convention used for unknown models.
  * @returns A frozen {@link Cost} value.
  */
 export function computeCost(model: string, usage: Usage, tier?: string): Cost {
@@ -125,14 +134,30 @@ export function computeCost(model: string, usage: Usage, tier?: string): Cost {
       pricingVersion,
       confidence: 'estimated',
       details: { input: 0, cached: 0, output: 0 },
+      unpricedReason: `Unknown model "${model}"; no pricing entry found.`,
+    }
+  }
+
+  // Resolve the service-tier multiplier. `undefined` means "unspecified" and
+  // defaults to standard (factor 1) — that is documented default behavior,
+  // not a mapping. A *defined* tier that isn't a recognized TIER_FACTOR key
+  // must NOT be silently rewritten to standard rates (reject-don't-map): it
+  // resolves to the unpriced path instead, mirroring the unknown-model case.
+  const factor = tier === undefined ? 1 : TIER_FACTOR[tier]
+  if (factor === undefined) {
+    return {
+      microUsd: null,
+      usd: null,
+      pricingVersion,
+      confidence: 'estimated',
+      details: { input: 0, cached: 0, output: 0 },
+      unpricedReason: `Unknown service tier "${tier}"; refusing to guess a pricing multiplier.`,
     }
   }
 
   // Select rate tier based on GROSS input token count (long-context premium).
   const base = selectRates(rates, usage.inputTokens)
 
-  // Apply the service-tier multiplier (flex/batch = 0.5 × standard).
-  const factor = TIER_FACTOR[tier ?? 'standard'] ?? 1
   const inputPerM = base.inputPerM * factor
   const cachedPerM = base.cachedPerM * factor
   const outputPerM = base.outputPerM * factor

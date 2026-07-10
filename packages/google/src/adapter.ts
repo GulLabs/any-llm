@@ -55,6 +55,7 @@ type GeminiDispatchConfig = GeminiGenerateConfig & {
 
 const ALLOWED_GOOGLE_PROVIDER_OPTION_KEYS = new Set([
   'cachedContent',
+  'flexFallback',
   'httpOptions',
   'safetySettings',
   'tools',
@@ -185,7 +186,7 @@ function mapGoogleProviderOptions(
   model: string,
   structuredOutputRequested: boolean,
   descriptorGrounding: boolean | undefined,
-): Partial<GeminiDispatchConfig> {
+): Partial<GeminiDispatchConfig> & { flexFallback?: boolean } {
   if (googleOpts === undefined) {
     return {}
   }
@@ -216,11 +217,11 @@ function mapGoogleProviderOptions(
     throw badGoogleProviderOptions(
       `providerOptions.google contains unsupported keys [${unknownKeys.join(
         ', ',
-      )}] for model "${model}". Allowed keys: cachedContent, httpOptions, safetySettings, tools.`,
+      )}] for model "${model}". Allowed keys: cachedContent, flexFallback, httpOptions, safetySettings, tools.`,
     )
   }
 
-  const mapped: Partial<GeminiDispatchConfig> = {}
+  const mapped: Partial<GeminiDispatchConfig> & { flexFallback?: boolean } = {}
 
   if (googleOpts['cachedContent'] !== undefined) {
     if (
@@ -232,6 +233,15 @@ function mapGoogleProviderOptions(
       )
     }
     mapped.cachedContent = googleOpts['cachedContent']
+  }
+
+  if (googleOpts['flexFallback'] !== undefined) {
+    if (typeof googleOpts['flexFallback'] !== 'boolean') {
+      throw badGoogleProviderOptions(
+        `providerOptions.google.flexFallback must be a boolean for model "${model}".`,
+      )
+    }
+    mapped.flexFallback = googleOpts['flexFallback']
   }
 
   if (googleOpts['httpOptions'] !== undefined) {
@@ -861,7 +871,7 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
 
         if (
           config.serviceTier === 'flex' &&
-          genConfig.flexFallback !== false &&
+          googleProviderConfig.flexFallback !== false &&
           isGeminiCapacityError(typed)
         ) {
           config.serviceTier = 'standard'

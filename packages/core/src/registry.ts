@@ -55,7 +55,7 @@ export interface ModelDescriptor {
     sampling?: 'tunable' | 'fixed'
     caching?: { explicit: boolean; minTokens: number }
     grounding?: boolean
-    serviceTiers?: ('flex' | 'standard')[]
+    serviceTiers?: readonly string[]
   }
   /** Zod runtime schema for the full per-model config contract. */
   configSchema: z.ZodType

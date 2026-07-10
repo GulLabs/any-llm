@@ -195,19 +195,13 @@ export interface GenConfig {
   /** Reasoning / thinking intent; exact fields are selected by the model schema. */
   reasoning?: ReasoningIntent
   /**
-   * Explicit service tier. Omitted tier stays omitted and uses provider-default
-   * request behavior.
+   * Explicit service tier. Opaque provider-defined string — admitted values
+   * are constrained by each model's strict config schema (e.g. Gemini schemas
+   * admit `'flex' | 'standard'`; models without tiers never admit this key at
+   * all since their schemas are strict and reject unknown keys). Omitted tier
+   * stays omitted and uses provider-default request behavior.
    */
-  serviceTier?: 'flex' | 'standard'
-  /**
-   * Gemini Flex capacity fallback. Valid only when the same parsed config
-   * explicitly sets `serviceTier: 'flex'`.
-   *
-   * Defaults to `true` on explicit Flex calls: Gemini flex capacity errors are
-   * retried once by the provider adapter on standard tier. Set to `false` to
-   * surface the original flex capacity error.
-   */
-  flexFallback?: boolean
+  serviceTier?: string
   /**
    * Overall wall-clock ceiling for the logical call.
    *
@@ -369,6 +363,13 @@ export interface Cost {
     /** Cost of output tokens (thinking is billed here, not separately). */
     output: number
   }
+  /**
+   * Present only when `microUsd` is `null`. Names the specific reason pricing
+   * was refused (e.g. an unrecognized model, or an unrecognized service tier)
+   * — never a silent substitution. Consumers (e.g. the engine) surface this
+   * verbatim in the "unpriced" warning.
+   */
+  unpricedReason?: string
 }
 
 /**

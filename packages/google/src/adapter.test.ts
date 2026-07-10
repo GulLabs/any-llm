@@ -363,7 +363,12 @@ describe('flex fallback', () => {
 
     await expect(
       adapter.run(
-        makeResolvedReq({ config: { serviceTier: 'flex', flexFallback: false } }),
+        makeResolvedReq({
+          config: {
+            serviceTier: 'flex',
+            providerOptions: { google: { flexFallback: false } },
+          },
+        }),
         FAKE_CTX,
       ),
     ).rejects.toMatchObject({ kind: 'server', servedServiceTier: 'flex' })

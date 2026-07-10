@@ -661,14 +661,14 @@ describe('engine — config resolution', () => {
     expect(calls[0]?.temperature).toBe(0.9)
   })
 
-  it('merged config is validated before dispatch and rejects flexFallback without explicit flex tier', async () => {
+  it('merged config is validated before dispatch and rejects an unsupported serviceTier value', async () => {
     const adapter = new FakeAdapter('google', makeSuccessResult())
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
       clock: new FakeClock(),
       ids: new FakeIds(),
-      defaults: { flexFallback: false },
+      defaults: { serviceTier: 'flex' },
     })
 
     await expect(
@@ -683,7 +683,7 @@ describe('engine — config resolution', () => {
         {},
         {
           auth: TEST_AUTH,
-          config: { serviceTier: 'standard' },
+          config: { serviceTier: 'nonexistent-tier' },
         },
       ),
     ).rejects.toMatchObject({ kind: 'bad_request', retryable: false })

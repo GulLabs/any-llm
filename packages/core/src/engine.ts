@@ -638,13 +638,6 @@ async function validateResolvedConfig(
   descriptor: ModelDescriptor | undefined,
   config: GenConfig,
 ): Promise<ResolvedConfig> {
-  if (config.flexFallback !== undefined && config.serviceTier !== 'flex') {
-    throw new LlmError(
-      `Model "${model}" config.flexFallback: flexFallback requires config.serviceTier to be explicitly "flex"; remove flexFallback or set serviceTier to "flex".`,
-      { kind: 'bad_request', retryable: false },
-    )
-  }
-
   if (descriptor?.validateConfig === undefined) {
     return config
   }
@@ -1262,9 +1255,11 @@ export function createClient(config: ClientConfig): Client {
               adapterResult.servedServiceTier ?? effectiveReq.config.serviceTier,
             )
             if (cost.microUsd === null) {
+              const reason =
+                cost.unpricedReason !== undefined ? ` Reason: ${cost.unpricedReason}` : ''
               costWarnings.push({
                 type: 'other',
-                message: `Model "${req.model}" is unpriced (cost.microUsd is null); usage was recorded but not costed.`,
+                message: `Model "${req.model}" is unpriced (cost.microUsd is null); usage was recorded but not costed.${reason}`,
               })
             }
           }

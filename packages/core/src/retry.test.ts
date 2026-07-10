@@ -297,7 +297,7 @@ describe('retryMiddleware', () => {
   }, 2_000)
 
   it('does not pin servedServiceTier onto a descriptor with no supported service tiers', async () => {
-    const seenTiers: Array<'flex' | 'standard' | undefined> = []
+    const seenTiers: Array<string | undefined> = []
     const req: ResolvedRequest = {
       ...makeReq(),
       model: 'gemma-4-31b-it',
@@ -328,7 +328,7 @@ describe('retryMiddleware', () => {
   })
 
   it('does not pin an unsupported servedServiceTier onto the next retry attempt', async () => {
-    const seenTiers: Array<'flex' | 'standard' | undefined> = []
+    const seenTiers: Array<string | undefined> = []
     const req: ResolvedRequest = {
       ...makeReq(),
       modelDescriptor: makeTestDescriptor({
@@ -356,6 +356,37 @@ describe('retryMiddleware', () => {
     await mw.intercept(req, makeCtx(), handler)
 
     expect(seenTiers).toEqual([undefined, undefined])
+  })
+
+  it('pins a served service tier from a non-Google descriptor vocabulary', async () => {
+    const seenTiers: Array<string | undefined> = []
+    const req: ResolvedRequest = {
+      ...makeReq(),
+      modelDescriptor: makeTestDescriptor({
+        model: 'priority-tiered-model',
+        provider: 'google',
+        capabilities: { serviceTiers: ['priority', 'default'] },
+      }),
+    }
+
+    let calls = 0
+    const handler: Handler = async (attemptReq) => {
+      calls++
+      seenTiers.push(attemptReq.config.serviceTier)
+      if (calls === 1) {
+        throw new LlmError('Rate limited', {
+          kind: 'rate_limited',
+          retryable: true,
+          servedServiceTier: 'priority',
+        })
+      }
+      return DUMMY_RESULT
+    }
+
+    const mw = retryMiddleware({ maxAttempts: 2 }, { sleep: NO_SLEEP, random: () => 0 })
+    await mw.intercept(req, makeCtx(), handler)
+
+    expect(seenTiers).toEqual([undefined, 'priority'])
   })
 })
 

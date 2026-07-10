@@ -241,10 +241,8 @@ describe('ReasoningIntent type shape', () => {
 })
 
 describe('GenConfig type shape', () => {
-  it('serviceTier is flex | standard | undefined', () => {
-    expectTypeOf<GenConfig['serviceTier']>().toEqualTypeOf<
-      'flex' | 'standard' | undefined
-    >()
+  it('serviceTier is an opaque provider-defined string | undefined', () => {
+    expectTypeOf<GenConfig['serviceTier']>().toEqualTypeOf<string | undefined>()
   })
 
   it('providerOptions is the schema-admitted provider options shape', () => {
