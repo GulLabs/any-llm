@@ -34,7 +34,11 @@ export {
 } from './models.js'
 export { geminiPricingSource } from './cost.js'
 export { GEMINI_PRICING, TIER_FACTOR, pricingVersion } from './pricing.js'
-export type { GeminiClientLike } from './client.js'
+export type {
+  GeminiClientLike,
+  GeminiCountTokensParams,
+  GeminiCountTokensResponseShape,
+} from './client.js'
 export {
   buildGoogleClient,
   requireApiKey,

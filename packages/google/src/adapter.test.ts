@@ -2139,6 +2139,9 @@ describe('FIX A-2: client-side flex AbortSignal ceiling', () => {
             sig?.addEventListener('abort', () => reject(sig.reason), { once: true })
           })
         },
+        countTokens() {
+          return Promise.resolve({ totalTokens: 0 })
+        },
       },
     }
 
@@ -2174,6 +2177,9 @@ describe('FIX A-2: client-side flex AbortSignal ceiling', () => {
             usageMetadata: {},
           })
         },
+        countTokens() {
+          return Promise.resolve({ totalTokens: 0 })
+        },
       },
     }
 
@@ -2208,6 +2214,9 @@ describe('FIX A-2: client-side flex AbortSignal ceiling', () => {
             }
             sig?.addEventListener('abort', () => reject(sig.reason), { once: true })
           })
+        },
+        countTokens() {
+          return Promise.resolve({ totalTokens: 0 })
         },
       },
     }

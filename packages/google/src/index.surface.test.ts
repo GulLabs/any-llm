@@ -14,6 +14,7 @@ import {
   TRANSPORT_TIMEOUT_BUFFER_MS,
   googleProvider,
 } from './index.js'
+import type { GeminiCountTokensParams, GeminiCountTokensResponseShape } from './index.js'
 
 describe('@gullabs/google package surface: timeout constants', () => {
   it('FLEX_DEFAULT_TIMEOUT_MS is exported and equals 1_500_000', () => {
@@ -28,5 +29,14 @@ describe('@gullabs/google package surface: timeout constants', () => {
 describe('@gullabs/google package surface: googleProvider', () => {
   it('googleProvider is a function reachable from the package root', () => {
     expect(typeof googleProvider).toBe('function')
+  })
+})
+
+describe('@gullabs/google package surface: token counting', () => {
+  it('GeminiCountTokensParams/GeminiCountTokensResponseShape types are reachable', () => {
+    const params: GeminiCountTokensParams = { model: 'gemini-2.5-pro', contents: [] }
+    const response: GeminiCountTokensResponseShape = { totalTokens: 1 }
+    expect(params.model).toBe('gemini-2.5-pro')
+    expect(response.totalTokens).toBe(1)
   })
 })

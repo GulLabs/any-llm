@@ -19,6 +19,9 @@ import type {
   JsonValue,
   AuthMaterial,
   Part,
+  Message,
+  TokenCountRequest,
+  TokenCount,
 } from '@gullabs/core'
 import {
   buildGoogleClient,
@@ -34,6 +37,7 @@ import type {
   GeminiContentPart,
   GeminiResponseShape,
   GeminiUsageMetadataShape,
+  GeminiCountTokensParams,
 } from './client.js'
 import { isGeminiCapacityError } from './flex-fallback.js'
 
@@ -450,6 +454,69 @@ function mapUsage(meta: GeminiUsageMetadataShape | undefined): Usage {
 }
 
 // ---------------------------------------------------------------------------
+// Message → Gemini contents mapping (shared by run() and countTokens())
+// ---------------------------------------------------------------------------
+
+/**
+ * Map a single {@link Part} to its Gemini SDK equivalent.
+ *
+ * - `text`          → `{ text }`
+ * - `inline-media`  → `{ inlineData: { mimeType, data } }` + optional `mediaResolution`
+ * - `file-uri`      → `{ fileData: { mimeType, fileUri } }` + optional `mediaResolution`
+ *
+ * `mediaResolution` IS supported as a per-part field by the Gemini SDK
+ * (`Part.mediaResolution`).  The normalised value is mapped to the
+ * `PartMediaResolutionLevel` string enum before emission.
+ */
+function mapPart(p: Part): GeminiContentPart {
+  switch (p.kind) {
+    case 'text':
+      return { text: p.text }
+
+    case 'inline-media': {
+      return {
+        inlineData: {
+          mimeType: p.mimeType,
+          data: p.data,
+        },
+        ...(p.mediaResolution !== undefined
+          ? { mediaResolution: { level: mapMediaResolution(p.mediaResolution) } }
+          : {}),
+      }
+    }
+
+    case 'file-uri': {
+      return {
+        fileData: {
+          mimeType: p.mimeType,
+          fileUri: p.uri,
+        },
+        ...(p.mediaResolution !== undefined
+          ? { mediaResolution: { level: mapMediaResolution(p.mediaResolution) } }
+          : {}),
+      }
+    }
+
+    default:
+      return assertNever(p)
+  }
+}
+
+/**
+ * Map engine {@link Message}s to Gemini SDK `contents`.
+ *
+ * Shared by `run()` (generation) and `countTokens()` (token counting) so both
+ * code paths map messages identically — a divergence here would make token
+ * counts unrepresentative of the actual generation call.
+ */
+export function mapMessagesToGeminiContents(messages: Message[]): GeminiContent[] {
+  return messages.map((msg) => ({
+    role: msg.role === 'assistant' ? 'model' : 'user',
+    parts: msg.parts.map(mapPart),
+  }))
+}
+
+// ---------------------------------------------------------------------------
 // Adapter options
 // ---------------------------------------------------------------------------
 
@@ -499,55 +566,7 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       // 1. Map messages → contents
       // ------------------------------------------------------------------
 
-      /**
-       * Map a single {@link Part} to its Gemini SDK equivalent.
-       *
-       * - `text`          → `{ text }`
-       * - `inline-media`  → `{ inlineData: { mimeType, data } }` + optional `mediaResolution`
-       * - `file-uri`      → `{ fileData: { mimeType, fileUri } }` + optional `mediaResolution`
-       *
-       * `mediaResolution` IS supported as a per-part field by the Gemini SDK
-       * (`Part.mediaResolution`).  The normalised value is mapped to the
-       * `PartMediaResolutionLevel` string enum before emission.
-       */
-      const mapPart = (p: Part): GeminiContentPart => {
-        switch (p.kind) {
-          case 'text':
-            return { text: p.text }
-
-          case 'inline-media': {
-            return {
-              inlineData: {
-                mimeType: p.mimeType,
-                data: p.data,
-              },
-              ...(p.mediaResolution !== undefined
-                ? { mediaResolution: { level: mapMediaResolution(p.mediaResolution) } }
-                : {}),
-            }
-          }
-
-          case 'file-uri': {
-            return {
-              fileData: {
-                mimeType: p.mimeType,
-                fileUri: p.uri,
-              },
-              ...(p.mediaResolution !== undefined
-                ? { mediaResolution: { level: mapMediaResolution(p.mediaResolution) } }
-                : {}),
-            }
-          }
-
-          default:
-            return assertNever(p)
-        }
-      }
-
-      const contents: GeminiContent[] = req.messages.map((msg) => ({
-        role: msg.role === 'assistant' ? 'model' : 'user',
-        parts: msg.parts.map(mapPart),
-      }))
+      const contents: GeminiContent[] = mapMessagesToGeminiContents(req.messages)
 
       // ------------------------------------------------------------------
       // 2. Build GenerateContentConfig
@@ -1013,6 +1032,73 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       }
 
       return result
+    },
+
+    async countTokens(req: TokenCountRequest, ctx: AdapterCtx): Promise<TokenCount> {
+      if (req.provider !== 'google') {
+        throw new LlmError(
+          `geminiAdapter received a request for provider "${req.provider}", expected "google".`,
+          { kind: 'bad_request', retryable: false },
+        )
+      }
+
+      const contents = mapMessagesToGeminiContents(req.messages)
+      const params: GeminiCountTokensParams = {
+        model: req.model,
+        contents,
+        ...(req.system !== undefined || ctx.signal !== undefined
+          ? {
+              config: {
+                ...(req.system !== undefined
+                  ? { systemInstruction: { parts: [{ text: req.system }] } }
+                  : {}),
+                ...(ctx.signal !== undefined ? { abortSignal: ctx.signal } : {}),
+              },
+            }
+          : {}),
+      }
+
+      try {
+        const buildClient = opts?._clientFactory ?? buildGoogleClient
+        const client: GeminiClientLike =
+          opts?.client !== undefined ? opts.client : await buildClient(ctx.auth)
+        const response = await client.models.countTokens(params)
+
+        if (response.totalTokens === undefined) {
+          // Provider fault, not caller fault: the SDK call succeeded but the
+          // payload is malformed — classify as a (retryable) server error.
+          throw new LlmError(
+            'Gemini countTokens response is malformed: missing required field: totalTokens',
+            { kind: 'server', retryable: true, provider: 'google' },
+          )
+        }
+
+        const details: Record<string, number> | undefined =
+          response.cachedContentTokenCount !== undefined
+            ? { cached: response.cachedContentTokenCount }
+            : undefined
+
+        return {
+          totalTokens: response.totalTokens,
+          ...(details !== undefined ? { details } : {}),
+          raw: response as unknown as JsonValue,
+        }
+      } catch (rawErr) {
+        if (rawErr instanceof LlmError) throw rawErr
+        const classified = classifyError(rawErr)
+        throw new LlmError(classified.message, {
+          kind: classified.kind,
+          retryable: classified.retryable,
+          ...(classified.httpStatus !== undefined
+            ? { httpStatus: classified.httpStatus }
+            : {}),
+          ...(classified.retryAfterMs !== undefined
+            ? { retryAfterMs: classified.retryAfterMs }
+            : {}),
+          provider: 'google',
+          cause: classified.cause ?? rawErr,
+        })
+      }
     },
   }
 }

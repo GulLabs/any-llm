@@ -62,6 +62,9 @@ export type {
   EngineCtx,
   Handler,
   Middleware,
+  // Token counting
+  TokenCountRequest,
+  TokenCount,
 } from './ports.js'
 
 // Record

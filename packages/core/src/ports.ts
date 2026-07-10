@@ -135,6 +135,39 @@ export interface AdapterResult {
 }
 
 /**
+ * A request to count tokens for a prospective call without generating.
+ *
+ * Deliberately narrower than {@link ResolvedRequest}: no `config`, no
+ * `outputJsonSchema`, no `modelDescriptor` — token counting only needs the
+ * text-bearing payload (`system` + `messages`) plus model identity.
+ */
+export interface TokenCountRequest {
+  /** Provider identifier — routes to the adapter exactly like `generate`. */
+  provider: string
+  /** Provider-native model string, forwarded verbatim to the adapter/SDK. */
+  model: string
+  /** Optional system instruction included in the token count. */
+  system?: string
+  /** Conversation history included in the token count. */
+  messages: Message[]
+}
+
+/**
+ * The result of a token-count query.
+ */
+export interface TokenCount {
+  /** Total tokens the provider would count for the request. */
+  totalTokens: number
+  /**
+   * Open per-category breakdown (e.g. `{ cached: 128 }`).
+   * Present only when the provider reports a breakdown.
+   */
+  details?: Record<string, number>
+  /** The provider's raw token-count response, stored verbatim. */
+  raw: JsonValue
+}
+
+/**
  * A provider adapter — the only interface that must be implemented to add a
  * new LLM provider to the engine.
  *
@@ -158,6 +191,13 @@ export interface ProviderAdapter {
    * @throws {@link LlmError} — adapters must classify SDK errors before throwing.
    */
   run(req: ResolvedRequest, ctx: AdapterCtx): Promise<AdapterResult>
+  /**
+   * OPTIONAL: count tokens for a prospective request without generating.
+   * A metadata query only — never calls the generation endpoint, never
+   * produces output, never persists. Adapters that implement this must
+   * classify SDK errors into {@link LlmError} exactly as {@link run} does.
+   */
+  countTokens?(req: TokenCountRequest, ctx: AdapterCtx): Promise<TokenCount>
 }
 
 // ---------------------------------------------------------------------------

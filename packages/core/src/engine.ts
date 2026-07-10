@@ -35,6 +35,8 @@ import type {
   CallStartEvent,
   CallSuccessEvent,
   CallErrorEvent,
+  TokenCountRequest,
+  TokenCount,
 } from './ports.js'
 import type {
   LlmRequest,
@@ -239,6 +241,14 @@ export interface Client {
     vars: Record<string, string>,
     opts: RunStructuredOptions,
   ): Promise<LlmResult>
+
+  /**
+   * Count tokens for a prospective request without generating.
+   * Same auth/signal semantics as {@link generate}. Throws `LlmError('bad_request')`
+   * when the (provider, model) pair is not registered, or when the resolved
+   * adapter does not implement `countTokens`.
+   */
+  countTokens(request: TokenCountRequest, opts: GenerateOptions): Promise<TokenCount>
 }
 
 // ---------------------------------------------------------------------------
@@ -1614,6 +1624,92 @@ export function createClient(config: ClientConfig): Client {
         runtimeOpts?.signal,
         callAuth,
       )
+    },
+
+    async countTokens(
+      request: TokenCountRequest,
+      opts: GenerateOptions,
+    ): Promise<TokenCount> {
+      if (typeof request.provider !== 'string' || request.provider.length === 0) {
+        throw new LlmError(
+          'request.provider is required — model identity is (provider, model).',
+          { kind: 'bad_request', retryable: false },
+        )
+      }
+      const runtimeOpts = opts as GenerateOptions | undefined
+      const callAuth = requireAuth(runtimeOpts?.auth)
+
+      const descriptor = registry.resolve(request.provider, request.model)
+      if (descriptor === undefined) {
+        throw new LlmError(
+          `No registered model for provider "${request.provider}" model "${request.model}".`,
+          { kind: 'bad_request', retryable: false },
+        )
+      }
+      if (descriptor.provider !== request.provider) {
+        throw new LlmError(
+          `Registry returned a descriptor for provider "${descriptor.provider}" when provider "${request.provider}" (model "${request.model}") was requested — refusing to validate against a mismatched provider.`,
+          { kind: 'bad_request', retryable: false },
+        )
+      }
+
+      const adapter = routeFn(request.provider, request.model, adapters)
+      if (adapter.id !== request.provider) {
+        throw new LlmError(
+          `Adapter routing invariant violated: router returned adapter "${adapter.id}" ` +
+            `for request provider "${request.provider}".`,
+          { kind: 'bad_request', retryable: false },
+        )
+      }
+
+      if (adapter.countTokens === undefined) {
+        throw new LlmError(
+          `Provider "${request.provider}" does not support token counting.`,
+          { kind: 'bad_request', retryable: false },
+        )
+      }
+
+      const callId = ids.callId()
+      const startMs = clock.now()
+      safeLogger.info(
+        { callId, provider: request.provider, model: request.model },
+        'llm.count_tokens.start',
+      )
+
+      try {
+        const result = await adapter.countTokens(request, {
+          auth: callAuth,
+          logger: safeLogger,
+          ...(runtimeOpts?.signal !== undefined ? { signal: runtimeOpts.signal } : {}),
+        })
+        const latencyMs = clock.now() - startMs
+        safeLogger.info(
+          {
+            callId,
+            provider: request.provider,
+            model: request.model,
+            totalTokens: result.totalTokens,
+            latencyMs,
+          },
+          'llm.count_tokens.success',
+        )
+        return result
+      } catch (rawErr) {
+        const err = classifyError(rawErr)
+        attachCallContext(err, { callId })
+        const latencyMs = clock.now() - startMs
+        safeLogger.error(
+          {
+            callId,
+            provider: request.provider,
+            model: request.model,
+            errorKind: err.kind,
+            latencyMs,
+          },
+          'llm.count_tokens.error',
+        )
+        throw err
+      }
     },
   }
 }

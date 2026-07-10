@@ -28,6 +28,8 @@ export type {
   FakeGeminiResponseOpts,
   FakeGeminiBlockedOpts,
   GeminiScript,
+  GeminiCountTokensResponseLike,
+  GeminiCountTokensScript,
   FakeGeminiModels,
   FakeGeminiClient,
 } from './fake-gemini.js'

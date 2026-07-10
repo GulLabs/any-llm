@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, expectTypeOf } from 'vitest'
 
 import * as surface from './index.js'
+import type { TokenCountRequest, TokenCount, Client } from './index.js'
 
 const removedConfigSchemaFactory = `makeGeminiConfig${'Schema'}`
 const removedConfigValidatorFactory = `makeGeminiConfig${'Validator'}`
@@ -40,5 +41,25 @@ describe('@gullabs/core package surface', () => {
     expect(removedGoogleProviderOptions in surface).toBe(false)
     expect(removedGoogleSafetySetting in surface).toBe(false)
     expect(removedGoogleSearchTool in surface).toBe(false)
+  })
+
+  it('exports TokenCountRequest/TokenCount types and Client.countTokens', () => {
+    expectTypeOf<TokenCountRequest>().toEqualTypeOf<{
+      provider: string
+      model: string
+      system?: string
+      messages: import('./types.js').Message[]
+    }>()
+    expectTypeOf<TokenCount>().toEqualTypeOf<{
+      totalTokens: number
+      details?: Record<string, number>
+      raw: import('./types.js').JsonValue
+    }>()
+    expectTypeOf<Client['countTokens']>().toEqualTypeOf<
+      (
+        request: TokenCountRequest,
+        opts: import('./engine.js').GenerateOptions,
+      ) => Promise<TokenCount>
+    >()
   })
 })
