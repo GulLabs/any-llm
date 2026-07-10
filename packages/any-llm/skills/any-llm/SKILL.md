@@ -229,6 +229,17 @@ const result = await client.generate(
 `system` is derived only from the explicit `systemInstruction` input — never inferred
 from `contents`.
 
+## Testing with `@gullabs/testing`
+
+Real hosts don't call `createClient()` at call sites — they own a factory module that
+assembles the client once and hand call sites the built client. `@gullabs/testing`'s
+fakes (`makeFakeGemini`, `FakeAdapter`, `RecordingSink`, `FakeClock`, `FakeIds`, ...) are
+designed to inject through that same host-owned factory unchanged, via injectable
+override parameters with production defaults — not via `vi.mock()`. See
+`packages/testing/README.md` § "Wiring fakes through a host-owned factory" for a
+complete two-file (factory + vitest test) example, including the port-level
+`FakeAdapter` variant for bypassing the Gemini SDK shape entirely.
+
 ## `defineCallSite` — reusable prompt templates
 
 ```ts
