@@ -1,4 +1,21 @@
 {
+  "_note": "requestSchema is the verbatim text.format json_schema sent in the live 2026-07-09 probe; it must stay byte-identical to body.text.format.schema (xAI echoes the request schema back in the response body).",
+  "requestSchema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string"
+      },
+      "email": {
+        "type": "string",
+        "format": "email"
+      },
+      "age": {
+        "type": "number"
+      }
+    },
+    "required": ["name", "email"]
+  },
   "status": 200,
   "body": {
     "created_at": 1783655403,
@@ -58,10 +75,7 @@
               "type": "number"
             }
           },
-          "required": [
-            "name",
-            "email"
-          ]
+          "required": ["name", "email"]
         }
       }
     },
