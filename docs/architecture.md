@@ -62,7 +62,12 @@ Concrete implementations live outside the engine, in separate packages or in hos
   │                                                        │
   │  • Config resolution (deep-merge; omitted serviceTier  │
   │    stays omitted)                                      │
+  │  • runStructured prologue: requireInputContract check, │
+  │    callSite.inputSchema, strict interpolation          │
+  │    (pre-callId, row-less — ADR-025)                    │
   │  • callId assignment + telemetry.onStart               │
+  │  • request.inputContract / generate() require check    │
+  │    (post-callId, ledgered — ADR-025)                   │
   │  • Middleware chain composition (reduceRight)          │
   │  • Per-attempt: route → auth → acquire → adapter.run   │
   │    → normalizeUsage → parse JSON → price → buildRecord │
@@ -110,10 +115,20 @@ interpolation and config-layer merging before handing off to the shared core.
    scalars and arrays. The merged config is parsed through the selected model descriptor's exact
    Zod schema. Omitted `serviceTier` stays omitted and uses provider-default request behavior.
 
-3. **Template rendering** (`runStructured` only). `{{var}}` placeholders in `system` and
-   `userTemplate` are replaced in a single, non-recursive pass. Values are substituted verbatim
-   (no re-scanning) to prevent template injection. Missing variables are left as the literal
-   `{{var}}` placeholder so the absence is visible.
+3. **Input contracts and template rendering** (`runStructured` only; ADR-025). Before any request
+   is built:
+   - If `config.requireInputContract` is set, `callSite.inputSchema` must be present — this is the
+     FIRST check in the prologue, ahead of everything below. Missing it throws
+     `LlmError('bad_request')`, row-less (pre-`callId`).
+   - If `callSite.inputSchema` (a `StandardSchemaV1`) is present, `vars` is validated against it.
+     A violation throws `LlmError('bad_request', { issues })`, row-less.
+   - Strict template interpolation runs next: every `{{\w+}}` placeholder referenced by `system`
+     or `userTemplate` must have a string-typed value in `vars`, or the call is refused —
+     `LlmError('bad_request', { issues })`, one issue per violating placeholder, row-less. There
+     is no leave-placeholder fallback and no escape syntax for literal `{{...}}` text; `vars`
+     entries unused by any template are allowed. Only once all placeholders resolve does
+     `{{var}}` → value substitution happen, in a single non-recursive pass (values are never
+     re-scanned, preventing template injection).
 
 4. **callId assignment.** One UUID per logical call, stable across all retry attempts. Emitted
    in `llm.call.start` log and forwarded to `telemetry.onStart`.
@@ -124,7 +139,30 @@ interpolation and config-layer merging before handing off to the shared core.
    boundary (reject, don't map). The resolved descriptor is attached to `ResolvedRequest` for
    the adapter's use (`reasoningApi` variant, capability flags).
 
-6. **Middleware chain construction.** `config.middleware` (outermost-first) is folded right-to-left
+6. **Request input contract** (`generate()` and `runStructured()`; ADR-025). Runs inside
+   `runPipeline`, immediately after `callId` assignment and before the middleware chain is
+   entered — so a violation never consumes `@gullabs/quota` budget and is checked exactly once
+   per logical call, never per retry attempt:
+   - If `config.requireInputContract` is set and `request.inputContract` is absent, the call is
+     refused with `LlmError('bad_request')`.
+   - If `request.inputContract` (`{ schema, value }`) is present, `value` is validated against
+     `schema`. A violation throws `LlmError('bad_request', { issues })`.
+   - `runStructured` never sets `inputContract` — its `callSite.inputSchema` check already ran in
+     the prologue (step 3), pre-`callId`.
+   - Because both checks here run after `callId` assignment, a violation writes a synthetic
+     zero-usage `attemptNumber: 0` ledger record (step 7 below) rather than staying row-less.
+
+7. **Pre-attempt refusal record** (ADR-025). Any `LlmError` thrown after `callId` assignment but
+   before `runAttempt` starts — a request input-contract violation (step 6), or a pre-attempt
+   refusal from a middleware such as `@gullabs/quota` — writes one synthetic `LlmCallRecord`:
+   `attemptNumber: 0`, all-zero usage, `cost` omitted, `status` derived from the error's `kind`
+   via the same `errorKindToStatus` mapping used for real attempts. `attemptId` follows the same
+   idempotency rule as a real first attempt (`request.idempotencyKey` when supplied, minted
+   otherwise). This is the only ledger-visible trace of a pre-attempt refusal; errors thrown
+   before `callId` assignment (steps 1–3, 5) stay row-less. See ADR-025 for the full boundary
+   table and the deliberate `CallErrorEvent.attemptId` telemetry divergence.
+
+8. **Middleware chain construction.** `config.middleware` (outermost-first) is folded right-to-left
    around `runAttempt` using `reduceRight`. The resulting `Handler` is a single function that
    captures the full chain.
 

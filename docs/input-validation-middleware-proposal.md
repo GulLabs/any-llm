@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted — maintainer ruling recorded 2026-07-10; ready for ADR + implementation.
+Accepted and implemented. Recorded as ADR-025 in `DECISIONS.md`, per the reshaped
+engine-level design in `docs/input-contracts-plan.md`.
 
 Attribution: proposed by the ai-studio pipeline team, from a live incident during
 the V2 pipeline (2026-07-10). Owner will triage with the any-llm team.
