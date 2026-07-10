@@ -53,14 +53,18 @@ export type XaiOutputItemLike = XaiReasoningOutputItemLike | XaiMessageOutputIte
 /**
  * Token usage metadata returned alongside an xAI response.
  *
- * All fields are optional/loose because the real API may omit them for
- * certain request types, and has been observed to add additional
- * provider-specific numeric fields.
+ * `input_tokens`/`output_tokens` are required to stay structurally
+ * assignable to `XaiUsageShape` from `@gullabs/xai`'s `client.ts` (which
+ * declares them as required, matching the real API's guaranteed fields) —
+ * {@link fakeXaiResponse} defaults both to `0` when not supplied. The rest
+ * remain optional/loose since the real API may omit them for certain
+ * request types, and has been observed to add additional provider-specific
+ * numeric fields.
  */
 export interface XaiUsageLike {
-  input_tokens?: number
+  input_tokens: number
   input_tokens_details?: { cached_tokens?: number }
-  output_tokens?: number
+  output_tokens: number
   output_tokens_details?: { reasoning_tokens?: number }
   total_tokens?: number
   [otherKeys: string]: unknown
@@ -70,15 +74,21 @@ export interface XaiUsageLike {
  * The structural shape of an xAI Responses API response that the adapter
  * consumes. Mirrors the subset of the real response body we actually read —
  * nothing more, so the adapter can swap in the real type trivially.
+ *
+ * `id`, `model`, `status`, `output`, and `usage` are required (not optional)
+ * to stay structurally assignable to `XaiResponseShape` from
+ * `@gullabs/xai`'s `client.ts` (which declares them as required) —
+ * {@link fakeXaiResponse} always populates all five, so this is a
+ * zero-cost tightening, not a behavior change.
  */
 export interface XaiResponseLike {
-  id?: string
-  model?: string
+  id: string
+  model: string
   /** Observed values: `'completed'`, `'incomplete'`. */
-  status?: string
+  status: string
   incomplete_details?: { reason?: string } | null
-  output?: XaiOutputItemLike[]
-  usage?: XaiUsageLike
+  output: XaiOutputItemLike[]
+  usage: XaiUsageLike
   reasoning?: { effort?: string; summary?: string }
   store?: boolean
   prompt_cache_key?: string | null
@@ -157,11 +167,11 @@ export function fakeXaiResponse(opts: FakeXaiResponseOpts = {}): XaiResponseLike
   }
 
   const usage: XaiUsageLike = {
-    ...(opts.inputTokens !== undefined ? { input_tokens: opts.inputTokens } : {}),
+    input_tokens: opts.inputTokens ?? 0,
+    output_tokens: opts.outputTokens ?? 0,
     ...(opts.cachedTokens !== undefined
       ? { input_tokens_details: { cached_tokens: opts.cachedTokens } }
       : {}),
-    ...(opts.outputTokens !== undefined ? { output_tokens: opts.outputTokens } : {}),
     ...(opts.reasoningTokens !== undefined
       ? { output_tokens_details: { reasoning_tokens: opts.reasoningTokens } }
       : {}),
@@ -216,7 +226,7 @@ export type XaiScript =
 export interface FakeXaiClient {
   /** Drop-in replacement for `new OpenAI(...).responses`. */
   readonly responses: {
-    create(params: unknown): Promise<XaiResponseLike>
+    create(params: unknown, options?: { signal?: AbortSignal }): Promise<XaiResponseLike>
   }
   /**
    * Every argument object passed to `responses.create()`, in order.
@@ -251,7 +261,13 @@ export function makeFakeXai(script: XaiScript): FakeXaiClient {
   const calls: unknown[] = []
   let callIndex = 0
 
-  const create = async (params: unknown): Promise<XaiResponseLike> => {
+  // `options` (e.g. `{ signal }`) is accepted for structural compatibility
+  // with `XaiClientLike.responses.create` but intentionally ignored — the
+  // fake never actually performs I/O, so there is nothing to abort.
+  const create = async (
+    params: unknown,
+    _options?: { signal?: AbortSignal },
+  ): Promise<XaiResponseLike> => {
     calls.push(params)
 
     if (typeof script === 'function') {

@@ -71,9 +71,14 @@ describe('fakeXaiResponse', () => {
     })
   })
 
-  it('omits usage keys that were not specified', () => {
+  it('omits optional usage keys that were not specified, but defaults output_tokens to 0', () => {
     const r = fakeXaiResponse({ inputTokens: 5 })
-    expect(r.usage).toEqual({ input_tokens: 5 })
+    expect(r.usage).toEqual({ input_tokens: 5, output_tokens: 0 })
+  })
+
+  it('defaults both input_tokens and output_tokens to 0 when neither is specified', () => {
+    const r = fakeXaiResponse()
+    expect(r.usage).toEqual({ input_tokens: 0, output_tokens: 0 })
   })
 
   it('sets status and incomplete_details when incomplete', () => {

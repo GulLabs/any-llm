@@ -171,6 +171,11 @@ export interface XaiResponseShape {
   reasoning?: { effort?: string; summary?: string }
   store?: boolean
   prompt_cache_key?: string | null
+  /**
+   * Response-level metadata (e.g. `system_fingerprint`) — surfaced into
+   * `AdapterResult.providerMetadata` by the adapter when present.
+   */
+  metadata?: { [key: string]: unknown } | null
 }
 
 // ---------------------------------------------------------------------------
@@ -188,7 +193,10 @@ export interface XaiResponseShape {
  */
 export interface XaiClientLike {
   responses: {
-    create(params: XaiResponseCreateParams): Promise<XaiResponseShape>
+    create(
+      params: XaiResponseCreateParams,
+      options?: { signal?: AbortSignal },
+    ): Promise<XaiResponseShape>
   }
 }
 
@@ -220,13 +228,19 @@ export async function buildXaiClient(auth: AuthMaterial): Promise<XaiClientLike>
 
   return {
     responses: {
-      async create(params: XaiResponseCreateParams): Promise<XaiResponseShape> {
+      async create(
+        params: XaiResponseCreateParams,
+        options?: { signal?: AbortSignal },
+      ): Promise<XaiResponseShape> {
         // Cast needed: our structural types are subsets of the real SDK types,
         // and the real SDK's types do not exactly match xAI's actual response
         // shape (see module doc comment).
         return (
-          client.responses.create as unknown as (p: unknown) => Promise<XaiResponseShape>
-        )(params)
+          client.responses.create as unknown as (
+            p: unknown,
+            o?: { signal?: AbortSignal },
+          ) => Promise<XaiResponseShape>
+        )(params, options)
       },
     },
   }

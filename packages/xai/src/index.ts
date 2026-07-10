@@ -1,8 +1,9 @@
 /**
  * @gullabs/xai — xAI Grok provider adapter for any-llm (Responses API).
  *
- * Package skeleton: client + provider-options augmentation. The adapter,
- * model descriptors, and pricing land in a later commit.
+ * Client + provider-options augmentation + adapter (request/response
+ * mapping, error classification, usage accounting). Model descriptors and
+ * pricing land in a later commit.
  *
  * @module
  */
@@ -25,3 +26,5 @@ export type {
   XaiResponseShape,
 } from './client.js'
 export { buildXaiClient, requireApiKey } from './client.js'
+export { xaiAdapter, classifyXaiError } from './adapter.js'
+export type { XaiAdapterOptions } from './adapter.js'

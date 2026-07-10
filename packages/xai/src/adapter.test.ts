@@ -1,0 +1,747 @@
+/**
+ * @gullabs/xai — adapter contract tests.
+ *
+ * All tests use fakes from @gullabs/testing — NO real network calls.
+ * makeFakeXai/fakeXaiResponse are the sole test doubles.
+ *
+ * @module
+ */
+
+import { describe, it, expect, vi } from 'vitest'
+import { LlmError } from '@gullabs/core'
+import type { ResolvedRequest, AdapterCtx, ModelDescriptor } from '@gullabs/core'
+import { fakeXaiResponse, makeFakeXai } from '@gullabs/testing'
+import { xaiAdapter, classifyXaiError } from './adapter.js'
+import { makeTestDescriptor } from '../../core/src/test-model-descriptor.js'
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeResolvedReq(overrides: Partial<ResolvedRequest> = {}): ResolvedRequest {
+  return {
+    provider: 'xai',
+    model: 'grok-4.5',
+    messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hello' }] }],
+    config: {},
+    ...overrides,
+  }
+}
+
+const FAKE_CTX: AdapterCtx = {
+  auth: { apiKey: 'test-key' },
+  logger: { info() {}, warn() {}, error() {}, debug() {} },
+}
+
+function makeXaiDescriptor(
+  overrides: Partial<ModelDescriptor> & Pick<ModelDescriptor, 'model'>,
+): ModelDescriptor {
+  return makeTestDescriptor({
+    provider: 'xai',
+    ...overrides,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// 0. Provider guard
+// ---------------------------------------------------------------------------
+
+describe('provider guard', () => {
+  it('throws bad_request when req.provider !== "xai"', async () => {
+    const adapter = xaiAdapter({ client: makeFakeXai(fakeXaiResponse({ text: 'hi' })) })
+    await expect(
+      adapter.run(makeResolvedReq({ provider: 'google' }), FAKE_CTX),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 1. Basic text completion + messages/system mapping
+// ---------------------------------------------------------------------------
+
+describe('basic text completion', () => {
+  it('maps a single user message and system instruction, extracts text + usage', async () => {
+    const client = makeFakeXai(
+      fakeXaiResponse({
+        text: 'Hi there',
+        reasoningText: 'thinking about it',
+        inputTokens: 208,
+        cachedTokens: 128,
+        outputTokens: 42,
+        reasoningTokens: 33,
+        totalTokens: 250,
+        status: 'completed',
+      }),
+    )
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(makeResolvedReq({ system: 'Be nice.' }), FAKE_CTX)
+
+    expect(result.text).toBe('Hi there')
+    expect(result.reasoningText).toBe('thinking about it')
+    expect(result.finishReason).toBe('stop')
+    expect(result.usage.inputTokens).toBe(208)
+    expect(result.usage.outputTokens).toBe(42)
+    expect(result.usage.cachedInputTokens).toBe(128)
+    expect(result.usage.thinkingTokens).toBe(33)
+    expect(result.usage.totalTokens).toBe(250)
+    expect(result.usage.details).toMatchObject({
+      input: 208,
+      output: 42,
+      cached: 128,
+      thinking: 33,
+    })
+    expect(result.usage.raw).toMatchObject({ input_tokens: 208 })
+
+    const call = client.calls[0] as {
+      instructions?: string
+      input: unknown[]
+      store: boolean
+    }
+    expect(call.instructions).toBe('Be nice.')
+    expect(call.store).toBe(false)
+    expect(call.input).toEqual([
+      { role: 'user', content: [{ type: 'input_text', text: 'Hello' }] },
+    ])
+  })
+
+  it('forwards temperature and topP to temperature/top_p', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    await adapter.run(
+      makeResolvedReq({ config: { temperature: 0.3, topP: 0.9 } }),
+      FAKE_CTX,
+    )
+    const call = client.calls[0] as { temperature?: number; top_p?: number }
+    expect(call.temperature).toBe(0.3)
+    expect(call.top_p).toBe(0.9)
+  })
+
+  it('maps multi-turn messages with correct role mapping', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    await adapter.run(
+      makeResolvedReq({
+        messages: [
+          { role: 'user', parts: [{ kind: 'text', text: 'Hi' }] },
+          { role: 'assistant', parts: [{ kind: 'text', text: 'Hello!' }] },
+          { role: 'user', parts: [{ kind: 'text', text: 'How are you?' }] },
+        ],
+      }),
+      FAKE_CTX,
+    )
+
+    const call = client.calls[0] as { input: { role: string }[] }
+    expect(call.input.map((m) => m.role)).toEqual(['user', 'assistant', 'user'])
+  })
+
+  it('emits llm.adapter.dispatch debug log before SDK call', async () => {
+    const debugFn = vi.fn()
+    const ctx: AdapterCtx = {
+      auth: { apiKey: 'test-key' },
+      logger: { info() {}, warn() {}, error() {}, debug: debugFn },
+    }
+    const client = makeFakeXai(fakeXaiResponse({ text: 'hi' }))
+    const adapter = xaiAdapter({ client })
+    await adapter.run(makeResolvedReq(), ctx)
+
+    expect(debugFn).toHaveBeenCalledOnce()
+    const [obj, msg] = debugFn.mock.calls[0]!
+    expect(msg).toBe('llm.adapter.dispatch')
+    expect(obj).toMatchObject({ model: 'grok-4.5' })
+  })
+
+  it('uses a _clientFactory override when supplied', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'factory-built' }))
+    const factory = vi.fn().mockResolvedValue(client)
+    const adapter = xaiAdapter({ _clientFactory: factory })
+    const result = await adapter.run(makeResolvedReq(), FAKE_CTX)
+
+    expect(factory).toHaveBeenCalledWith(FAKE_CTX.auth)
+    expect(result.text).toBe('factory-built')
+  })
+
+  it('forwards ctx.signal to responses.create', async () => {
+    const controller = new AbortController()
+    let receivedOptions: { signal?: AbortSignal } | undefined
+    const client = {
+      responses: {
+        async create(_params: unknown, options?: { signal?: AbortSignal }) {
+          receivedOptions = options
+          return fakeXaiResponse({ text: 'ok' })
+        },
+      },
+    }
+    const adapter = xaiAdapter({ client })
+    await adapter.run(makeResolvedReq(), { ...FAKE_CTX, signal: controller.signal })
+
+    expect(receivedOptions?.signal).toBe(controller.signal)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 2. Reasoning effort mapping
+// ---------------------------------------------------------------------------
+
+describe('reasoning effort mapping', () => {
+  it.each(['low', 'high'] as const)(
+    'maps reasoning.effort=%s through',
+    async (effort) => {
+      const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+      const adapter = xaiAdapter({ client })
+      await adapter.run(makeResolvedReq({ config: { reasoning: { effort } } }), FAKE_CTX)
+      const call = client.calls[0] as { reasoning?: { effort: string } }
+      expect(call.reasoning).toEqual({ effort })
+    },
+  )
+
+  it.each(['none', 'medium', 'xhigh'] as const)(
+    'rejects reasoning.effort=%s with bad_request even without a modelDescriptor',
+    async (effort) => {
+      const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+      const adapter = xaiAdapter({ client })
+      await expect(
+        adapter.run(
+          makeResolvedReq({
+            config: { reasoning: { effort: effort as unknown as 'low' } },
+          }),
+          FAKE_CTX,
+        ),
+      ).rejects.toMatchObject({ kind: 'bad_request' })
+    },
+  )
+
+  it('rejects an effort not in modelDescriptor.capabilities.admittedReasoningEfforts', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    const descriptor = makeXaiDescriptor({
+      model: 'grok-4.5',
+      capabilities: { admittedReasoningEfforts: ['high'] },
+    })
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          config: { reasoning: { effort: 'low' } },
+          modelDescriptor: descriptor,
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+  })
+
+  it('rejects reasoning.budgetTokens with bad_request', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    await expect(
+      adapter.run(
+        makeResolvedReq({ config: { reasoning: { budgetTokens: 1000 } } }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+  })
+
+  it('does not throw on reasoning.includeThoughts (no-op) and still surfaces reasoningText', async () => {
+    const client = makeFakeXai(
+      fakeXaiResponse({ text: 'ok', reasoningText: 'reasoning summary' }),
+    )
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({
+        config: { reasoning: { effort: 'low', includeThoughts: false } },
+      }),
+      FAKE_CTX,
+    )
+    expect(result.reasoningText).toBe('reasoning summary')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 3. Structured output
+// ---------------------------------------------------------------------------
+
+describe('structured output', () => {
+  it('sends text.format.type==="json_schema" (not response_format) and parses rawStructured', async () => {
+    const client = makeFakeXai(
+      fakeXaiResponse({ structuredJson: '{"name":"Bob","age":30}' }),
+    )
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({
+        outputJsonSchema: {
+          type: 'object',
+          properties: { name: { type: 'string' }, age: { type: 'number' } },
+        },
+      }),
+      FAKE_CTX,
+    )
+
+    const call = client.calls[0] as {
+      text?: { format: { type: string } }
+      response_format?: unknown
+    }
+    expect(call.text?.format.type).toBe('json_schema')
+    expect(call.response_format).toBeUndefined()
+    expect(result.rawStructured).toEqual({ name: 'Bob', age: 30 })
+  })
+
+  it('derives the schema name from outputJsonSchema.title when present', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ structuredJson: '{"name":"Bob"}' }))
+    const adapter = xaiAdapter({ client })
+    await adapter.run(
+      makeResolvedReq({
+        outputJsonSchema: {
+          title: 'Person',
+          type: 'object',
+          properties: { name: { type: 'string' } },
+        },
+      }),
+      FAKE_CTX,
+    )
+    const call = client.calls[0] as { text?: { format: { name: string } } }
+    expect(call.text?.format.name).toBe('Person')
+  })
+
+  it('falls back to "structured_output" as the schema name when no title is present', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ structuredJson: '{"name":"Bob"}' }))
+    const adapter = xaiAdapter({ client })
+    await adapter.run(
+      makeResolvedReq({
+        outputJsonSchema: { type: 'object', properties: { name: { type: 'string' } } },
+      }),
+      FAKE_CTX,
+    )
+    const call = client.calls[0] as { text?: { format: { name: string } } }
+    expect(call.text?.format.name).toBe('structured_output')
+  })
+
+  it('leaves rawStructured undefined (no throw) when text is not valid JSON', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'not json' }))
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({ outputJsonSchema: { type: 'object' } }),
+      FAKE_CTX,
+    )
+    expect(result.rawStructured).toBeUndefined()
+    expect(result.text).toBe('not json')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 4. max_output_tokens + finishReason
+// ---------------------------------------------------------------------------
+
+describe('max_output_tokens and finishReason', () => {
+  it('forwards max_output_tokens verbatim, including very large values', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    await adapter.run(
+      makeResolvedReq({ config: { maxOutputTokens: 100_000_000 } }),
+      FAKE_CTX,
+    )
+    const call = client.calls[0] as { max_output_tokens?: number }
+    expect(call.max_output_tokens).toBe(100_000_000)
+  })
+
+  it('maps status:"incomplete" + reason:"max_output_tokens" to finishReason:"length" (not thrown)', async () => {
+    const client = makeFakeXai(
+      fakeXaiResponse({
+        text: 'truncated',
+        status: 'incomplete',
+        incompleteReason: 'max_output_tokens',
+      }),
+    )
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(makeResolvedReq(), FAKE_CTX)
+    expect(result.finishReason).toBe('length')
+    expect(result.text).toBe('truncated')
+  })
+
+  it('maps status:"completed" to finishReason:"stop"', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok', status: 'completed' }))
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(makeResolvedReq(), FAKE_CTX)
+    expect(result.finishReason).toBe('stop')
+  })
+
+  it('maps an unrecognized status to finishReason:"other"', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok', status: 'queued' }))
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(makeResolvedReq(), FAKE_CTX)
+    expect(result.finishReason).toBe('other')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 5. Vision / media mapping
+// ---------------------------------------------------------------------------
+
+describe('vision / media mapping', () => {
+  it('maps a valid inline jpeg to an input_image data URL', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    await adapter.run(
+      makeResolvedReq({
+        messages: [
+          {
+            role: 'user',
+            parts: [
+              { kind: 'text', text: 'what is this' },
+              { kind: 'inline-media', mimeType: 'image/jpeg', data: 'ZmFrZQ==' },
+            ],
+          },
+        ],
+      }),
+      FAKE_CTX,
+    )
+    const call = client.calls[0] as {
+      input: { content: { type: string; image_url?: string }[] }[]
+    }
+    expect(call.input[0]?.content[1]).toEqual({
+      type: 'input_image',
+      image_url: 'data:image/jpeg;base64,ZmFrZQ==',
+    })
+  })
+
+  it('maps a valid inline png the same way', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    await adapter.run(
+      makeResolvedReq({
+        messages: [
+          {
+            role: 'user',
+            parts: [{ kind: 'inline-media', mimeType: 'image/png', data: 'ZmFrZQ==' }],
+          },
+        ],
+      }),
+      FAKE_CTX,
+    )
+    const call = client.calls[0] as { input: { content: { image_url?: string }[] }[] }
+    expect(call.input[0]?.content[0]?.image_url).toBe('data:image/png;base64,ZmFrZQ==')
+  })
+
+  it('rejects a non-image inline mimeType with bad_request', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          messages: [
+            {
+              role: 'user',
+              parts: [
+                { kind: 'inline-media', mimeType: 'application/pdf', data: 'ZmFrZQ==' },
+              ],
+            },
+          ],
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+  })
+
+  it('rejects an oversize (>20MiB) inline image with bad_request', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    // 21 MiB of raw bytes, base64-encoded (~28MB string) — well over the 20MiB ceiling.
+    const bigBuffer = Buffer.alloc(21 * 1024 * 1024, 1)
+    const bigBase64 = bigBuffer.toString('base64')
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          messages: [
+            {
+              role: 'user',
+              parts: [{ kind: 'inline-media', mimeType: 'image/png', data: bigBase64 }],
+            },
+          ],
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+  })
+
+  it('maps a FileUriPart with an https:// URL and image mimeType', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    await adapter.run(
+      makeResolvedReq({
+        messages: [
+          {
+            role: 'user',
+            parts: [
+              {
+                kind: 'file-uri',
+                uri: 'https://example.com/photo.png',
+                mimeType: 'image/png',
+              },
+            ],
+          },
+        ],
+      }),
+      FAKE_CTX,
+    )
+    const call = client.calls[0] as { input: { content: { image_url?: string }[] }[] }
+    expect(call.input[0]?.content[0]?.image_url).toBe('https://example.com/photo.png')
+  })
+
+  it('rejects a FileUriPart with a non-http(s) scheme', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          messages: [
+            {
+              role: 'user',
+              parts: [
+                { kind: 'file-uri', uri: 'gs://bucket/photo.png', mimeType: 'image/png' },
+              ],
+            },
+          ],
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+  })
+
+  it('rejects a FileUriPart with a non-image mimeType', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          messages: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  kind: 'file-uri',
+                  uri: 'https://example.com/doc.pdf',
+                  mimeType: 'application/pdf',
+                },
+              ],
+            },
+          ],
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 6. providerOptions.xai
+// ---------------------------------------------------------------------------
+
+describe('providerOptions.xai', () => {
+  it('forwards promptCacheKey to prompt_cache_key', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    await adapter.run(
+      makeResolvedReq({
+        config: { providerOptions: { xai: { promptCacheKey: 'my-cache-key' } } },
+      }),
+      FAKE_CTX,
+    )
+    const call = client.calls[0] as { prompt_cache_key?: string }
+    expect(call.prompt_cache_key).toBe('my-cache-key')
+  })
+
+  it('rejects an unknown key under providerOptions.xai with bad_request', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          config: {
+            providerOptions: {
+              xai: { promptCacheKey: 'ok', bogus: true } as unknown as {
+                promptCacheKey?: string
+              },
+            },
+          },
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+  })
+
+  it('rejects an empty-string promptCacheKey with bad_request', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          config: { providerOptions: { xai: { promptCacheKey: '' } } },
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+  })
+
+  it('rejects a non-object providerOptions.xai with bad_request', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          config: {
+            providerOptions: { xai: 'nope' as unknown as { promptCacheKey?: string } },
+          },
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 7. serviceTier rejection
+// ---------------------------------------------------------------------------
+
+describe('serviceTier', () => {
+  it('rejects an explicit serviceTier with bad_request', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    await expect(
+      adapter.run(makeResolvedReq({ config: { serviceTier: 'flex' } }), FAKE_CTX),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 8. Error classification
+// ---------------------------------------------------------------------------
+
+describe('error classification', () => {
+  it('classifies a 400 API-key-shaped error as invalid_auth', async () => {
+    const client = makeFakeXai(() => {
+      throw {
+        status: 400,
+        code: 'invalid-argument',
+        error:
+          'Incorrect API key provided. You can obtain an API key from https://console.x.ai.',
+      }
+    })
+    const adapter = xaiAdapter({ client })
+    let thrown: unknown
+    try {
+      await adapter.run(makeResolvedReq(), FAKE_CTX)
+    } catch (e) {
+      thrown = e
+    }
+    expect(thrown).toBeInstanceOf(LlmError)
+    expect((thrown as LlmError).kind).toBe('invalid_auth')
+    expect((thrown as LlmError).provider).toBe('xai')
+  })
+
+  it('classifies a 400 model-not-found error as bad_request (NOT invalid_auth)', async () => {
+    const client = makeFakeXai(() => {
+      throw { status: 400, code: 'invalid-argument', error: 'Model not found: grok-99' }
+    })
+    const adapter = xaiAdapter({ client })
+    let thrown: unknown
+    try {
+      await adapter.run(makeResolvedReq(), FAKE_CTX)
+    } catch (e) {
+      thrown = e
+    }
+    expect(thrown).toBeInstanceOf(LlmError)
+    expect((thrown as LlmError).kind).toBe('bad_request')
+    expect((thrown as LlmError).provider).toBe('xai')
+  })
+
+  it('classifies a 422 malformed-body error as bad_request', async () => {
+    const client = makeFakeXai(() => {
+      throw {
+        status: 422,
+        error: 'Failed to deserialize the JSON body into the target type: ...',
+      }
+    })
+    const adapter = xaiAdapter({ client })
+    await expect(adapter.run(makeResolvedReq(), FAKE_CTX)).rejects.toMatchObject({
+      kind: 'bad_request',
+    })
+  })
+
+  it('classifies a 429 as rate_limited', async () => {
+    const client = makeFakeXai(() => {
+      throw { status: 429 }
+    })
+    const adapter = xaiAdapter({ client })
+    await expect(adapter.run(makeResolvedReq(), FAKE_CTX)).rejects.toMatchObject({
+      kind: 'rate_limited',
+    })
+  })
+
+  it('classifies a 500 as server', async () => {
+    const client = makeFakeXai(() => {
+      throw { status: 500 }
+    })
+    const adapter = xaiAdapter({ client })
+    await expect(adapter.run(makeResolvedReq(), FAKE_CTX)).rejects.toMatchObject({
+      kind: 'server',
+    })
+  })
+
+  it('classifyXaiError passes an already-classified LlmError through unchanged', () => {
+    const original = new LlmError('boom', { kind: 'timeout', retryable: true })
+    expect(classifyXaiError(original)).toBe(original)
+  })
+
+  it('classifyXaiError does not misclassify a 401 (already invalid_auth via classifyHttpStatus)', () => {
+    const result = classifyXaiError({ status: 401 })
+    expect(result.kind).toBe('invalid_auth')
+    expect(result.provider).toBe('xai')
+  })
+
+  it('detects the auth signature when obj.error is the body error string (openai SDK shape)', () => {
+    // openai's APIError hoists the body's `error` field onto `.error` — for
+    // xAI's `{ code, error }` bodies that is the message string itself.
+    const result = classifyXaiError({
+      status: 400,
+      error:
+        'Incorrect API key provided. You can obtain an API key from https://console.x.ai.',
+    })
+    expect(result.kind).toBe('invalid_auth')
+  })
+
+  it('detects the auth signature when obj.error is the full parsed body object (fixture shape)', () => {
+    const result = classifyXaiError({
+      status: 400,
+      error: {
+        code: 'invalid-argument',
+        error:
+          'Incorrect API key provided. You can obtain an API key from https://console.x.ai.',
+      },
+    })
+    expect(result.kind).toBe('invalid_auth')
+  })
+
+  it('never scans free-form Error.message — a 400 whose message merely mentions the key stays bad_request', () => {
+    const result = classifyXaiError({ status: 400, message: 'Incorrect API Key' })
+    expect(result.kind).toBe('bad_request')
+  })
+
+  it('a 400 whose structured body echoes "api key" in a non-auth context stays bad_request', () => {
+    // e.g. schema validation echoing user content that happens to talk about
+    // API keys — must NOT be reclassified as invalid_auth.
+    const result = classifyXaiError({
+      status: 400,
+      error: {
+        code: 'invalid-argument',
+        error:
+          "Invalid request content: Schema validation failed: /properties/api key/enum: value 'my api key' not permitted",
+      },
+    })
+    expect(result.kind).toBe('bad_request')
+  })
+
+  it('a 400 with a non-signature auth-adjacent body text stays bad_request', () => {
+    const result = classifyXaiError({
+      status: 400,
+      error: { message: 'invalid api key' },
+    })
+    expect(result.kind).toBe('bad_request')
+  })
+})
