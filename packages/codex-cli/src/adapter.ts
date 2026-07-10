@@ -31,6 +31,7 @@ import type {
 } from '@gullabs/core'
 import { createCodexCliRunner } from './runner.js'
 import type { CodexCliRunner } from './runner.js'
+import { assertOpenAiStrictOutputSchema } from './output-schema.js'
 
 // ---------------------------------------------------------------------------
 // Adapter options
@@ -353,95 +354,6 @@ function mapUsage(usage: TurnUsage | undefined): Usage {
 }
 
 // ---------------------------------------------------------------------------
-// Structured-output schema validation
-// ---------------------------------------------------------------------------
-
-/**
- * codex's Responses-API-backed schema mode REQUIRES `additionalProperties:
- * false` on every object level or it 400s.
- *
- * Per the reject-don't-map convention, this adapter never silently mutates
- * the caller-supplied JSON Schema — it walks the full schema tree and
- * requires `additionalProperties: false` to be explicitly present on every
- * object-schema node (root and nested), rejecting with `bad_request` and the
- * JSON path to the first offending node otherwise. The schema is otherwise
- * passed through byte-identical (same object reference) to `JSON.stringify`
- * — this function only validates, it never clones or rewrites.
- *
- * Recurses into `properties` (each value), `items` (single-schema or
- * tuple/array form), `prefixItems`, `$defs` / `definitions` (each value),
- * and `anyOf` / `oneOf` / `allOf` (each member).
- */
-function assertAdditionalPropertiesFalseDeep(schema: JsonValue, path = ''): void {
-  const isObjectSchema =
-    schema !== null && typeof schema === 'object' && !Array.isArray(schema)
-  if (!isObjectSchema) return
-
-  const node = schema as Record<string, JsonValue>
-  const looksLikeObjectSchema = node.type === 'object' || 'properties' in node
-  const displayPath = path.length > 0 ? path : '<root>'
-
-  if (looksLikeObjectSchema && node.additionalProperties !== false) {
-    throw new LlmError(
-      `codex-cli requires \`additionalProperties: false\` to be explicitly set on every object-schema node in outputJsonSchema — codex's --output-schema mode 400s without it, and this adapter will not silently inject or rewrite caller-provided schemas. Missing at \`${displayPath}\`. Set \`additionalProperties: false\` on that node and retry.`,
-      { kind: 'bad_request', retryable: false, provider: 'codex-cli' },
-    )
-  }
-
-  const withPrefix = (segment: string): string =>
-    path.length > 0 ? `${path}.${segment}` : segment
-
-  if (
-    node.properties !== null &&
-    typeof node.properties === 'object' &&
-    !Array.isArray(node.properties)
-  ) {
-    for (const [key, value] of Object.entries(
-      node.properties as Record<string, JsonValue>,
-    )) {
-      assertAdditionalPropertiesFalseDeep(value, withPrefix(`properties.${key}`))
-    }
-  }
-
-  if (node.items !== undefined) {
-    if (Array.isArray(node.items)) {
-      node.items.forEach((item, index) => {
-        assertAdditionalPropertiesFalseDeep(item, withPrefix(`items[${index}]`))
-      })
-    } else {
-      assertAdditionalPropertiesFalseDeep(node.items, withPrefix('items'))
-    }
-  }
-
-  if (Array.isArray(node.prefixItems)) {
-    node.prefixItems.forEach((item, index) => {
-      assertAdditionalPropertiesFalseDeep(item, withPrefix(`prefixItems[${index}]`))
-    })
-  }
-
-  for (const defsKey of ['$defs', 'definitions'] as const) {
-    const defs = node[defsKey]
-    if (defs !== null && typeof defs === 'object' && !Array.isArray(defs)) {
-      for (const [key, value] of Object.entries(defs as Record<string, JsonValue>)) {
-        assertAdditionalPropertiesFalseDeep(value, withPrefix(`${defsKey}.${key}`))
-      }
-    }
-  }
-
-  for (const combinatorKey of ['anyOf', 'oneOf', 'allOf'] as const) {
-    const combinator = node[combinatorKey]
-    if (Array.isArray(combinator)) {
-      combinator.forEach((member, index) => {
-        assertAdditionalPropertiesFalseDeep(
-          member,
-          withPrefix(`${combinatorKey}[${index}]`),
-        )
-      })
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
 // codexCliAdapter factory
 // ---------------------------------------------------------------------------
 
@@ -520,7 +432,7 @@ export function codexCliAdapter(opts?: CodexCliAdapterOptions): ProviderAdapter 
           const structuredOutputRequested = req.outputJsonSchema !== undefined
           if (structuredOutputRequested) {
             const schema = req.outputJsonSchema as JsonValue
-            assertAdditionalPropertiesFalseDeep(schema)
+            assertOpenAiStrictOutputSchema(schema)
             const schemaPath = join(scratchDir, 'schema.json')
             await writeFile(schemaPath, JSON.stringify(schema), 'utf-8')
             args.push('--output-schema', schemaPath)

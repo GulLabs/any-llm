@@ -16,7 +16,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, it, expect } from 'vitest'
-import type { AdapterCtx, ResolvedRequest } from '@gullabs/core'
+import type { AdapterCtx, JsonValue, ResolvedRequest } from '@gullabs/core'
 import { makeFakeXai } from '@gullabs/testing'
 import { xaiAdapter, classifyXaiError } from './adapter.js'
 
@@ -59,6 +59,10 @@ interface ErrorTaxonomyFixture {
   malformed_body: FixtureCall
   invalid_api_key: FixtureCall
 }
+interface NonStrictSchemaFixture extends FixtureCall {
+  /** The verbatim `text.format` json_schema sent in the live 2026-07-09 probe. */
+  requestSchema: { [k: string]: JsonValue }
+}
 
 const minimalFixture = loadFixture<FixtureCall>('02-responses-minimal.json')
 const reasoningMatrixFixture = loadFixture<ReasoningMatrixFixture>(
@@ -72,6 +76,9 @@ const maxOutputTokensFixture = loadFixture<MaxOutputTokensFixture>(
   '08-max-output-tokens.json',
 )
 const errorTaxonomyFixture = loadFixture<ErrorTaxonomyFixture>('09-error-taxonomy.json')
+const nonStrictSchemaFixture = loadFixture<NonStrictSchemaFixture>(
+  '10-non-strict-schema-accepted.json',
+)
 
 const FAKE_CTX: AdapterCtx = {
   auth: { apiKey: 'test-key' },
@@ -259,6 +266,47 @@ describe('fixture: 08-max-output-tokens', () => {
       context_details: { input_tokens: 214, output_tokens: 51 },
       metadata: { system_fingerprint: 'fp_a39489019fa99b6e' },
     })
+  })
+})
+
+describe('fixture: 10-non-strict-schema-accepted', () => {
+  it('forwards a non-OpenAI-strict schema to xAI verbatim and maps the accepted response', async () => {
+    const client = makeFakeXai(nonStrictSchemaFixture.body as never)
+    const adapter = xaiAdapter({ client })
+
+    // The fixture's `requestSchema` is the verbatim `text.format` json_schema
+    // sent in the live probe: missing `additionalProperties: false` at the
+    // root, `age` omitted from `required` (optional property), and a
+    // `format: 'email'` keyword — none of which are legal under OpenAI-strict
+    // json_schema rules, yet xAI's live Responses API accepted this with
+    // `strict: true` and returned HTTP 200.
+    const inputSchema = nonStrictSchemaFixture.requestSchema
+
+    // Self-consistency guard: xAI echoes the request schema back in the
+    // response body, so the fixture's requestSchema must match it exactly.
+    const bodyText = nonStrictSchemaFixture.body['text'] as {
+      format: { schema: unknown }
+    }
+    expect(inputSchema).toEqual(bodyText.format.schema)
+
+    const result = await adapter.run(
+      makeResolvedReq({ outputJsonSchema: inputSchema }),
+      FAKE_CTX,
+    )
+
+    // The adapter must forward the schema verbatim — no additionalProperties
+    // injection, no required-array rewriting, no nullable-union rewriting.
+    const call = client.calls[0] as {
+      text?: { format?: { schema?: unknown; strict?: boolean } }
+    }
+    expect(call.text?.format?.schema).toEqual(inputSchema)
+    expect(call.text?.format?.strict).toBe(true)
+
+    expect(result.text).toBe(nonStrictSchemaFixture.body['output_text'])
+    expect(result.finishReason).toBe('stop')
+    expect(result.usage.inputTokens).toBe(288)
+    expect(result.usage.outputTokens).toBe(194)
+    expect(result.rawStructured).toEqual({ name: 'Bob', email: 'bob@example.com' })
   })
 })
 
