@@ -163,6 +163,32 @@ const result = await client.generate(
 `Grok45ConfigSchema`. Unlike Gemini, xai has no `serviceTier` concept and no `topK`;
 its config schema is a single strict object with no tier branching.
 
+## xAI structured-output schemas vs. OpenAI-strict / codex-cli schemas
+
+As of the 2026-07-09 live probes, xAI's `strict: true` structured-output validation
+on `text.format` json_schema performed no OpenAI-style compile-time schema checks —
+schemas missing root/nested `additionalProperties: false`, properties omitted from
+`required` (optional properties), `format`/other keywords, `anyOf`, `$defs`/`$ref`,
+and nullable unions (`type: [T, 'null']`) were all accepted with HTTP 200.
+`@gullabs/xai`'s adapter forwards schemas to xAI verbatim; no rewriting is applied.
+
+`@gullabs/codex-cli`, by contrast, targets the codex CLI's own `--output-schema`
+backend, which (verified 2026-07-09 via live probes against the real codex CLI
+binary/backend) enforces exactly two structural rules: every object node must carry
+`additionalProperties: false`, and `required` must be present and include every key
+in `properties` (optional semantics are preserved by adding `null` to that
+property's type, not by simply marking it required). `@gullabs/codex-cli` exports
+`toOpenAiStrictOutputSchema` — an explicit opt-in transformer, never called
+automatically by the adapter — that rewrites a schema to satisfy those two rules.
+codex-cli's local preflight (`assertOpenAiStrictOutputSchema` in
+`packages/codex-cli/src/adapter.ts`) enforces both rules locally before dispatch,
+turning what used to be a live-round-trip provider 400 into an immediate local
+`bad_request`.
+
+This preflight/transformer pair is specific to codex-cli's own `--output-schema`
+contract, not a general any-llm behavior — it is not applied to xai, which has no
+such preflight (see the xAI Grok section above).
+
 ## Migrating raw `@google/genai` prompts
 
 `geminiContentToMessages` (from `@gullabs/google`) converts hand-authored

@@ -72,6 +72,9 @@ const maxOutputTokensFixture = loadFixture<MaxOutputTokensFixture>(
   '08-max-output-tokens.json',
 )
 const errorTaxonomyFixture = loadFixture<ErrorTaxonomyFixture>('09-error-taxonomy.json')
+const nonStrictSchemaFixture = loadFixture<FixtureCall>(
+  '10-non-strict-schema-accepted.json',
+)
 
 const FAKE_CTX: AdapterCtx = {
   auth: { apiKey: 'test-key' },
@@ -259,6 +262,47 @@ describe('fixture: 08-max-output-tokens', () => {
       context_details: { input_tokens: 214, output_tokens: 51 },
       metadata: { system_fingerprint: 'fp_a39489019fa99b6e' },
     })
+  })
+})
+
+describe('fixture: 10-non-strict-schema-accepted', () => {
+  it('forwards a non-OpenAI-strict schema to xAI verbatim and maps the accepted response', async () => {
+    const client = makeFakeXai(nonStrictSchemaFixture.body as never)
+    const adapter = xaiAdapter({ client })
+
+    // Recorded verbatim from this fixture's `body.text.format.schema`: missing
+    // `additionalProperties: false` at the root, `age` omitted from `required`
+    // (optional property), and a `format: 'email'` keyword — none of which are
+    // legal under OpenAI-strict json_schema rules, yet xAI's live Responses API
+    // accepted this with `strict: true` and returned HTTP 200.
+    const inputSchema = {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        email: { type: 'string', format: 'email' },
+        age: { type: 'number' },
+      },
+      required: ['name', 'email'],
+    }
+
+    const result = await adapter.run(
+      makeResolvedReq({ outputJsonSchema: inputSchema }),
+      FAKE_CTX,
+    )
+
+    // The adapter must forward the schema verbatim — no additionalProperties
+    // injection, no required-array rewriting, no nullable-union rewriting.
+    const call = client.calls[0] as {
+      text?: { format?: { schema?: unknown; strict?: boolean } }
+    }
+    expect(call.text?.format?.schema).toEqual(inputSchema)
+    expect(call.text?.format?.strict).toBe(true)
+
+    expect(result.text).toBe(nonStrictSchemaFixture.body['output_text'])
+    expect(result.finishReason).toBe('stop')
+    expect(result.usage.inputTokens).toBe(288)
+    expect(result.usage.outputTokens).toBe(194)
+    expect(result.rawStructured).toEqual({ name: 'Bob', email: 'bob@example.com' })
   })
 })
 
