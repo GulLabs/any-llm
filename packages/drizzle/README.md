@@ -5,7 +5,7 @@ Reference Postgres schema and `UsageSink` implementation for any-llm using Drizz
 ## Install
 
 ```bash
-pnpm add @gullabs/drizzle @gullabs/core drizzle-orm
+pnpm add @gullabs/drizzle @gullabs/core @gullabs/google drizzle-orm
 ```
 
 **Peer dependency:** `drizzle-orm >=0.36.0`
@@ -23,15 +23,14 @@ pnpm add @gullabs/drizzle @gullabs/core drizzle-orm
 ```ts
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { llmCalls, drizzleUsageSink } from '@gullabs/drizzle'
-import { createClient, geminiPricingSource, defineCallSite } from '@gullabs/core'
-import { geminiAdapter } from '@gullabs/google'
+import { createClient, composeProviders } from '@gullabs/core'
+import { googleProvider } from '@gullabs/google'
 import pg from 'pg'
 
 const db = drizzle(new pg.Pool({ connectionString: process.env.DATABASE_URL }))
 
 const client = createClient({
-  adapters: [geminiAdapter()],
-  pricingSources: { google: geminiPricingSource() },
+  ...composeProviders([googleProvider()]),
   sink: drizzleUsageSink(db, llmCalls),
 })
 

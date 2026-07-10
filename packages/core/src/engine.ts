@@ -15,7 +15,6 @@ import { LlmError, classifyError } from './errors.js'
 import { buildRecord, normalizeUsage } from './record.js'
 import { redactSecrets } from './redact.js'
 import type { ModelDescriptor, ModelRegistry } from './registry.js'
-import { defaultGeminiRegistry } from './registry.js'
 import type {
   ProviderAdapter,
   AdapterResult,
@@ -140,14 +139,18 @@ export interface ClientConfig {
   ): ProviderAdapter
   /**
    * Model registry used to resolve per-model config schemas and pricing keys.
-   * Defaults to {@link defaultGeminiRegistry} (all models in the Gemini
-   * pricing snapshot).  Supply a custom registry to add new models or
-   * providers without forking the library.
+   *
+   * **Required.** Core ships with no default registry — it has zero
+   * provider/model knowledge. Supply one via a provider package's plugin,
+   * e.g. `createClient({ ...composeProviders([googleProvider()]), ... })`
+   * (`composeProviders` from `@gullabs/core`, `googleProvider` from
+   * `@gullabs/google`), or build a custom `ModelRegistry` with
+   * `createModelRegistry` for bespoke/multi-provider setups.
    *
    * **Construction-time invariant:** every descriptor's `provider` must match
    * a configured adapter's `id`, else `createClient` throws.
    */
-  modelRegistry?: ModelRegistry
+  modelRegistry: ModelRegistry
   /**
    * Ordered middleware stack applied to every call, outermost-first.
    *
@@ -835,9 +838,11 @@ function attachCallContext(
  *
  * @example
  * ```ts
+ * import { createClient, composeProviders } from '@gullabs/core'
+ * import { googleProvider } from '@gullabs/google'
+ *
  * const client = createClient({
- *   adapters: [geminiAdapter()],
- *   pricingSources: { google: geminiPricingSource() },
+ *   ...composeProviders([googleProvider()]),
  *   sink: drizzleUsageSink(db, llmCallsTable),
  * })
  *
@@ -916,7 +921,7 @@ export function createClient(config: ClientConfig): Client {
   const telemetry: Telemetry = config.telemetry ?? NOOP_TELEMETRY
   const rateLimiter: RateLimiter = config.rateLimiter ?? NOOP_RATE_LIMITER
   const libDefaults: GenConfig = config.defaults ?? {}
-  const registry: ModelRegistry = config.modelRegistry ?? defaultGeminiRegistry
+  const registry: ModelRegistry = config.modelRegistry
 
   // Build O(1) adapter map at construction time — also detects duplicate ids.
   const adapterMap = new Map<string, ProviderAdapter>()

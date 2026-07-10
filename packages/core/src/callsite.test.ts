@@ -8,9 +8,11 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { createClient, defineCallSite, geminiPricingSource } from './index.js'
+import { createClient, createModelRegistry, defineCallSite } from './index.js'
 import type { AdapterResult, Usage } from './index.js'
 import { FakeAdapter, FakeClock, FakeIds, RecordingSink } from '@gullabs/testing'
+import { makeTestPricingSource } from './test-pricing-source.js'
+import { makePermissiveTestDescriptor } from './test-model-descriptor.js'
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -34,12 +36,22 @@ function successResult(overrides?: Partial<AdapterResult>): AdapterResult {
 }
 
 const TEST_AUTH = { apiKey: 'test-key' }
-const PRICING = geminiPricingSource()
+const PRICING = makeTestPricingSource(
+  {
+    'gemini-2.5-flash': { inputPerM: 300_000, cachedPerM: 30_000, outputPerM: 2_500_000 },
+  },
+  { standard: 1 },
+  'test-pricing-1',
+)
+const TEST_REGISTRY = createModelRegistry([
+  makePermissiveTestDescriptor({ model: 'gemini-2.5-flash', provider: 'google' }),
+])
 
 function makeClient(adapter: FakeAdapter, sink?: RecordingSink) {
   return createClient({
     adapters: [adapter],
     pricingSources: { google: PRICING },
+    modelRegistry: TEST_REGISTRY,
     sink: sink ?? new RecordingSink(),
     clock: new FakeClock(),
     ids: new FakeIds(),
@@ -197,6 +209,7 @@ describe('runStructured — config resolution', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       clock: new FakeClock(),
       ids: new FakeIds(),
       defaults: { temperature: 0.1, topP: 0.9 },

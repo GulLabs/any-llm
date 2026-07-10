@@ -6,12 +6,27 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { createClient, geminiPricingSource, type StandardSchemaV1 } from './index.js'
+import { createClient, createModelRegistry, type StandardSchemaV1 } from './index.js'
 import type { AdapterResult, Usage } from './index.js'
 import { FakeAdapter, FakeClock, FakeIds, RecordingSink } from '@gullabs/testing'
+import { makeTestPricingSource } from './test-pricing-source.js'
+import { makePermissiveTestDescriptor } from './test-model-descriptor.js'
 
 const TEST_AUTH = { apiKey: 'test-key' }
-const PRICING = geminiPricingSource()
+const PRICING = makeTestPricingSource(
+  {
+    'gemini-2.5-pro': {
+      inputPerM: 1_250_000,
+      cachedPerM: 125_000,
+      outputPerM: 10_000_000,
+    },
+  },
+  { standard: 1 },
+  'test-pricing-1',
+)
+const TEST_REGISTRY = createModelRegistry([
+  makePermissiveTestDescriptor({ model: 'gemini-2.5-pro', provider: 'google' }),
+])
 
 type StructuredValidationResult<T> =
   | { ok: true; value: T }
@@ -123,6 +138,7 @@ describe('caller-owned structured-output validation helper', () => {
         ),
       ],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -168,6 +184,7 @@ describe('caller-owned structured-output validation helper', () => {
     const client = createClient({
       adapters: [new FakeAdapter('google', makeSuccessResult())],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink: new RecordingSink(),
       clock: new FakeClock(),
       ids: new FakeIds(),

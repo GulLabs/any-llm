@@ -7,7 +7,7 @@ distributed state out of `@gullabs/core` while still speaking the core `Middlewa
 ## Install
 
 ```bash
-pnpm add @gullabs/quota @gullabs/core
+pnpm add @gullabs/quota @gullabs/core @gullabs/google
 ```
 
 ## Key exports
@@ -24,8 +24,8 @@ pnpm add @gullabs/quota @gullabs/core
 ## Quick example
 
 ```ts
-import { createClient, geminiPricingSource } from '@gullabs/core'
-import { geminiAdapter } from '@gullabs/google'
+import { createClient, composeProviders } from '@gullabs/core'
+import { googleProvider } from '@gullabs/google'
 import {
   providerQuotaMiddleware,
   quotaPolicyForGemini,
@@ -45,8 +45,7 @@ const quotaPolicy = quotaPolicyForGemini({
 })
 
 const client = createClient({
-  adapters: [geminiAdapter()],
-  pricingSources: { google: geminiPricingSource() },
+  ...composeProviders([googleProvider()]),
   middleware: [
     providerQuotaMiddleware({
       store: quotaStore,

@@ -1,13 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
-import {
-  geminiModelDescriptors,
-  gemmaModelDescriptors,
-  toConfigJsonSchema,
-  zodToStandardSchema,
-} from './index.js'
-import type { JsonValue } from './index.js'
+import { toConfigJsonSchema, zodToStandardSchema } from '@gullabs/core'
+import type { JsonValue } from '@gullabs/core'
+import { geminiModelDescriptors, gemmaModelDescriptors } from './models.js'
 
 function findDescriptor(id: string) {
   return [...geminiModelDescriptors, ...gemmaModelDescriptors].find(

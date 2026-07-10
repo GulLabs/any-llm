@@ -3,12 +3,11 @@
  *
  * @example
  * ```ts
- * import { geminiAdapter } from '@gullabs/google'
- * import { createClient, geminiPricingSource } from '@gullabs/core'
+ * import { createClient, composeProviders } from '@gullabs/core'
+ * import { googleProvider } from '@gullabs/google'
  *
  * const client = createClient({
- *   adapters: [geminiAdapter()],
- *   pricingSources: { google: geminiPricingSource() },
+ *   ...composeProviders([googleProvider()]),
  * })
  *
  * const result = await client.generate(
@@ -28,6 +27,13 @@ export type {
 export { geminiAdapter } from './adapter.js'
 export type { GeminiAdapterOptions } from './adapter.js'
 export { googleProvider } from './provider.js'
+export {
+  geminiModelDescriptors,
+  gemmaModelDescriptors,
+  defaultGeminiRegistry,
+} from './models.js'
+export { geminiPricingSource } from './cost.js'
+export { GEMINI_PRICING, TIER_FACTOR, pricingVersion } from './pricing.js'
 export type { GeminiClientLike } from './client.js'
 export {
   buildGoogleClient,

@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { createClient, geminiPricingSource, LlmError } from './index.js'
+import { createClient, createModelRegistry, LlmError } from './index.js'
 import { retryMiddleware } from './retry.js'
 import type {
   Middleware,
@@ -29,6 +29,8 @@ import type {
   Telemetry,
 } from './index.js'
 import { FakeClock, FakeIds, RecordingSink } from '@gullabs/testing'
+import { makeTestPricingSource } from './test-pricing-source.js'
+import { makePermissiveTestDescriptor } from './test-model-descriptor.js'
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -41,7 +43,16 @@ const GOOD_USAGE: Usage = {
   raw: null,
 }
 
-const PRICING = geminiPricingSource()
+const PRICING = makeTestPricingSource(
+  {
+    'gemini-2.5-flash': { inputPerM: 300_000, cachedPerM: 30_000, outputPerM: 2_500_000 },
+  },
+  { standard: 1 },
+  'test-pricing-1',
+)
+const TEST_REGISTRY = createModelRegistry([
+  makePermissiveTestDescriptor({ model: 'gemini-2.5-flash', provider: 'google' }),
+])
 const TEST_AUTH = { apiKey: 'test-key' }
 const MODEL = 'gemini-2.5-flash'
 const MESSAGES = [
@@ -92,6 +103,7 @@ describe('attemptId reconcile — middleware throws before next()', () => {
     const client = createClient({
       adapters: [successAdapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -158,6 +170,7 @@ describe('attemptId reconcile — normal success', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -207,6 +220,7 @@ describe('attemptId reconcile — retry-then-success', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -259,6 +273,7 @@ describe('attemptId reconcile — retries exhausted', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),

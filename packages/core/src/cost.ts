@@ -1,9 +1,15 @@
 /**
  * Cost computation for @gullabs/core.
  *
- * This module provides `computeCost` (pure function) and
- * `geminiPricingSource` (factory returning a {@link PricingSource} port
- * implementation backed by the frozen Gemini pricing snapshot).
+ * This module provides `computeCost` — a **pure function** with zero
+ * provider/tier vocabulary. Core has no pricing tables, no tier names
+ * (`flex`/`standard`/`batch` are Google's, not core's), and no per-model rate
+ * data: every provider package (e.g. `@gullabs/google`) owns its own rates
+ * table + tier-factor map and supplies them to `computeCost` as explicit
+ * parameters. This is the seam that lets a new provider ship pricing with
+ * zero core changes — see `@gullabs/google`'s `pricing.ts`/`cost.ts` for the
+ * Gemini-specific rates table, tier-factor map, and `geminiPricingSource`
+ * factory built on top of this function.
  *
  * **GROSS token convention** (enforced here, not by callers):
  * - `cachedInputTokens` is a *subset* of `inputTokens` — the cached portion
@@ -29,48 +35,33 @@
  */
 
 import type { Cost, Usage } from './types.js'
-import type { PricingSource } from './ports.js'
-import {
-  GEMINI_PRICING,
-  TIER_FACTOR,
-  pricingVersion,
-  type ModelRates,
-} from './pricing.js'
+import type { ModelRates } from './pricing.js'
+
+/**
+ * A caller-supplied rates lookup: given a bare model identifier, resolves the
+ * applicable {@link ModelRates}, or `undefined` if the model is unpriced.
+ *
+ * Provider packages own the actual lookup strategy (exact match, longest-
+ * prefix match, etc.) against their own rates table — core just calls this
+ * once per {@link computeCost} invocation.
+ */
+export interface CostRatesLookup {
+  (model: string): ModelRates | undefined
+}
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
 /**
- * Look up rates for a model.
- *
- * Performs an exact-key match first, then falls back to longest-prefix match
- * (e.g. `"gemini-2.5-pro-001"` matches `"gemini-2.5-pro"`).
- *
- * @returns The matched {@link ModelRates}, or `undefined` if no entry found.
- */
-function lookupRates(model: string): ModelRates | undefined {
-  // 1. Exact match — fast path.
-  const exact = GEMINI_PRICING[model]
-  if (exact !== undefined) return exact
-
-  // 2. Longest-prefix match.
-  let bestKey = ''
-  let bestRates: ModelRates | undefined
-  for (const key of Object.keys(GEMINI_PRICING)) {
-    if (model.startsWith(key) && key.length > bestKey.length) {
-      bestKey = key
-      bestRates = GEMINI_PRICING[key]
-    }
-  }
-  return bestRates
-}
-
-/**
  * Select the applicable rate set for a model given the GROSS input token count.
  *
  * When a model has a `gt200k` tier, that tier's rates apply when
  * `grossInputTokens` is **strictly greater than** 200,000.
+ *
+ * This predicate operates purely on the generic {@link ModelRates} shape
+ * (which core already owns), so it stays in core rather than moving with the
+ * provider-specific rates table + lookup walk.
  */
 function selectRates(
   rates: ModelRates,
@@ -96,14 +87,20 @@ function selectRates(
  * This is a **pure function** — it has no side effects and always returns a
  * well-formed {@link Cost} value.
  *
+ * **Seam:** `rates` and `tierFactors` are supplied by the caller (a provider
+ * package's `PricingSource` factory) instead of being read from a
+ * module-level table. Core has zero provider/tier vocabulary — every
+ * provider package supplies its own rates table + tier-factor map.
+ *
  * **Algorithm:**
- * 1. Look up rates for `model`; if not found, return an `estimated` Cost with
- *    `microUsd: null`, zero-filled details, and an `unpricedReason` naming
- *    the model.
- * 2. Resolve the service-tier multiplier from `tier`. `undefined` defaults to
- *    standard (factor 1). A *defined* tier absent from {@link TIER_FACTOR} is
- *    never coerced to standard — it short-circuits to the same unpriced shape
- *    as step 1, with an `unpricedReason` naming the tier.
+ * 1. Resolve rates via `rates(model)`; if `undefined`, return an `estimated`
+ *    Cost with `microUsd: null`, zero-filled details, and an `unpricedReason`
+ *    naming the model.
+ * 2. Resolve the service-tier multiplier from `tier` via `tierFactors`.
+ *    `undefined` defaults to standard (factor 1). A *defined* tier absent
+ *    from `tierFactors` is never coerced to standard — it short-circuits to
+ *    the same unpriced shape as step 1, with an `unpricedReason` naming the
+ *    tier.
  * 3. Determine which rate tier applies (base vs. `>200k` long-context).
  * 4. Compute billable input: `inputTokens − (cachedInputTokens ?? 0)`, clamped
  *    to `0` if cached > input (defensive; the GROSS invariant should prevent
@@ -115,19 +112,30 @@ function selectRates(
  * @param model - Model identifier string used for routing (e.g. `"gemini-2.5-pro"`).
  * @param usage - GROSS token usage for the call.
  * @param tier - Opaque, provider-defined service tier string (e.g. `'flex'`,
- *   `'standard'`, `'batch'`). Only tiers present in {@link TIER_FACTOR} carry a
+ *   `'standard'`, `'batch'`). Only tiers present in `tierFactors` carry a
  *   known pricing multiplier. `undefined` means "no tier specified" and
  *   defaults to the `'standard'` multiplier (1×) — this is a documented
- *   default, not a guess. A *defined* tier that is not a `TIER_FACTOR` key is
+ *   default, not a guess. A *defined* tier that is not a `tierFactors` key is
  *   never mapped to `standard` (reject-don't-map): the call resolves to the
  *   unpriced path instead, per the same convention used for unknown models.
+ * @param rates - Caller-supplied rates lookup (see {@link CostRatesLookup}).
+ * @param tierFactors - Caller-supplied tier → multiplier map.
+ * @param pricingVersion - Caller-supplied pricing snapshot identifier, echoed
+ *   verbatim onto the returned {@link Cost}.
  * @returns A frozen {@link Cost} value.
  */
-export function computeCost(model: string, usage: Usage, tier?: string): Cost {
-  const rates = lookupRates(model)
+export function computeCost(
+  model: string,
+  usage: Usage,
+  tier: string | undefined,
+  rates: CostRatesLookup,
+  tierFactors: Readonly<Record<string, number>>,
+  pricingVersion: string,
+): Cost {
+  const modelRates = rates(model)
 
   // Unknown model — return null cost; tokens still captured for backfill.
-  if (rates === undefined) {
+  if (modelRates === undefined) {
     return {
       microUsd: null,
       usd: null,
@@ -140,10 +148,10 @@ export function computeCost(model: string, usage: Usage, tier?: string): Cost {
 
   // Resolve the service-tier multiplier. `undefined` means "unspecified" and
   // defaults to standard (factor 1) — that is documented default behavior,
-  // not a mapping. A *defined* tier that isn't a recognized TIER_FACTOR key
+  // not a mapping. A *defined* tier that isn't a recognized tierFactors key
   // must NOT be silently rewritten to standard rates (reject-don't-map): it
   // resolves to the unpriced path instead, mirroring the unknown-model case.
-  const factor = tier === undefined ? 1 : TIER_FACTOR[tier]
+  const factor = tier === undefined ? 1 : tierFactors[tier]
   if (factor === undefined) {
     return {
       microUsd: null,
@@ -156,7 +164,7 @@ export function computeCost(model: string, usage: Usage, tier?: string): Cost {
   }
 
   // Select rate tier based on GROSS input token count (long-context premium).
-  const base = selectRates(rates, usage.inputTokens)
+  const base = selectRates(modelRates, usage.inputTokens)
 
   const inputPerM = base.inputPerM * factor
   const cachedPerM = base.cachedPerM * factor
@@ -187,39 +195,6 @@ export function computeCost(model: string, usage: Usage, tier?: string): Cost {
       input: inputCost,
       cached: cachedCost,
       output: outputCost,
-    },
-  }
-}
-
-/**
- * Factory that returns the **google-scoped** {@link PricingSource} port
- * implementation backed by the built-in Gemini pricing snapshot.
- *
- * `PricingSource` is provider-scoped by contract — this source only knows
- * bare Gemini/Gemma model keys. Compose it into `ClientConfig.pricingSources`
- * under the `'google'` key; do not use it for other providers.
- *
- * The returned object is stateless and can be shared across calls.
- *
- * @example
- * ```ts
- * import { geminiPricingSource } from '@gullabs/core'
- *
- * const pricing = geminiPricingSource()
- * const cost = pricing.price('gemini-2.5-pro', usage, 'flex')
- * ```
- */
-export function geminiPricingSource(): PricingSource {
-  return {
-    version: pricingVersion,
-    price(model: string, usage: Usage, tier?: string): Cost {
-      return computeCost(model, usage, tier)
-    },
-    hasModel(model: string): boolean {
-      return lookupRates(model) !== undefined
-    },
-    listModels(): readonly string[] {
-      return Object.keys(GEMINI_PRICING)
     },
   }
 }

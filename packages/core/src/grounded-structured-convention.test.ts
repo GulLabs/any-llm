@@ -6,12 +6,29 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { createClient, geminiPricingSource } from './index.js'
+import { createClient, createModelRegistry } from './index.js'
 import type { AdapterResult, Usage } from './index.js'
 import { FakeAdapter, FakeClock, FakeIds, RecordingSink } from '@gullabs/testing'
+import { makeTestPricingSource } from './test-pricing-source.js'
+import { makePermissiveTestDescriptor } from './test-model-descriptor.js'
 
 const TEST_AUTH = { apiKey: 'test-key' }
-const PRICING = geminiPricingSource()
+const PRICING = makeTestPricingSource(
+  {
+    'gemini-2.5-pro': {
+      inputPerM: 1_250_000,
+      cachedPerM: 125_000,
+      outputPerM: 10_000_000,
+    },
+    'gemini-2.5-flash': { inputPerM: 300_000, cachedPerM: 30_000, outputPerM: 2_500_000 },
+  },
+  { standard: 1, flex: 0.5 },
+  'test-pricing-1',
+)
+const TEST_REGISTRY = createModelRegistry([
+  makePermissiveTestDescriptor({ model: 'gemini-2.5-pro', provider: 'google' }),
+  makePermissiveTestDescriptor({ model: 'gemini-2.5-flash', provider: 'google' }),
+])
 
 const GOOD_USAGE: Usage = {
   inputTokens: 100,
@@ -44,6 +61,7 @@ describe('grounded-structured correlation convention', () => {
         ]),
       ],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),

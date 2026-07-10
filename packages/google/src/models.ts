@@ -1,0 +1,245 @@
+/**
+ * Model descriptor registry for @gullabs/google.
+ *
+ * Centralises Gemini/Gemma model knowledge: reasoning-effort vocabularies,
+ * capability flags, and the built-in descriptor arrays. `@gullabs/core` owns
+ * only the generic registry machinery (`ModelDescriptor`, `ModelRegistry`,
+ * `createModelRegistry`) — this module supplies the Gemini-specific data.
+ *
+ * @module
+ */
+
+import type { ModelDescriptor, ModelRegistry, ReasoningEffort } from '@gullabs/core'
+import { createModelRegistry } from '@gullabs/core'
+
+import {
+  Gemma426bA4bItConfigSchema,
+  Gemma431bItConfigSchema,
+  Gemini25FlashConfigSchema,
+  Gemini25FlashLiteConfigSchema,
+  Gemini25ProConfigSchema,
+  Gemini31FlashLiteConfigSchema,
+  Gemini31ProPreviewConfigSchema,
+  Gemini35FlashConfigSchema,
+  Gemini3FlashPreviewConfigSchema,
+} from './model-config/index.js'
+import { toConfigJsonSchema, zodToStandardSchema } from '@gullabs/core'
+
+const GEMINI_25_PRO_REASONING_EFFORTS = [
+  'low',
+  'medium',
+  'high',
+] as const satisfies ReadonlyArray<ReasoningEffort>
+const GEMINI_LEVEL_REASONING_EFFORTS = [
+  'none',
+  'low',
+  'medium',
+  'high',
+] as const satisfies ReadonlyArray<ReasoningEffort>
+const GEMINI_LEVEL_PRO_PREVIEW_REASONING_EFFORTS = [
+  'low',
+  'medium',
+  'high',
+] as const satisfies ReadonlyArray<ReasoningEffort>
+const GEMINI_25_FLASH_REASONING_EFFORTS = [
+  'none',
+  'low',
+  'medium',
+  'high',
+] as const satisfies ReadonlyArray<ReasoningEffort>
+const GEMMA_REASONING_EFFORTS = [
+  'none',
+  'high',
+] as const satisfies ReadonlyArray<ReasoningEffort>
+
+export const geminiModelDescriptors: ModelDescriptor[] = [
+  {
+    model: 'gemini-2.5-pro',
+    provider: 'google',
+    pricingFamily: 'gemini-2.5-pro',
+    capabilities: {
+      reasoning: true,
+      structuredOutput: true,
+      nativeStructuredOutput: true,
+      vision: true,
+      reasoningApi: 'budget',
+      admittedReasoningEfforts: GEMINI_25_PRO_REASONING_EFFORTS,
+      sampling: 'tunable',
+      caching: { explicit: true, minTokens: 2048 },
+      grounding: true,
+      serviceTiers: ['flex', 'standard'],
+    },
+    configSchema: Gemini25ProConfigSchema,
+    configJsonSchema: toConfigJsonSchema(Gemini25ProConfigSchema),
+    validateConfig: zodToStandardSchema(Gemini25ProConfigSchema),
+  },
+  {
+    model: 'gemini-2.5-flash',
+    provider: 'google',
+    pricingFamily: 'gemini-2.5-flash',
+    capabilities: {
+      reasoning: true,
+      structuredOutput: true,
+      nativeStructuredOutput: true,
+      vision: true,
+      reasoningApi: 'budget',
+      admittedReasoningEfforts: GEMINI_25_FLASH_REASONING_EFFORTS,
+      sampling: 'tunable',
+      caching: { explicit: true, minTokens: 2048 },
+      grounding: true,
+      serviceTiers: ['flex', 'standard'],
+    },
+    configSchema: Gemini25FlashConfigSchema,
+    configJsonSchema: toConfigJsonSchema(Gemini25FlashConfigSchema),
+    validateConfig: zodToStandardSchema(Gemini25FlashConfigSchema),
+  },
+  {
+    model: 'gemini-2.5-flash-lite',
+    provider: 'google',
+    pricingFamily: 'gemini-2.5-flash-lite',
+    capabilities: {
+      reasoning: true,
+      structuredOutput: true,
+      nativeStructuredOutput: true,
+      vision: true,
+      reasoningApi: 'budget',
+      admittedReasoningEfforts: GEMINI_25_FLASH_REASONING_EFFORTS,
+      sampling: 'tunable',
+      caching: { explicit: true, minTokens: 2048 },
+      grounding: true,
+      serviceTiers: ['flex', 'standard'],
+    },
+    configSchema: Gemini25FlashLiteConfigSchema,
+    configJsonSchema: toConfigJsonSchema(Gemini25FlashLiteConfigSchema),
+    validateConfig: zodToStandardSchema(Gemini25FlashLiteConfigSchema),
+  },
+  {
+    model: 'gemini-3.5-flash',
+    provider: 'google',
+    pricingFamily: 'gemini-3.5-flash',
+    capabilities: {
+      reasoning: true,
+      structuredOutput: true,
+      nativeStructuredOutput: true,
+      vision: true,
+      reasoningApi: 'level',
+      admittedReasoningEfforts: GEMINI_LEVEL_REASONING_EFFORTS,
+      sampling: 'fixed',
+      caching: { explicit: true, minTokens: 2048 },
+      grounding: true,
+      serviceTiers: ['flex', 'standard'],
+    },
+    configSchema: Gemini35FlashConfigSchema,
+    configJsonSchema: toConfigJsonSchema(Gemini35FlashConfigSchema),
+    validateConfig: zodToStandardSchema(Gemini35FlashConfigSchema),
+  },
+  {
+    model: 'gemini-3.1-flash-lite',
+    provider: 'google',
+    pricingFamily: 'gemini-3.1-flash-lite',
+    capabilities: {
+      reasoning: true,
+      structuredOutput: true,
+      nativeStructuredOutput: true,
+      vision: true,
+      reasoningApi: 'level',
+      admittedReasoningEfforts: GEMINI_LEVEL_REASONING_EFFORTS,
+      sampling: 'fixed',
+      caching: { explicit: true, minTokens: 2048 },
+      grounding: true,
+      serviceTiers: ['flex', 'standard'],
+    },
+    configSchema: Gemini31FlashLiteConfigSchema,
+    configJsonSchema: toConfigJsonSchema(Gemini31FlashLiteConfigSchema),
+    validateConfig: zodToStandardSchema(Gemini31FlashLiteConfigSchema),
+  },
+  {
+    model: 'gemini-3.1-pro-preview',
+    provider: 'google',
+    pricingFamily: 'gemini-3.1-pro-preview',
+    capabilities: {
+      reasoning: true,
+      structuredOutput: true,
+      nativeStructuredOutput: true,
+      vision: true,
+      reasoningApi: 'level',
+      admittedReasoningEfforts: GEMINI_LEVEL_PRO_PREVIEW_REASONING_EFFORTS,
+      sampling: 'fixed',
+      caching: { explicit: true, minTokens: 2048 },
+      grounding: true,
+      serviceTiers: ['flex', 'standard'],
+    },
+    configSchema: Gemini31ProPreviewConfigSchema,
+    configJsonSchema: toConfigJsonSchema(Gemini31ProPreviewConfigSchema),
+    validateConfig: zodToStandardSchema(Gemini31ProPreviewConfigSchema),
+  },
+  {
+    model: 'gemini-3-flash-preview',
+    provider: 'google',
+    pricingFamily: 'gemini-3-flash-preview',
+    capabilities: {
+      reasoning: true,
+      structuredOutput: true,
+      nativeStructuredOutput: true,
+      vision: true,
+      reasoningApi: 'level',
+      admittedReasoningEfforts: GEMINI_LEVEL_REASONING_EFFORTS,
+      sampling: 'fixed',
+      caching: { explicit: true, minTokens: 2048 },
+      grounding: true,
+      serviceTiers: ['flex', 'standard'],
+    },
+    configSchema: Gemini3FlashPreviewConfigSchema,
+    configJsonSchema: toConfigJsonSchema(Gemini3FlashPreviewConfigSchema),
+    validateConfig: zodToStandardSchema(Gemini3FlashPreviewConfigSchema),
+  },
+]
+
+export const gemmaModelDescriptors: ModelDescriptor[] = [
+  {
+    model: 'gemma-4-31b-it',
+    provider: 'google',
+    capabilities: {
+      reasoning: true,
+      reasoningApi: 'level',
+      admittedReasoningEfforts: GEMMA_REASONING_EFFORTS,
+      structuredOutput: true,
+      nativeStructuredOutput: true,
+      grounding: true,
+      vision: true,
+      sampling: 'tunable',
+    },
+    configSchema: Gemma431bItConfigSchema,
+    configJsonSchema: toConfigJsonSchema(Gemma431bItConfigSchema),
+    validateConfig: zodToStandardSchema(Gemma431bItConfigSchema),
+  },
+  {
+    model: 'gemma-4-26b-a4b-it',
+    provider: 'google',
+    capabilities: {
+      reasoning: true,
+      reasoningApi: 'level',
+      admittedReasoningEfforts: GEMMA_REASONING_EFFORTS,
+      structuredOutput: true,
+      nativeStructuredOutput: true,
+      grounding: true,
+      vision: true,
+      sampling: 'tunable',
+    },
+    configSchema: Gemma426bA4bItConfigSchema,
+    configJsonSchema: toConfigJsonSchema(Gemma426bA4bItConfigSchema),
+    validateConfig: zodToStandardSchema(Gemma426bA4bItConfigSchema),
+  },
+]
+
+/**
+ * Pre-built registry of all built-in Gemini + Gemma descriptors.
+ *
+ * Most callers should prefer {@link googleProvider} (which bundles this same
+ * descriptor set via `composeProviders`); this export remains for callers
+ * that need a bare `ModelRegistry` without going through the plugin seam.
+ */
+export const defaultGeminiRegistry: ModelRegistry = createModelRegistry([
+  ...geminiModelDescriptors,
+  ...gemmaModelDescriptors,
+])

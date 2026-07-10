@@ -39,8 +39,7 @@ explicitly. `createClient()` itself takes no credentials.
 // WRONG — GenerateOptions.auth is a required field; this will not type-check, and if
 // bypassed with `as any` it throws LlmError({ kind: 'invalid_auth' }) before any I/O.
 const client = createClient({
-  adapters: [geminiAdapter()],
-  pricingSources: { google: geminiPricingSource() },
+  ...composeProviders([googleProvider()]),
 })
 await client.generate(request, {} as GenerateOptions)
 
@@ -69,12 +68,12 @@ same bare model id can exist under multiple providers with different config sche
 ## Quickstart
 
 ```ts
-import { createClient, geminiPricingSource, geminiAdapter } from '@gullabs/any-llm'
-// (or: from '@gullabs/core' / '@gullabs/google' respectively, if using modular install)
+import { createClient, composeProviders, googleProvider } from '@gullabs/any-llm'
+// (or: composeProviders from '@gullabs/core', googleProvider from '@gullabs/google',
+// if using modular install)
 
 const client = createClient({
-  adapters: [geminiAdapter()],
-  pricingSources: { google: geminiPricingSource() },
+  ...composeProviders([googleProvider()]),
 })
 
 const result = await client.generate(
@@ -125,7 +124,7 @@ the selected descriptor's strict runtime schema before dispatch.
 Treat model config as descriptor-owned:
 
 ```ts
-import { defaultGeminiRegistry } from '@gullabs/core'
+import { defaultGeminiRegistry } from '@gullabs/google'
 
 const descriptor = defaultGeminiRegistry.resolve('google', 'gemini-3.5-flash')
 if (!descriptor) throw new Error('unknown model')
@@ -156,12 +155,11 @@ response and sets `outputParsed`; `result.output` is always `unknown`. **The cal
 owns shape validation** — this library does not validate output shape itself.
 
 ```ts
-import { createClient, geminiPricingSource, geminiAdapter } from '@gullabs/any-llm'
+import { createClient, composeProviders, googleProvider } from '@gullabs/any-llm'
 import type { StandardSchemaV1 } from '@gullabs/core'
 
 const client = createClient({
-  adapters: [geminiAdapter()],
-  pricingSources: { google: geminiPricingSource() },
+  ...composeProviders([googleProvider()]),
 })
 
 const result = await client.generate(

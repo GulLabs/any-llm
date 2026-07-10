@@ -9,14 +9,11 @@
  */
 
 import type { ProviderPlugin } from '@gullabs/core'
-import {
-  geminiModelDescriptors,
-  gemmaModelDescriptors,
-  geminiPricingSource,
-} from '@gullabs/core'
 
 import { geminiAdapter } from './adapter.js'
 import type { GeminiAdapterOptions } from './adapter.js'
+import { geminiPricingSource } from './cost.js'
+import { geminiModelDescriptors, gemmaModelDescriptors } from './models.js'
 
 /**
  * Create a {@link ProviderPlugin} for the Gemini provider.

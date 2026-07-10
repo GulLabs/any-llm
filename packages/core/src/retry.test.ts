@@ -8,11 +8,15 @@
 import { describe, it, expect } from 'vitest'
 import { LlmError } from './errors.js'
 import { computeBackoffMs, retryMiddleware } from './retry.js'
-import { createClient, geminiPricingSource } from './index.js'
+import { createClient, createModelRegistry } from './index.js'
 import type { Handler, EngineCtx, ResolvedRequest } from './ports.js'
 import type { LlmResult, Usage } from './types.js'
 import { FakeAdapter, FakeClock, FakeIds, RecordingSink } from '@gullabs/testing'
-import { makeTestDescriptor } from './test-model-descriptor.js'
+import {
+  makePermissiveTestDescriptor,
+  makeTestDescriptor,
+} from './test-model-descriptor.js'
+import { makeTestPricingSource } from './test-pricing-source.js'
 
 // ---------------------------------------------------------------------------
 // Shared test fixtures
@@ -395,7 +399,20 @@ describe('retryMiddleware', () => {
 // ---------------------------------------------------------------------------
 
 describe('engine + middleware — integration', () => {
-  const PRICING = geminiPricingSource()
+  const PRICING = makeTestPricingSource(
+    {
+      'gemini-2.5-pro': {
+        inputPerM: 1_250_000,
+        cachedPerM: 125_000,
+        outputPerM: 10_000_000,
+      },
+    },
+    { standard: 1 },
+    'test-pricing-1',
+  )
+  const TEST_REGISTRY = createModelRegistry([
+    makePermissiveTestDescriptor({ model: 'gemini-2.5-pro', provider: 'google' }),
+  ])
   const TEST_AUTH = { apiKey: 'test-key' }
 
   function makeSuccessResult() {
@@ -419,6 +436,7 @@ describe('engine + middleware — integration', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock,
       ids,
@@ -451,6 +469,7 @@ describe('engine + middleware — integration', () => {
       createClient({
         adapters: [new FakeAdapter('google', makeSuccessResult())],
         pricingSources: { google: PRICING },
+        modelRegistry: TEST_REGISTRY,
         middleware: [mwA, mwB], // both have id='retry'
       }),
     ).toThrow(LlmError)
@@ -467,6 +486,7 @@ describe('engine + middleware — integration', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids,
@@ -509,6 +529,7 @@ describe('engine + middleware — integration', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids,
@@ -554,6 +575,7 @@ describe('engine + middleware — integration', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       clock: new FakeClock(),
       ids: new FakeIds(),
       telemetry: {

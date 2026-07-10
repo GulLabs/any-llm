@@ -24,3 +24,38 @@ export function makeTestDescriptor(
     validateConfig: EmptyConfigValidator,
   }
 }
+
+/**
+ * A permissive `z.looseObject({})` config schema — accepts arbitrary keys.
+ *
+ * For engine-level integration tests (retry, structured output, call-site,
+ * middleware, rate-limiting, …) that exercise `GenConfig` fields
+ * (`temperature`, `providerOptions`, …) without wanting to replicate a real
+ * provider's strict per-field schema. Use {@link makeTestDescriptor} instead
+ * when a test specifically needs strict-schema rejection behavior.
+ */
+const PermissiveConfigSchema = z
+  .looseObject({})
+  .meta({
+    title: 'PermissiveConfig',
+    description: 'Permissive test schema.',
+    examples: [{}],
+  })
+
+const PermissiveConfigJsonSchema = toConfigJsonSchema(PermissiveConfigSchema)
+const PermissiveConfigValidator = zodToStandardSchema(PermissiveConfigSchema)
+
+export function makePermissiveTestDescriptor(
+  overrides: Partial<ModelDescriptor> & Pick<ModelDescriptor, 'model' | 'provider'>,
+): ModelDescriptor {
+  const { model, provider, ...rest } = overrides
+
+  return {
+    ...rest,
+    model,
+    provider,
+    configSchema: PermissiveConfigSchema,
+    configJsonSchema: PermissiveConfigJsonSchema,
+    validateConfig: PermissiveConfigValidator,
+  }
+}

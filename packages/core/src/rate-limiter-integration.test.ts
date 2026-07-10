@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { createClient, geminiPricingSource, LlmError } from './index.js'
+import { createClient, createModelRegistry, LlmError } from './index.js'
 import type { ProviderAdapter, RateLimiter, Release } from './index.js'
 import {
   FakeAdapter,
@@ -18,6 +18,8 @@ import {
   scriptedRateLimiter,
 } from '@gullabs/testing'
 import type { AdapterResult, Usage } from './index.js'
+import { makeTestPricingSource } from './test-pricing-source.js'
+import { makePermissiveTestDescriptor } from './test-model-descriptor.js'
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -40,7 +42,16 @@ function makeSuccessResult(overrides?: Partial<AdapterResult>): AdapterResult {
   }
 }
 
-const PRICING = geminiPricingSource()
+const PRICING = makeTestPricingSource(
+  {
+    'gemini-2.5-flash': { inputPerM: 300_000, cachedPerM: 30_000, outputPerM: 2_500_000 },
+  },
+  { standard: 1 },
+  'test-pricing-1',
+)
+const TEST_REGISTRY = createModelRegistry([
+  makePermissiveTestDescriptor({ model: 'gemini-2.5-flash', provider: 'google' }),
+])
 const TEST_AUTH = { apiKey: 'test-key' }
 
 // ---------------------------------------------------------------------------
@@ -78,6 +89,7 @@ function makeClientWithSpy(spy: SpyLimiter) {
   const client = createClient({
     adapters: [adapter],
     pricingSources: { google: PRICING },
+    modelRegistry: TEST_REGISTRY,
     clock,
     ids,
     rateLimiter: spy,
@@ -141,6 +153,7 @@ describe('engine — rateLimiter integration', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       clock,
       ids,
       rateLimiter: spy,
@@ -176,6 +189,7 @@ describe('engine — rateLimiter integration', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock,
       ids: new FakeIds(),
@@ -223,6 +237,7 @@ describe('engine — rateLimiter integration', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock,
       ids: new FakeIds(),
@@ -250,6 +265,7 @@ describe('engine — rateLimiter integration', () => {
     const client = createClient({
       adapters: [new FakeAdapter('google', makeSuccessResult())],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock,
       ids: new FakeIds(),
@@ -290,6 +306,7 @@ describe('engine — rateLimiter integration', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock,
       ids: new FakeIds(),
@@ -331,6 +348,7 @@ describe('engine — rateLimiter integration', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       clock,
       ids,
       rateLimiter: spy,
@@ -392,6 +410,7 @@ describe('engine — rateLimiter integration', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       clock,
       ids,
       rateLimiter: blockingLimiter,
@@ -449,6 +468,7 @@ describe('engine — rateLimiter integration', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       clock,
       ids,
       rateLimiter: blockingLimiter,

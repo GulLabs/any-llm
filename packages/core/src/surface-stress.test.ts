@@ -21,7 +21,9 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { createClient, geminiPricingSource, LlmError, computeCost } from './index.js'
+import { z } from 'zod'
+import { createClient, createModelRegistry, LlmError } from './index.js'
+import { toConfigJsonSchema, zodToStandardSchema } from './model-config/index.js'
 import type {
   AdapterResult,
   ProviderAdapter,
@@ -42,6 +44,8 @@ import {
   RecordingSink,
   SignalAwareFakeAdapter,
 } from '@gullabs/testing'
+import { makeTestPricingSource } from './test-pricing-source.js'
+import { makePermissiveTestDescriptor } from './test-model-descriptor.js'
 
 // ---------------------------------------------------------------------------
 // Deterministic PRNG — mulberry32 (https://gist.github.com/tommyettinger/46a874533244883189143505d203312c)
@@ -62,7 +66,75 @@ function mulberry32(seed: number): () => number {
 // Shared constants
 // ---------------------------------------------------------------------------
 
-const PRICING = geminiPricingSource()
+const TEST_RATES = {
+  'gemini-2.5-pro': { inputPerM: 1_250_000, cachedPerM: 125_000, outputPerM: 10_000_000 },
+  'gemini-2.5-flash': { inputPerM: 300_000, cachedPerM: 30_000, outputPerM: 2_500_000 },
+  'gemini-2.5-flash-lite': {
+    inputPerM: 100_000,
+    cachedPerM: 10_000,
+    outputPerM: 400_000,
+  },
+  'gemini-3.5-flash': {
+    inputPerM: 1_500_000,
+    cachedPerM: 150_000,
+    outputPerM: 9_000_000,
+  },
+  'gemini-3.1-flash-lite': {
+    inputPerM: 250_000,
+    cachedPerM: 25_000,
+    outputPerM: 1_500_000,
+  },
+  'gemini-3.1-pro-preview': {
+    inputPerM: 2_000_000,
+    cachedPerM: 200_000,
+    outputPerM: 12_000_000,
+  },
+}
+const TEST_TIER_FACTOR = { standard: 1, flex: 0.5, batch: 0.5 }
+const PRICING = makeTestPricingSource(TEST_RATES, TEST_TIER_FACTOR, 'test-pricing-1')
+const TEST_REGISTRY = createModelRegistry(
+  Object.keys(TEST_RATES).map((model) =>
+    makePermissiveTestDescriptor({ model, provider: 'google' }),
+  ),
+)
+function computeCost(model: string, usage: Usage, tier?: string) {
+  return PRICING.price(model, usage, tier)
+}
+
+/**
+ * A strict `providerOptions.google` schema mirroring the shape of a real
+ * provider's strict per-model config (allowlisted keys only, unknown keys
+ * rejected) — used only by the INVARIANT 8 tests below, which specifically
+ * exercise strict-schema rejection behavior at the engine level.
+ */
+const StrictGoogleOptionsSchema = z
+  .strictObject({
+    providerOptions: z
+      .strictObject({
+        google: z
+          .strictObject({
+            cachedContent: z.string().optional(),
+            httpOptions: z.looseObject({}).optional(),
+            safetySettings: z.array(z.looseObject({})).optional(),
+          })
+          .optional(),
+      })
+      .optional(),
+  })
+  .meta({
+    title: 'StrictGoogleOptionsTest',
+    description: 'Strict test schema for providerOptions.google allowlisting.',
+    examples: [{}],
+  })
+const STRICT_REGISTRY = createModelRegistry([
+  {
+    model: 'gemini-2.5-pro',
+    provider: 'google',
+    configSchema: StrictGoogleOptionsSchema,
+    configJsonSchema: toConfigJsonSchema(StrictGoogleOptionsSchema),
+    validateConfig: zodToStandardSchema(StrictGoogleOptionsSchema),
+  },
+])
 const TEST_AUTH = { apiKey: 'test-key' }
 const MESSAGES = [
   { role: 'user' as const, parts: [{ kind: 'text' as const, text: 'Hi' }] },
@@ -179,6 +251,7 @@ describe('surface-stress: only LlmErrors escape + record always written', () => 
       const client = createClient({
         adapters: [adapter],
         pricingSources: { google: PRICING },
+        modelRegistry: TEST_REGISTRY,
         sink,
         clock: new FakeClock(1_000 + i),
         ids: new FakeIds(),
@@ -283,6 +356,7 @@ describe('surface-stress: malformed usage', () => {
       const client = createClient({
         adapters: [adapter],
         pricingSources: { google: PRICING },
+        modelRegistry: TEST_REGISTRY,
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -346,6 +420,7 @@ describe('surface-stress: malformed usage', () => {
       const client = createClient({
         adapters: [adapter],
         pricingSources: { google: PRICING },
+        modelRegistry: TEST_REGISTRY,
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -425,6 +500,7 @@ describe('surface-stress: malformed usage', () => {
       const client = createClient({
         adapters: [adapter],
         pricingSources: { google: PRICING },
+        modelRegistry: TEST_REGISTRY,
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -513,6 +589,7 @@ describe('surface-stress: malformed usage', () => {
       const client = createClient({
         adapters: [adapter],
         pricingSources: { google: PRICING },
+        modelRegistry: TEST_REGISTRY,
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -573,6 +650,7 @@ describe('surface-stress: non-finite values in usage.details and usage.raw', () 
       const client = createClient({
         adapters: [adapter],
         pricingSources: { google: PRICING },
+        modelRegistry: TEST_REGISTRY,
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -634,6 +712,7 @@ describe('surface-stress: non-finite values in usage.details and usage.raw', () 
       const client = createClient({
         adapters: [adapter],
         pricingSources: { google: PRICING },
+        modelRegistry: TEST_REGISTRY,
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -713,6 +792,7 @@ describe('surface-stress: non-finite values in usage.details and usage.raw', () 
       const client = createClient({
         adapters: [adapter],
         pricingSources: { google: PRICING },
+        modelRegistry: TEST_REGISTRY,
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -879,6 +959,7 @@ describe('surface-stress: cost property', () => {
       const client = createClient({
         adapters: [adapter],
         pricingSources: { google: PRICING },
+        modelRegistry: TEST_REGISTRY,
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -918,6 +999,7 @@ describe('surface-stress: fail-open', () => {
       const client = createClient({
         adapters: [new FakeAdapter('google', makeOkResult())],
         pricingSources: { google: PRICING },
+        modelRegistry: TEST_REGISTRY,
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -941,6 +1023,7 @@ describe('surface-stress: fail-open', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -971,6 +1054,7 @@ describe('surface-stress: fail-open', () => {
     const successClient = createClient({
       adapters: [new FakeAdapter('google', makeOkResult())],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       telemetry: throwingTelemetry,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -985,6 +1069,7 @@ describe('surface-stress: fail-open', () => {
     const failClient = createClient({
       adapters: [new FakeAdapter('google', { status: 503 })],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       telemetry: throwingTelemetry,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -1015,6 +1100,7 @@ describe('surface-stress: fail-open', () => {
     const client = createClient({
       adapters: [new FakeAdapter('google', makeOkResult())],
       pricingSources: { google: throwingPricing },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -1058,6 +1144,7 @@ describe('surface-stress: cancellation', () => {
       const client = createClient({
         adapters: [adapter],
         pricingSources: { google: PRICING },
+        modelRegistry: TEST_REGISTRY,
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -1094,6 +1181,7 @@ describe('surface-stress: cancellation', () => {
       const client = createClient({
         adapters: [adapter],
         pricingSources: { google: PRICING },
+        modelRegistry: TEST_REGISTRY,
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -1132,6 +1220,7 @@ describe('surface-stress: cancellation', () => {
       const client = createClient({
         adapters: [adapter],
         pricingSources: { google: PRICING },
+        modelRegistry: TEST_REGISTRY,
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -1163,6 +1252,7 @@ describe('surface-stress: cancellation', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -1229,6 +1319,7 @@ describe('surface-stress: structured output parse-only', () => {
       const client = createClient({
         adapters: [adapter],
         pricingSources: { google: PRICING },
+        modelRegistry: TEST_REGISTRY,
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -1265,6 +1356,7 @@ describe('surface-stress: structured output parse-only', () => {
       const client = createClient({
         adapters: [adapter],
         pricingSources: { google: PRICING },
+        modelRegistry: TEST_REGISTRY,
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -1310,6 +1402,7 @@ describe('surface-stress: providerOptions.google strict allowlist', () => {
       const client = createClient({
         adapters: [captureAdapter],
         pricingSources: { google: PRICING },
+        modelRegistry: STRICT_REGISTRY,
         clock: new FakeClock(),
         ids: new FakeIds(),
         defaults: {
@@ -1373,6 +1466,7 @@ describe('surface-stress: providerOptions.google strict allowlist', () => {
       const client = createClient({
         adapters: [captureAdapter],
         pricingSources: { google: PRICING },
+        modelRegistry: STRICT_REGISTRY,
         clock: new FakeClock(),
         ids: new FakeIds(),
       })

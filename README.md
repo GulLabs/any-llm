@@ -27,15 +27,14 @@ The four v1 goals in ~25 lines:
 ```ts
 import {
   createClient,
-  geminiPricingSource,
+  composeProviders,
   defineCallSite,
-  geminiAdapter,
+  googleProvider,
 } from '@gullabs/any-llm'
 
 // 1. Wire up the client — no auth here; the library never reads credentials
 const client = createClient({
-  adapters: [geminiAdapter()],
-  pricingSources: { google: geminiPricingSource() },
+  ...composeProviders([googleProvider()]),
 })
 
 // 2. Define a reusable call site with a structured output schema
@@ -112,7 +111,7 @@ Strict model config is descriptor-owned. The runtime boundary is
 `descriptor.configJsonSchema` derived from that same schema.
 
 ```ts
-import { defaultGeminiRegistry } from '@gullabs/core'
+import { defaultGeminiRegistry } from '@gullabs/google'
 
 const descriptor = defaultGeminiRegistry.resolve('google', 'gemini-3.5-flash')
 if (!descriptor) throw new Error('unknown model')
@@ -441,7 +440,7 @@ Do not treat it as an override lane for descriptor-owned fields like
 `serviceTier`, sampling, reasoning, or response schema.
 
 ```ts
-import { defaultGeminiRegistry } from '@gullabs/core'
+import { defaultGeminiRegistry } from '@gullabs/google'
 
 const descriptor = defaultGeminiRegistry.resolve('google', 'gemini-2.5-pro')
 if (!descriptor) throw new Error('unknown model')
@@ -500,8 +499,7 @@ retry attempts and back-off sleep periods, when the retry middleware is installe
 
 ```ts
 const client = createClient({
-  adapters: [geminiAdapter()],
-  pricingSources: { google: geminiPricingSource() },
+  ...composeProviders([googleProvider()]),
   middleware: [retryMiddleware({ maxAttempts: 3 })],
 })
 
@@ -537,8 +535,7 @@ import pino from 'pino'
 const logger = pino()
 
 const client = createClient({
-  adapters: [geminiAdapter()],
-  pricingSources: { google: geminiPricingSource() },
+  ...composeProviders([googleProvider()]),
   sink: drizzleUsageSink(db, llmCalls),
   logger, // inject your logger here
 })

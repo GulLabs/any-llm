@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { LlmError, createClient, geminiPricingSource } from '@gullabs/core'
+import { LlmError, createClient } from '@gullabs/core'
 import type { ResolvedRequest, AdapterCtx, FinishReason } from '@gullabs/core'
 import {
   fakeGeminiResponse,
@@ -29,6 +29,8 @@ import {
 } from '@gullabs/testing'
 import type { GeminiResponseLike, GeminiUsageMetadataLike } from '@gullabs/testing'
 import { geminiAdapter } from './adapter.js'
+import { geminiPricingSource } from './cost.js'
+import { defaultGeminiRegistry } from './models.js'
 
 // ---------------------------------------------------------------------------
 // Deterministic PRNG
@@ -591,6 +593,7 @@ describe('adapter-stress: non-JSON text + structured output → outputParsed fal
       const client = createClient({
         adapters: [geminiAdapter({ client: fakeClient })],
         pricingSources: { google: PRICING },
+        modelRegistry: defaultGeminiRegistry,
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -660,6 +663,7 @@ describe('adapter-stress: non-JSON text + structured output → outputParsed fal
       const client = createClient({
         adapters: [geminiAdapter({ client: fakeClient })],
         pricingSources: { google: PRICING },
+        modelRegistry: defaultGeminiRegistry,
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -815,6 +819,7 @@ describe('adapter-stress: injected HTTP errors → correct classification', () =
       const client = createClient({
         adapters: [geminiAdapter({ client: fakeClient })],
         pricingSources: { google: PRICING },
+        modelRegistry: defaultGeminiRegistry,
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),

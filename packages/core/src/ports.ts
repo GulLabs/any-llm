@@ -271,8 +271,9 @@ export interface UsageSink {
  * provider. Cross-provider composition happens at the client config level via
  * `ClientConfig.pricingSources` (keyed by provider), not inside this port.
  *
- * v1 ships a built-in Gemini (google-scoped) pricing table; hosts can supply
- * a custom source per provider to override or extend it.
+ * Core ships no built-in pricing table — each provider package (e.g.
+ * `@gullabs/google`) supplies its own `PricingSource` factory; hosts can
+ * supply a custom source per provider to override or extend it.
  */
 export interface PricingSource {
   /** Identifies the pricing snapshot (e.g. `"gemini-2026-06-27"`). */

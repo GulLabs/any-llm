@@ -2,21 +2,17 @@
  * Engine integration tests for @gullabs/core.
  *
  * These tests drive createClient against port-level fakes (FakeAdapter,
- * fakeAuth, RecordingSink, FakeClock, FakeIds) with the real geminiPricingSource.
+ * fakeAuth, RecordingSink, FakeClock, FakeIds) with a synthetic PricingSource
+ * (see test-pricing-source.ts) — core has no built-in pricing table of its own.
  * No network, no SDK, no mocking framework — pure contract assertions.
  *
  * @module
  */
 
 import { describe, it, expect, vi } from 'vitest'
-import {
-  createClient,
-  geminiPricingSource,
-  createModelRegistry,
-  gemmaModelDescriptors,
-  LlmError,
-  retryMiddleware,
-} from './index.js'
+import { z } from 'zod'
+import { createClient, createModelRegistry, LlmError, retryMiddleware } from './index.js'
+import { toConfigJsonSchema, zodToStandardSchema } from './model-config/index.js'
 import type {
   AdapterResult,
   AdapterCtx,
@@ -38,7 +34,11 @@ import {
   RecordingSink,
   SignalAwareFakeAdapter,
 } from '@gullabs/testing'
-import { makeTestDescriptor } from './test-model-descriptor.js'
+import {
+  makePermissiveTestDescriptor,
+  makeTestDescriptor,
+} from './test-model-descriptor.js'
+import { makeTestPricingSource } from './test-pricing-source.js'
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -64,7 +64,62 @@ function makeSuccessResult(overrides?: Partial<AdapterResult>): AdapterResult {
   }
 }
 
-const PRICING = geminiPricingSource()
+// Mirrors gemini-2.5-pro's real published rates verbatim (as local test data,
+// not imported from @gullabs/google) so the hardcoded dollar assertions below
+// keep working unchanged.
+const PRICING = makeTestPricingSource(
+  {
+    'gemini-2.5-pro': {
+      inputPerM: 1_250_000,
+      cachedPerM: 125_000,
+      outputPerM: 10_000_000,
+      gt200k: { inputPerM: 2_500_000, cachedPerM: 250_000, outputPerM: 15_000_000 },
+    },
+  },
+  { standard: 1, flex: 0.5, batch: 0.5 },
+  'test-pricing-1',
+)
+const TEST_REGISTRY = createModelRegistry([
+  makePermissiveTestDescriptor({ model: 'gemini-2.5-pro', provider: 'google' }),
+  makePermissiveTestDescriptor({ model: 'gemma-4-31b-it', provider: 'google' }),
+])
+
+/**
+ * A strict config schema mirroring a real provider's strict per-model schema
+ * (allowlisted `serviceTier` + `providerOptions.google` keys, everything else
+ * rejected) — used only by the handful of tests below that specifically
+ * exercise strict-schema rejection behavior at the engine level.
+ */
+const StrictGeminiConfigSchema = z
+  .strictObject({
+    temperature: z.number().optional(),
+    serviceTier: z.enum(['flex', 'standard']).optional(),
+    providerOptions: z
+      .strictObject({
+        google: z
+          .strictObject({
+            cachedContent: z.string().optional(),
+            httpOptions: z.looseObject({}).optional(),
+            safetySettings: z.array(z.looseObject({})).optional(),
+          })
+          .optional(),
+      })
+      .optional(),
+  })
+  .meta({
+    title: 'StrictGeminiConfigTest',
+    description: 'Strict test schema for engine-level rejection tests.',
+    examples: [{}],
+  })
+const STRICT_REGISTRY = createModelRegistry([
+  {
+    model: 'gemini-2.5-pro',
+    provider: 'google',
+    configSchema: StrictGeminiConfigSchema,
+    configJsonSchema: toConfigJsonSchema(StrictGeminiConfigSchema),
+    validateConfig: zodToStandardSchema(StrictGeminiConfigSchema),
+  },
+])
 const TEST_AUTH = { apiKey: 'test-key' }
 
 function makeClient(
@@ -78,6 +133,7 @@ function makeClient(
   const client = createClient({
     adapters: [adapter],
     pricingSources: { google: PRICING },
+    modelRegistry: TEST_REGISTRY,
     sink,
     clock,
     ids,
@@ -262,6 +318,7 @@ describe('engine — double-count integration', () => {
         adapters: [adapter],
 
         pricingSources: { google: PRICING },
+        modelRegistry: TEST_REGISTRY,
         sink,
         clock: new FakeClock(),
         ids: new FakeIds(),
@@ -347,6 +404,7 @@ describe('engine — failure path', () => {
       adapters: [adapter],
 
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       telemetry,
       clock: new FakeClock(),
@@ -394,6 +452,7 @@ describe('engine — failure path', () => {
       adapters: [adapter],
 
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -440,6 +499,7 @@ describe('engine — structured output', () => {
       adapters: [adapter],
 
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       telemetry,
       clock: new FakeClock(),
@@ -475,6 +535,7 @@ describe('engine — structured output', () => {
       adapters: [adapter],
 
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -503,6 +564,7 @@ describe('engine — structured output', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -537,6 +599,7 @@ describe('engine — fail-open sink', () => {
       adapters: [new FakeAdapter('google', makeSuccessResult())],
 
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -565,6 +628,7 @@ describe('engine — fail-open sink', () => {
       adapters: [adapter],
 
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -597,6 +661,7 @@ describe('engine — timeout', () => {
       adapters: [slow],
 
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -641,6 +706,7 @@ describe('engine — config resolution', () => {
       adapters: [capturingAdapter],
 
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -666,6 +732,7 @@ describe('engine — config resolution', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: STRICT_REGISTRY,
       clock: new FakeClock(),
       ids: new FakeIds(),
       defaults: { serviceTier: 'flex' },
@@ -697,6 +764,7 @@ describe('engine — config resolution', () => {
       adapters: [new FakeAdapter('google', makeSuccessResult())],
 
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -717,7 +785,7 @@ describe('engine — config resolution', () => {
   })
 
   it('Gemma requests stay tierless when no serviceTier is provided', async () => {
-    const gemma = gemmaModelDescriptors.find((d) => d.model === 'gemma-4-31b-it')!
+    const gemma = TEST_REGISTRY.resolve('google', 'gemma-4-31b-it')!
     const adapter = new FakeAdapter(
       'google',
       makeSuccessResult({ model: 'gemma-4-31b-it' }),
@@ -726,6 +794,7 @@ describe('engine — config resolution', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -779,6 +848,7 @@ describe('engine — config resolution', () => {
       adapters: [capturingAdapter],
 
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       clock: new FakeClock(),
       ids: new FakeIds(),
       defaults: { reasoning: { effort: 'low', includeThoughts: false } },
@@ -841,6 +911,7 @@ describe('engine — routing', () => {
     const client = createClient({
       adapters: [google, anthropic],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       clock: new FakeClock(),
       ids: new FakeIds(),
     })
@@ -870,6 +941,7 @@ describe('engine — routing', () => {
     const client = createClient({
       adapters: [google, anthropic],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       clock: new FakeClock(),
       ids: new FakeIds(),
       route: (provider, model, adapters) => {
@@ -895,6 +967,7 @@ describe('engine — routing', () => {
     const client = createClient({
       adapters: [google, anthropic],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       clock: new FakeClock(),
       ids: new FakeIds(),
       // Cross-provider router: always returns the anthropic adapter.
@@ -1055,6 +1128,7 @@ describe('engine — logger', () => {
       adapters: [new FakeAdapter('google', makeSuccessResult())],
 
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       logger,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -1095,6 +1169,7 @@ describe('engine — logger', () => {
       adapters: [new FakeAdapter('google', { status: 500 })],
 
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       logger,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -1133,6 +1208,7 @@ describe('engine — reasoning text', () => {
       adapters: [adapter],
 
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -1167,6 +1243,7 @@ describe('engine — caller abort (Finding 1)', () => {
       adapters: [adapter],
 
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -1207,6 +1284,7 @@ describe('engine — caller abort (Finding 1)', () => {
       adapters: [adapter],
 
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -1250,6 +1328,7 @@ describe('engine — timeout determinism (Finding 2)', () => {
       adapters: [adapter],
 
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -1282,6 +1361,7 @@ describe('engine — timeout determinism (Finding 2)', () => {
       adapters: [slow],
 
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -1323,6 +1403,7 @@ describe('engine — providerOptions strict merge', () => {
       adapters: [capturingAdapter],
 
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       clock: new FakeClock(),
       ids: new FakeIds(),
       defaults: {
@@ -1364,7 +1445,7 @@ describe('engine — providerOptions strict merge', () => {
   })
 
   it('rejects unknown providerOptions.google keys before adapter dispatch', async () => {
-    const { client, adapter } = makeClient()
+    const { client, adapter } = makeClient({ modelRegistry: STRICT_REGISTRY })
 
     await expect(
       client.generate(
@@ -1516,6 +1597,7 @@ describe('engine — pricingFamily routing', () => {
       createClient({
         adapters: [new FakeAdapter('google', makeSuccessResult())],
         pricingSources: { google: PRICING },
+        modelRegistry: TEST_REGISTRY,
         strictPricing: true,
       }),
     ).toThrow(LlmError)
@@ -1571,6 +1653,7 @@ describe('engine — pricingFamily routing', () => {
         new FakeAdapter('google', makeSuccessResult({ model: 'gemma-4-31b-it' })),
       ],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -1719,6 +1802,7 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
       adapters: [flakyAdapter],
 
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids,
@@ -1759,6 +1843,7 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
     const client = createClient({
       adapters: [adapter],
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),
@@ -1812,6 +1897,7 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
       adapters: [adapter],
 
       pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
       sink,
       clock: new FakeClock(),
       ids: new FakeIds(),

@@ -68,12 +68,12 @@ export type {
 export type { LlmCallRecord, BuildRecordInput } from './record.js'
 export { buildRecord, errorKindToStatus, normalizeUsage } from './record.js'
 
-// Pricing snapshot
-export { GEMINI_PRICING, pricingVersion } from './pricing.js'
+// Pricing shapes (generic — no provider pricing tables live in core)
 export type { ModelRates } from './pricing.js'
 
 // Cost computation
-export { computeCost, geminiPricingSource } from './cost.js'
+export { computeCost } from './cost.js'
+export type { CostRatesLookup } from './cost.js'
 
 // Engine
 export type {
@@ -90,12 +90,7 @@ export { composeProviders } from './plugin.js'
 
 // Model registry
 export type { ModelDescriptor, ModelRegistry } from './registry.js'
-export {
-  createModelRegistry,
-  gemmaModelDescriptors,
-  geminiModelDescriptors,
-  defaultGeminiRegistry,
-} from './registry.js'
+export { createModelRegistry } from './registry.js'
 export { toConfigJsonSchema, zodToStandardSchema } from './model-config/index.js'
 
 // Call site
