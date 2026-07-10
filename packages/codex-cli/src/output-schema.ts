@@ -80,9 +80,7 @@ export const OUTPUT_SCHEMA_WALK_KEYWORDS = [
   'definitions',
 ] as const
 
-function isPlainObject(
-  value: JsonValue | undefined,
-): value is Record<string, JsonValue> {
+function isPlainObject(value: JsonValue | undefined): value is Record<string, JsonValue> {
   return (
     value !== null &&
     value !== undefined &&
@@ -199,8 +197,8 @@ function isStringArray(value: JsonValue): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string')
 }
 
-/** Rule 1 pass — unchanged semantics from the original `assertAdditionalPropertiesFalseDeep`. */
-function assertAdditionalPropertiesFalseDeep(schema: JsonValue, rootPath: string): void {
+/** Rule 1 pass — every object node must carry an explicit `additionalProperties: false`. */
+function assertRuleOneAdditionalProperties(schema: JsonValue, rootPath: string): void {
   walkOutputSchemaNodes(schema, rootPath, (node, path) => {
     if (isObjectSchemaNode(node) && node.additionalProperties !== false) {
       throw new LlmError(
@@ -214,7 +212,7 @@ function assertAdditionalPropertiesFalseDeep(schema: JsonValue, rootPath: string
 /**
  * Rule 2 pass — every object node with a `properties` object must have a
  * `required` array (string values only) that lists every property key.
- * Run only after {@link assertAdditionalPropertiesFalseDeep} has cleared
+ * Run only after {@link assertRuleOneAdditionalProperties} has cleared
  * the whole tree, so rule-1 violations always surface with their original
  * (unwidened-by-rule-2) path first.
  */
@@ -265,7 +263,7 @@ function assertRequiredCoversPropertiesDeep(schema: JsonValue, rootPath: string)
  *   the node and the first property key missing from `required`).
  */
 export function assertOpenAiStrictOutputSchema(schema: JsonValue): void {
-  assertAdditionalPropertiesFalseDeep(schema, '')
+  assertRuleOneAdditionalProperties(schema, '')
   assertRequiredCoversPropertiesDeep(schema, '')
 }
 

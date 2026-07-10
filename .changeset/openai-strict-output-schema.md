@@ -8,4 +8,4 @@ Local preflight now enforces both live-verified OpenAI-strict `--output-schema` 
 
 **New export:** `toOpenAiStrictOutputSchema(schema)` — a pure, deep-cloning, explicit opt-in helper (never called by the adapter itself) that injects `additionalProperties: false` where absent, completes `required` for every `properties` key, and makes previously-optional properties nullable-required (`type: T` → `type: [T, 'null']`) instead of silently making them mandatory. Rejects (rather than rewrites) an explicit `additionalProperties: true`/schema-valued `additionalProperties`, and a malformed (non-string-array) `required`.
 
-The removed `assertAdditionalPropertiesFalseDeep` internal helper is replaced by `assertOpenAiStrictOutputSchema` — no compatibility alias is kept, per this repo's no-legacy-compatibility rule.
+The adapter's previous internal rule-1-only preflight helper is deleted outright and replaced by `assertOpenAiStrictOutputSchema` — no compatibility alias and no legacy-named code is kept, per this repo's no-legacy-compatibility rule.
