@@ -1,6 +1,6 @@
 # Plan: OpenAI-strict output-schema handling (codex-cli helper + preflight; xai facts codified)
 
-Status: APPROVED by codex (4 rounds, final session 019f4a22-6461-7ad0-98ac-d2f6dd08ee6c, 2026-07-09)
+Status: IMPLEMENTED (branch feat/openai-strict-output-schema). Plan APPROVED by codex in 4 rounds (final session 019f4a22-6461-7ad0-98ac-d2f6dd08ee6c, 2026-07-09). NOTE: mentions of the deleted symbol `assertAdditionalPropertiesFalseDeep` below are historical spec context describing what was replaced; the symbol no longer exists anywhere in code, tests, README, or changesets.
 Date: 2026-07-09
 Origin: RED LINE consumer feedback — "codex-cli@0.4.0 still doesn't do strict-schema
 rewriting, so the app-side transformer stays (renamed
