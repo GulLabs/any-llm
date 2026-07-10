@@ -34,7 +34,12 @@ export type {
 export { isTextPart, isInlineMediaPart, isFileUriPart } from './types.js'
 
 // Errors
-export type { LlmErrorKind, LlmErrorOptions, HttpClassification } from './errors.js'
+export type {
+  LlmErrorKind,
+  LlmErrorOptions,
+  LlmErrorIssue,
+  HttpClassification,
+} from './errors.js'
 export { LlmError, classifyHttpStatus, classifyError } from './errors.js'
 
 // Ports
