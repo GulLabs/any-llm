@@ -33,9 +33,26 @@ export interface LlmCallRecord {
   // --- identity ---
   /** Unique ID for the logical call (shared across retries). */
   callId: string
-  /** Unique ID for this specific attempt (the idempotency key). */
+  /**
+   * Unique ID for this specific attempt — the idempotency key.
+   *
+   * On `attemptNumber: 0` (a pre-attempt refusal — see below), this is
+   * derived by the same rule as attempt 1: `request.idempotencyKey` when
+   * supplied, a freshly minted id otherwise. It remains the idempotency key
+   * in that case too — a caller-retried refused call with the same
+   * `idempotencyKey` upserts the same row rather than accumulating
+   * duplicates.
+   */
   attemptId: string
-  /** 1-based ordinal of this attempt within the logical call (1 = first attempt, 2 = first retry, …). */
+  /**
+   * Ordinal of this attempt within the logical call.
+   *
+   * `0` means the call was refused before any attempt ran (a `bad_request`
+   * input-contract violation, a `@gullabs/quota`-style pre-attempt denial,
+   * or any other `LlmError` a middleware throws before the engine's
+   * innermost handler begins). Real attempts are 1-based: `1` = first
+   * attempt, `2` = first retry, and so on.
+   */
   attemptNumber: number
   /** Optional call-site identifier for grouping by prompt template. */
   callSiteId?: string
@@ -67,6 +84,11 @@ export interface LlmCallRecord {
    * | `'timeout'`      | Request exceeded timeout                       |
    * | `'aborted'`      | Caller cancelled via AbortSignal               |
    * | `'content_filter'` | Provider refused output for safety reasons   |
+   *
+   * Pre-attempt refusals (`attemptNumber: 0` — see above) land in these same
+   * buckets via the error's `LlmErrorKind`; they are distinguished from a
+   * real attempt's outcome only by `attemptNumber: 0`, not by a separate
+   * status value.
    */
   status: 'ok' | 'api_error' | 'timeout' | 'aborted' | 'content_filter'
   /** Why the model stopped generating (absent on error). */

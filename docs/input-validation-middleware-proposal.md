@@ -2,11 +2,8 @@
 
 ## Status
 
-Proposed. Not accepted. Written for owner/any-llm-team triage — no implementation
-has started and no ADR number has been assigned. If accepted, this should become
-an ADR in `DECISIONS.md` following the pattern of ADR-023/ADR-024; if rejected or
-deferred, it stays here as a record of the incident and the design space that was
-considered.
+Accepted and implemented. Recorded as ADR-025 in `DECISIONS.md`, per the reshaped
+engine-level design in `docs/input-contracts-plan.md`.
 
 Attribution: proposed by the ai-studio pipeline team, from a live incident during
 the V2 pipeline (2026-07-10). Owner will triage with the any-llm team.
@@ -193,20 +190,142 @@ requireInputContract: true, ... })` refuses any request dispatched _without_
 
 ## Effort Estimate
 
-Small-to-medium, contained to `@gullabs/core`:
+Reshaped per the maintainer ruling below into four engine-level pieces plus the
+generic ledger wiring, contained to `@gullabs/core`. Slightly larger than the
+original estimate: the ledger piece is no longer a near-free reuse of an
+existing path — it's new pre-attempt interception logic — and there are four
+pieces to land and test instead of one middleware.
 
-- New `LlmErrorKind` member + `LlmError` construction site: trivial.
-- Middleware implementation (`packages/core/src/input-validation.ts` or similar,
-  mirroring `packages/core/src/retry.ts`'s shape as a `Middleware` factory):
-  half a day including tests, once the schema-format question above is settled.
-- `LlmRequest.inputContract` field + engine wiring to pass it through to the
-  middleware: half a day.
-- `requireInputContract` client-construction option: small, follows the same
-  pattern as other `createClient` options.
-- Ledger/`UsageSink` wiring for refused-call records: should be near-free if it
-  reuses the existing fail-open record path (ADR-021); needs a fixture proving
-  `cost: 0` and `error_kind` land correctly.
-- Docs: update `docs/architecture.md` and add this as an ADR if accepted.
+1. **Strict interpolation in `runStructured`.** Throw `bad_request` (with a
+   structured `issues` array of unresolved/null placeholders) instead of
+   silently leaving `{{placeholder}}` literals in a rendered prompt. Small,
+   self-contained fix to `interpolate()` and its call site; ships as a breaking
+   default under the P0/greenfield break rule. ~half a day including tests.
+2. **`CallSite.inputSchema`.** Thread an optional schema through the call-site
+   shape so a caller can attach a contract at the point it builds a request,
+   independent of `LlmRequest`. Small, mechanical. ~half a day.
+3. **`LlmRequest.inputContract` + engine-level validation pre-pipeline.** The
+   core piece: `LlmRequest` gains the `inputContract` field, and the engine
+   validates it before entering `runAttempt` — no provider adapter involvement,
+   zero tokens spent on a refused call. Includes the new `bad_request` +
+   `issues` construction site (`LlmErrorOptions`) for contract violations.
+   ~1 day including tests, once the schema-format question is settled.
+4. **`requireInputContract` client flag.** `createClient({ requireInputContract:
+true })` refuses any request dispatched without an `inputContract`. Small,
+   follows the existing `createClient` option pattern. ~half a day.
+5. **Generic post-callId, pre-attempt synthetic ledger row.** Per the
+   maintainer ruling (item 4 below), any `LlmError` thrown inside `runPipeline`
+   after callId allocation but before the first attempt — input-contract
+   refusals, quota refusals, future pre-dispatch middleware — produces a
+   zero-usage `UsageSink` row through one shared code path. This is new
+   interception/wiring, not a reuse of the existing fail-open record path
+   inside `runAttempt`, and it changes observable ledger behavior for existing
+   `@gullabs/quota` consumers, so it needs its own fixtures (input-contract
+   refusal, quota refusal, and a generic third case) proving `cost: 0` and the
+   correct `error_kind` land for each. ~1 day including tests.
+6. **Docs.** Update `docs/architecture.md`, land this as an ADR in
+   `DECISIONS.md` following the ADR-023/ADR-024 pattern. ~half a day.
 
-Total: roughly 2–3 days including tests and docs, most of it gated on resolving
-the open questions above rather than on implementation complexity.
+Total: roughly 2–3 days including tests and docs, most of it now concentrated
+in pieces 3 and 5 (engine-level validation and the generic ledger rule) rather
+than spread evenly, since those are where the actual interception logic lives.
+
+## Consumer response (ai-studio, 2026-07-10)
+
+The any-llm team's review correctly identified that the proposal's seam was
+wrong on all three counts: middleware sees the post-render `ResolvedRequest`,
+not the raw fields that were actually malformed; ai-studio calls `generate()`
+with already-rendered strings, so the library never sees the pre-template
+value bag middleware would need; and ledger rows for refusals require new
+engine wiring, since sink writes live inside `runAttempt` and quota refusals
+today produce no row at all. They also surfaced a latent reject-don't-map
+violation of their own in the process — `interpolate()` silently leaves
+`{{placeholder}}` literals in place when a variable is missing or null, which
+is the same failure class as the incident, just one layer downstream.
+
+Responding to the reshaped four-piece design and the specific rulings:
+
+1. **Agreed on all three seam facts — middleware shape withdrawn.** The
+   reshaped design is better than the proposal: piece (3), engine-level
+   `LlmRequest.inputContract`, is the one ai-studio will adopt — we render
+   prompts ourselves and call `generate()`, so the contract has to ride the
+   request, not sit in a pre-render middleware we'd never reach. Piece (1),
+   strict template interpolation in `runStructured` throwing `bad_request` on
+   an unresolved/null placeholder pre-render, doesn't touch our call path, but
+   we endorse it as a default: it's the exact failure class we hit, living in
+   the library's own default path, and greenfield P0 makes the break free.
+   Piece (4), `createClient({ requireInputContract: true })`, is exactly the
+   fleet-wide hard rule we asked for; we'll enable it once every pipeline call
+   site carries a contract.
+
+2. **Urgency framing accepted.** Our commit `3de25977` closed the incident
+   app-side the same night; the library feature's value is standardization and
+   enforcement going forward, not the incident itself. Our tracker item M6
+   (`agents.input_schema`) stays gated on this design landing.
+
+3. **One material consequence of the `StandardSchemaV1` ruling for M6 —
+   flagging so the design lands eyes-open.** Our original plan stored input
+   schemas as _data_: a jsonb `agents.input_schema` column beside
+   `response_schema`, seeded from `pipelines/*/INPUT_SCHEMA.json` and rendered
+   in the admin UI. `StandardSchemaV1` contracts are _code_ — runtime
+   validator objects, not JSON. Two integration options on our side:
+   - (a) Keep zod contracts in ai-studio code, keyed by `pipelineKey`, with the
+     DB/UI storing only the contract's key+version plus a rendered JSON-Schema
+     copy for display. Source of truth is code, git-versioned — this mirrors
+     how our zod _output_ parse already lives in code even though
+     `response_schema` jsonb is what actually goes to providers.
+   - (b) A `jsonSchema → validator` compiler dependency app-side, to keep the
+     DB as source of truth. Adds a dependency and a translation layer we'd
+     rather not carry.
+
+   We're leaning (a) and will note it on M6. If the team sees a reason to
+   prefer (b), say so before we build.
+
+4. **Ledger ruling endorsed, with an operator emphasis.** Tonight's entire
+   debugging method was DB-first, via `llm_calls`. A refusal that leaves no
+   ledger row is invisible to that method — we would have re-learned that the
+   hard way if input contracts had shipped without the synthetic zero-usage
+   row. The engine wiring is worth it. We'd also ask that quota refusals get
+   routed through the same call-level catch once it exists — their current
+   row-less behavior has the identical observability hole.
+
+5. **`bad_request` + structured `issues` field: agreed.** This matches how we
+   already classify caller faults into non-retryable `ApplicationFailure` in
+   Temporal activities. A structured issues array also lets our postmortems
+   record exact field paths instead of parsing message strings out of a free
+   text error.
+
+## Maintainer ruling (2026-07-10)
+
+Items 1, 2, and 5 are settled with no argument: engine-level
+`LlmRequest.inputContract` is the ai-studio adoption path; strict template
+interpolation ships as a breaking default; refusals classify as `bad_request`
+with a structured `issues` array on `LlmErrorOptions`.
+
+**Item 3 — ruled: option (a).** Zod contracts live in consumer code, keyed by
+`pipelineKey`; the DB/UI stores only the contract's key+version plus a
+rendered JSON-Schema copy for display. This mirrors the library's own
+`ModelDescriptor` pattern exactly — Zod `configSchema` as source of truth,
+`configJsonSchema` derived for display/wire — so it isn't a new precedent,
+it's the existing one applied consistently. Option (b) would recreate, inside
+the app, the very JSON-Schema-to-validator dependency and translation layer
+this library already refused to carry; endorsing it here would be incoherent
+with that refusal. Code-as-source-of-truth also means contracts that can
+hard-fail production calls are git-versioned and reviewed, not editable as
+untracked JSON.
+
+**Item 4 — granted, and generalized: no quota special-case.** The pre-dispatch
+record wiring is generic, not input-contract-specific: any `LlmError` thrown
+inside `runPipeline` after callId allocation but before the first attempt
+produces a synthetic zero-usage ledger row. This covers input-contract
+refusals, quota refusals, and any future pre-dispatch middleware through one
+code path, with no change required to `@gullabs/quota` itself. The coherent
+rule is: _if a call got a callId, it leaves a ledger row._ Prologue errors that
+occur before callId allocation (unregistered model, missing provider) stay
+row-less — those are misconfigurations, not calls, and don't belong in the
+call ledger.
+
+Note: this changes observable ledger behavior for existing `@gullabs/quota`
+consumers — refusals that previously produced no row will start appearing as
+rows. Accepted under the P0/greenfield break rule; it fixes an observability
+hole both sides independently identified during triage.

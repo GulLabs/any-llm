@@ -149,6 +149,17 @@ Use this boundary consistently:
 - `LlmRequest.output.jsonSchema` is an output-format hint. It is not the same
   contract as `descriptor.configJsonSchema`.
 
+## Input contracts
+
+Symmetric to output validation, the library also validates request _inputs_ before
+dispatch. Template placeholders (`{{var}}` in `system`/`userTemplate`) are strict by
+default — an unresolved, `null`, or non-string value throws `bad_request` before any
+request is built. Two opt-in `StandardSchemaV1` contracts add business-field validation:
+`callSite.inputSchema` (`runStructured`) and `request.inputContract` (`generate()`).
+`createClient({ requireInputContract: true })` makes either contract mandatory
+fleet-wide. See ADR-025 in `DECISIONS.md` and the `@gullabs/any-llm` skill doc for the
+full contract, including ledger semantics for refused calls.
+
 ## Architecture
 
 Every call — whether `generate()` or `runStructured()` — goes through the pipeline below. Model-config validation (`validateModelConfig`) runs pre-dispatch inside `runAttempt`, before routing or auth:

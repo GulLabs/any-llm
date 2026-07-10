@@ -10,6 +10,7 @@
  */
 
 import type { GenConfig, JsonValue } from './types.js'
+import type { StandardSchemaV1 } from './standard-schema.js'
 
 // ---------------------------------------------------------------------------
 // CallSite type
@@ -53,16 +54,36 @@ export interface CallSite {
   jsonSchema?: JsonValue
   /**
    * System instruction template.
-   * Supports `{{var}}` interpolation (non-recursive; missing vars are left
-   * as the literal `{{var}}` placeholder).
+   * Supports `{{var}}` interpolation (non-recursive — var values are never
+   * re-scanned for further placeholders). Strict: every `{{var}}` referenced
+   * here or in `userTemplate` must have a string-typed value in the `vars`
+   * passed to `runStructured`, or the call is refused before any request is
+   * built (`bad_request`, not retryable). No escape syntax for literal
+   * `{{...}}` text.
    */
   system?: string
   /**
    * User message template.
-   * Supports `{{var}}` interpolation (non-recursive; missing vars are left
-   * as the literal `{{var}}` placeholder).
+   * Supports `{{var}}` interpolation (non-recursive — var values are never
+   * re-scanned for further placeholders). Strict: every `{{var}}` referenced
+   * here or in `system` must have a string-typed value in the `vars` passed
+   * to `runStructured`, or the call is refused before any request is built
+   * (`bad_request`, not retryable). No escape syntax for literal `{{...}}`
+   * text.
    */
   userTemplate?: string
+  /**
+   * Optional StandardSchema validator for the `vars` passed to
+   * `runStructured`. When present, `vars` is validated against it before
+   * strict template interpolation runs — a missing/invalid business field
+   * then surfaces as the schema's own error rather than a downstream
+   * unresolved-placeholder violation. Validation failures throw
+   * `LlmError('bad_request')` with structured `issues`. Async validators are
+   * supported. This is independent of `LlmRequest.inputContract` (the
+   * `generate()` path) — `runStructured` never auto-populates one from the
+   * other.
+   */
+  inputSchema?: StandardSchemaV1
   /**
    * Generation config defaults for this call site.
    * Merged over library-level defaults; per-call `opts.config` wins over this.

@@ -259,11 +259,105 @@ const result = await client.runStructured(summarize, { article: text }, { auth }
 
 `{{var}}` interpolation is non-recursive (substituted values are never re-scanned for
 further `{{...}}`, preventing template injection) and applies to both `system` and
-`userTemplate`. A missing var is left as the literal `{{var}}` placeholder, not an
-empty string. `runStructured` also accepts a two-arg form, `(callSite, opts)`, when the
-template has no vars. Config resolution order everywhere is
+`userTemplate`. **Strict by default (no opt-out):** every `{{var}}` placeholder must have
+a string-typed value in `vars`, or `runStructured` throws before any request is built —
+see "Input contracts" below. `runStructured` also accepts a two-arg form, `(callSite,
+opts)`, when the template has no vars. Config resolution order everywhere is
 `clientDefaults → callSite.config → opts.config`, and the merged config must still pass
 the selected descriptor's strict runtime schema before dispatch.
+
+## Input contracts — strict interpolation, `inputSchema`, `inputContract`
+
+**Strict template interpolation is the default, with no opt-out.** Every `{{var}}`
+placeholder referenced by `callSite.system` or `callSite.userTemplate` must have a
+string-typed value present in `vars`, or `runStructured` refuses the call before any
+request is built — zero tokens spent:
+
+```ts
+import { defineCallSite, LlmError } from '@gullabs/core'
+
+const summarize = defineCallSite({
+  id: 'summarize-article',
+  provider: 'google',
+  model: 'gemini-2.5-flash',
+  userTemplate: 'Summarize this article in 3 sentences:\n\n{{article}}',
+})
+
+try {
+  // Missing `article` — throws before any I/O.
+  await client.runStructured(summarize, {}, { auth })
+} catch (e) {
+  if (e instanceof LlmError && e.kind === 'bad_request') {
+    console.log(e.issues) // [{ path: 'article', message: '...' }]
+  }
+}
+```
+
+`null`, `undefined`, and non-string values (numbers, objects) are all violations — never
+coerced to a string. Unused `vars` entries (present in `vars` but not referenced by any
+template) are allowed. There is no escape syntax for literal `{{...}}` text.
+
+**`CallSite.inputSchema`** validates `vars` with a `StandardSchemaV1` validator (zod,
+valibot, ...) before interpolation runs, so a missing business field surfaces in your own
+schema's vocabulary instead of as a downstream placeholder violation:
+
+```ts
+import { z } from 'zod'
+
+const reviewCallSite = defineCallSite({
+  id: 'code-review',
+  provider: 'google',
+  model: 'gemini-2.5-flash',
+  userTemplate: 'Review this diff as {{reviewer}}:\n\n{{diff}}',
+  inputSchema: z.object({
+    reviewer: z.string().min(1),
+    diff: z.string().min(1),
+  }),
+})
+
+await client.runStructured(
+  reviewCallSite,
+  { reviewer: 'senior-reviewer', diff },
+  { auth },
+)
+```
+
+**`LlmRequest.inputContract`** is the equivalent opt-in contract for the `generate()`
+path (callers who render their own prompt strings and never touch `CallSite`):
+
+```ts
+const result = await client.generate(
+  {
+    provider: 'google',
+    model: 'gemini-2.5-flash',
+    messages: [{ role: 'user', parts: [{ kind: 'text', text: renderedPrompt }] }],
+    inputContract: { schema: myZodSchema, value: sourceContext },
+  },
+  { auth },
+)
+```
+
+`inputContract` is validated once per logical call, before `@gullabs/quota` or any retry
+middleware runs — a violation never consumes rate-limit budget and is never retried.
+`generate()` and `runStructured()` are independent paths: `runStructured` never
+auto-populates `inputContract` from `inputSchema`, and `generate()` never reads
+`inputSchema`.
+
+**`createClient({ requireInputContract: true })`** is a fleet-wide toggle: every
+`generate()` call must carry `inputContract`, and every `runStructured()` call site must
+carry `inputSchema`, or the call is refused. Off by default.
+
+**All violations throw `LlmError('bad_request')`** with a structured `issues` array
+(`{ path, message }[]`, one entry per violation) on top of the usual `.message` string.
+
+**Ledger semantics of refusals.** A refusal that never got a `callId` (unresolved
+placeholders, `CallSite.inputSchema`, or `requireInputContract` on the `runStructured`
+path — all thrown in the `runStructured` prologue) writes **no** ledger row. A refusal
+that already has a `callId` (`inputContract` violations and `requireInputContract` on the
+`generate()` path, thrown inside the pipeline after `callId` assignment) writes **one**
+zero-usage record with `attemptNumber: 0` — including `@gullabs/quota` denials, which get
+the same treatment with no `@gullabs/quota` code changes. See ADR-025 in `DECISIONS.md`
+for the full boundary table.
 
 ## Strict model-config boundary
 
@@ -416,7 +510,8 @@ try {
 ```
 
 `LlmError` also carries `httpStatus?`, `retryAfterMs?`, `provider?`, `callId?`,
-`attemptId?`, `servedServiceTier?`, and `cause` (the original thrown value).
+`attemptId?`, `servedServiceTier?`, `issues?` (structured `{ path, message }[]` — see
+"Input contracts" above), and `cause` (the original thrown value).
 
 ## Reject, don't map
 

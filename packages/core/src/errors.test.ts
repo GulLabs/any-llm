@@ -3,8 +3,15 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { classifyHttpStatus, classifyError, LlmError } from './errors.js'
+import {
+  classifyHttpStatus,
+  classifyError,
+  LlmError,
+  normalizeSchemaIssues,
+  toErrorIssues,
+} from './errors.js'
 import type { LlmErrorKind } from './errors.js'
+import type { StandardSchemaV1 } from './standard-schema.js'
 
 // ---------------------------------------------------------------------------
 // classifyHttpStatus — table-driven
@@ -283,11 +290,114 @@ describe('LlmError', () => {
     expect(e.retryAfterMs).toBeUndefined()
     expect(e.provider).toBeUndefined()
     expect(e.cause).toBeUndefined()
+    expect(e.issues).toBeUndefined()
+  })
+
+  it('carries issues when provided', () => {
+    const e = new LlmError('bad input', {
+      kind: 'bad_request',
+      retryable: false,
+      issues: [{ path: 'name', message: 'required' }],
+    })
+
+    expect(e.issues).toEqual([{ path: 'name', message: 'required' }])
   })
 
   it('maintains instanceof across prototype chain', () => {
     const e = new LlmError('test', { kind: 'unknown', retryable: false })
     expect(e instanceof Error).toBe(true)
     expect(e instanceof LlmError).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// normalizeSchemaIssues (D6)
+// ---------------------------------------------------------------------------
+
+describe('normalizeSchemaIssues', () => {
+  it('root-level issue (no path) normalizes to path: "" with empty segments', () => {
+    const issues: StandardSchemaV1.Issue[] = [{ message: 'root is invalid' }]
+    expect(normalizeSchemaIssues(issues)).toEqual([
+      { segments: [], path: '', message: 'root is invalid' },
+    ])
+  })
+
+  it('empty path array also normalizes to path: ""', () => {
+    const issues: StandardSchemaV1.Issue[] = [{ message: 'root is invalid', path: [] }]
+    expect(normalizeSchemaIssues(issues)).toEqual([
+      { segments: [], path: '', message: 'root is invalid' },
+    ])
+  })
+
+  it('nested string-key paths normalize to dotted notation', () => {
+    const issues: StandardSchemaV1.Issue[] = [
+      { message: 'expected string', path: ['context', 'photographer'] },
+    ]
+    expect(normalizeSchemaIssues(issues)).toEqual([
+      {
+        segments: ['context', 'photographer'],
+        path: 'context.photographer',
+        message: 'expected string',
+      },
+    ])
+  })
+
+  it('array-index segments keep numeric identity; dotted path stringifies them', () => {
+    const issues: StandardSchemaV1.Issue[] = [
+      { message: 'expected string', path: ['items', 0, 'name'] },
+    ]
+    expect(normalizeSchemaIssues(issues)).toEqual([
+      {
+        segments: ['items', 0, 'name'],
+        path: 'items.0.name',
+        message: 'expected string',
+      },
+    ])
+  })
+
+  it('accepts { key } wrapper path segments (StandardSchemaV1.PathSegment)', () => {
+    const issues: StandardSchemaV1.Issue[] = [
+      { message: 'bad', path: [{ key: 'a' }, { key: 1 }, { key: 'b' }] },
+    ]
+    expect(normalizeSchemaIssues(issues)).toEqual([
+      { segments: ['a', 1, 'b'], path: 'a.1.b', message: 'bad' },
+    ])
+  })
+
+  it('symbol path segments are stringified (plain-JSON output)', () => {
+    const sym = Symbol('secretField')
+    const issues: StandardSchemaV1.Issue[] = [{ message: 'bad symbol key', path: [sym] }]
+    const normalized = normalizeSchemaIssues(issues)
+    expect(normalized).toEqual([
+      { segments: [sym.toString()], path: sym.toString(), message: 'bad symbol key' },
+    ])
+    // Confirm it is a genuine string, not the symbol itself — safe for JSON.stringify.
+    expect(typeof normalized[0]!.path).toBe('string')
+    expect(typeof normalized[0]!.segments[0]).toBe('string')
+    expect(() => JSON.stringify(normalized)).not.toThrow()
+  })
+
+  it('normalizes multiple issues independently, preserving order', () => {
+    const issues: StandardSchemaV1.Issue[] = [
+      { message: 'first', path: ['a'] },
+      { message: 'second' },
+      { message: 'third', path: ['b', 2] },
+    ]
+    expect(normalizeSchemaIssues(issues)).toEqual([
+      { segments: ['a'], path: 'a', message: 'first' },
+      { segments: [], path: '', message: 'second' },
+      { segments: ['b', 2], path: 'b.2', message: 'third' },
+    ])
+  })
+
+  it('toErrorIssues strips segments, leaving the plain { path, message } payload', () => {
+    const normalized = normalizeSchemaIssues([
+      { message: 'expected string', path: ['items', 0, 'name'] },
+      { message: 'root is invalid' },
+    ])
+    expect(toErrorIssues(normalized)).toEqual([
+      { path: 'items.0.name', message: 'expected string' },
+      { path: '', message: 'root is invalid' },
+    ])
   })
 })

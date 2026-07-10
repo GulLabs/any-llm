@@ -114,6 +114,17 @@ then validate its shape yourself — see
 [`docs/structured-output-validation.md`](../../docs/structured-output-validation.md) for a
 Standard-Schema-based helper.
 
+## Input contracts
+
+Request-side validation, symmetric to the output boundary above. `{{var}}` template
+placeholders in `callSite.system`/`callSite.userTemplate` are strict by default: an
+unresolved, `null`, or non-string value throws `LlmError('bad_request')` before any
+request is built. Two opt-in `StandardSchemaV1` contracts add business-field validation
+— `callSite.inputSchema` for `runStructured`, `request.inputContract` for `generate()`
+— and `createClient({ requireInputContract: true })` makes one of them mandatory on
+every call. Violations carry a structured `issues` array on `LlmError`. See ADR-025 in
+`../../DECISIONS.md` for the full design, including which refusals write ledger rows.
+
 `createClient({ strictPricing: true, ... })` performs an opt-in construction-time check that every
 registered model resolves to a priced entry. Runtime pricing remains fail-open: pricing failures do
 not fail LLM calls.

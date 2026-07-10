@@ -8,6 +8,8 @@
  * @module
  */
 
+import type { StandardSchemaV1 } from './standard-schema.js'
+
 // ---------------------------------------------------------------------------
 // Error kind
 // ---------------------------------------------------------------------------
@@ -39,6 +41,21 @@ export type LlmErrorKind =
 // ---------------------------------------------------------------------------
 
 /**
+ * A single structured validation failure, normalized from a StandardSchema
+ * issue (or synthesized directly by a non-schema validator such as strict
+ * template interpolation).
+ *
+ * Plain JSON data — safe for ledgers and postmortems. `PropertyKey` symbol
+ * path segments are stringified before landing here.
+ */
+export interface LlmErrorIssue {
+  /** Dotted path to the offending field, e.g. `'context.photographer'`. Root-level issues use `''`. */
+  path: string
+  /** Human-readable description of the violation. */
+  message: string
+}
+
+/**
  * Options accepted by the {@link LlmError} constructor.
  */
 export interface LlmErrorOptions {
@@ -63,6 +80,12 @@ export interface LlmErrorOptions {
   attemptId?: string
   /** Service tier actually attempted by the provider when known. */
   servedServiceTier?: string
+  /**
+   * Structured validation failures, one entry per violation. Populated by
+   * every caller-fault validation path — model-config validation, strict
+   * template interpolation, callsite `inputSchema`, request `inputContract`.
+   */
+  issues?: readonly LlmErrorIssue[]
 }
 
 /**
@@ -104,6 +127,8 @@ export class LlmError extends Error {
   readonly attemptId?: string
   /** Service tier actually attempted by the provider when known. */
   readonly servedServiceTier?: string
+  /** Structured validation failures, one entry per violation, when applicable. */
+  readonly issues?: readonly LlmErrorIssue[]
 
   constructor(message: string, options: LlmErrorOptions) {
     super(message)
@@ -132,6 +157,9 @@ export class LlmError extends Error {
     }
     if (options.servedServiceTier !== undefined) {
       this.servedServiceTier = options.servedServiceTier
+    }
+    if (options.issues !== undefined) {
+      this.issues = options.issues
     }
 
     // Maintain a proper prototype chain in transpiled ES5 environments.
@@ -198,6 +226,81 @@ export function classifyHttpStatus(
     return { kind: 'server', retryable: true }
   }
   return { kind: 'unknown', retryable: false }
+}
+
+// ---------------------------------------------------------------------------
+// StandardSchema issue normalization
+// ---------------------------------------------------------------------------
+
+/**
+ * A StandardSchema issue normalized once, retaining its STRUCTURED path
+ * segments alongside the flattened dotted `path`.
+ *
+ * The structured `segments` array is the single source both derived
+ * representations render from: the dotted {@link LlmErrorIssue.path} carried
+ * on `LlmError.issues`, and any message-string formatter (e.g. the engine's
+ * config-validation rendering, which keeps `[0]` bracket notation for array
+ * indices). Because both come from the same segments, they cannot drift.
+ *
+ * Symbol keys are stringified via `Symbol#toString()` at normalization time —
+ * everything downstream is plain JSON, safe for ledgers and postmortems.
+ */
+export interface NormalizedSchemaIssue extends LlmErrorIssue {
+  /** Structured path segments; numbers preserve array-index identity. Empty for a root-level issue. */
+  segments: readonly (string | number)[]
+}
+
+/**
+ * Normalizes a single StandardSchema issue path into structured segments.
+ *
+ * Accepts both bare `PropertyKey` segments and `{ key: PropertyKey }`
+ * wrapper segments (the two forms permitted by `StandardSchemaV1.Issue.path`).
+ */
+function normalizeIssueSegments(
+  path: StandardSchemaV1.Issue['path'] | undefined,
+): (string | number)[] {
+  if (path === undefined || path.length === 0) return []
+  return path.map((segment) => {
+    const key = typeof segment === 'object' ? segment.key : segment
+    if (typeof key === 'number') return key
+    return typeof key === 'symbol' ? key.toString() : key
+  })
+}
+
+/**
+ * Normalizes StandardSchema validation issues into the shared
+ * {@link NormalizedSchemaIssue} shape used by every caller-fault validation
+ * error in the engine (model-config validation, strict template
+ * interpolation, callsite `inputSchema`, request `inputContract`).
+ *
+ * This is the single source consulted whenever a `bad_request` message
+ * string and its accompanying `issues` array are built from the same
+ * `StandardSchemaV1.FailureResult` — message formatters render from
+ * `segments`, the error payload derives via {@link toErrorIssues}, so the
+ * two representations cannot drift apart.
+ */
+export function normalizeSchemaIssues(
+  issues: ReadonlyArray<StandardSchemaV1.Issue>,
+): NormalizedSchemaIssue[] {
+  return issues.map((issue) => {
+    const segments = normalizeIssueSegments(issue.path)
+    return {
+      segments,
+      path: segments.map(String).join('.'),
+      message: issue.message,
+    }
+  })
+}
+
+/**
+ * Projects normalized issues down to the plain {@link LlmErrorIssue} payload
+ * carried on `LlmError.issues` — the `segments` working data is stripped so
+ * the error surface stays the minimal `{ path, message }` JSON contract.
+ */
+export function toErrorIssues(
+  issues: ReadonlyArray<NormalizedSchemaIssue>,
+): LlmErrorIssue[] {
+  return issues.map(({ path, message }) => ({ path, message }))
 }
 
 // ---------------------------------------------------------------------------

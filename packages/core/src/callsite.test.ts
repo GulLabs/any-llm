@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { createClient, createModelRegistry, defineCallSite } from './index.js'
+import { createClient, createModelRegistry, defineCallSite, LlmError } from './index.js'
 import type { AdapterResult, Usage } from './index.js'
 import { FakeAdapter, FakeClock, FakeIds, RecordingSink } from '@gullabs/testing'
 import { makeTestPricingSource } from './test-pricing-source.js'
@@ -126,7 +126,7 @@ describe('runStructured — template rendering', () => {
     expect(req.system).toBe('You are a bot for Acme Corp.')
   })
 
-  it('leaves missing vars as {{placeholder}} literal', async () => {
+  it('D1: throws bad_request naming the callsite id and the unresolved placeholder; adapter never invoked', async () => {
     const adapter = new FakeAdapter('google', successResult())
     const client = makeClient(adapter)
 
@@ -137,12 +137,25 @@ describe('runStructured — template rendering', () => {
       userTemplate: 'Greet {{name}} and {{unknown}}',
     })
 
-    // Only provide 'name', not 'unknown'
-    await client.runStructured(cs, { name: 'Bob' }, { auth: TEST_AUTH })
+    // Only provide 'name', not 'unknown' — strict interpolation refuses the call.
+    await expect(
+      client.runStructured(cs, { name: 'Bob' }, { auth: TEST_AUTH }),
+    ).rejects.toMatchObject({
+      kind: 'bad_request',
+      retryable: false,
+      issues: [{ path: 'unknown' }],
+    })
+    await expect(
+      client.runStructured(cs, { name: 'Bob' }, { auth: TEST_AUTH }),
+    ).rejects.toBeInstanceOf(LlmError)
+    await expect(
+      client.runStructured(cs, { name: 'Bob' }, { auth: TEST_AUTH }),
+    ).rejects.toThrow(/Call site "missing"/)
+    await expect(
+      client.runStructured(cs, { name: 'Bob' }, { auth: TEST_AUTH }),
+    ).rejects.toThrow(/\{\{unknown\}\}/)
 
-    const req = adapter.calls[0]!
-    const part = req.messages[0]?.parts[0] as { kind: string; text: string }
-    expect(part.text).toBe('Greet Bob and {{unknown}}')
+    expect(adapter.calls).toHaveLength(0)
   })
 
   it('non-recursive: var value containing {{x}} is NOT expanded', async () => {
@@ -180,7 +193,7 @@ describe('runStructured — template rendering', () => {
     expect(part.text).toBe('')
   })
 
-  it('no vars argument → undefined vars leaves all placeholders', async () => {
+  it('D1: no vars argument (two-arg overload → vars = {}) throws for any templated placeholder', async () => {
     const adapter = new FakeAdapter('google', successResult())
     const client = makeClient(adapter)
 
@@ -191,11 +204,13 @@ describe('runStructured — template rendering', () => {
       userTemplate: 'Hello {{name}}',
     })
 
-    await client.runStructured(cs, { auth: TEST_AUTH }) // no vars
+    await expect(client.runStructured(cs, { auth: TEST_AUTH })).rejects.toMatchObject({
+      kind: 'bad_request',
+      retryable: false,
+      issues: [{ path: 'name' }],
+    })
 
-    const req = adapter.calls[0]!
-    const part = req.messages[0]?.parts[0] as { kind: string; text: string }
-    expect(part.text).toBe('Hello {{name}}')
+    expect(adapter.calls).toHaveLength(0)
   })
 })
 
