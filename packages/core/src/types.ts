@@ -7,6 +7,8 @@
  * @module
  */
 
+import type { StandardSchemaV1 } from './standard-schema.js'
+
 // ---------------------------------------------------------------------------
 // Primitive JSON value (used throughout for open / forward-compat lanes)
 // ---------------------------------------------------------------------------
@@ -269,6 +271,31 @@ export interface LlmRequest {
   idempotencyKey?: string
   /** Optional caller-owned correlation id persisted on the record. */
   externalId?: string
+  /**
+   * Optional opt-in input contract for the `generate()` path (D3).
+   *
+   * When present, `value` is validated against `schema` (the
+   * `~standard.validate` seam) inside `runPipeline`, immediately after
+   * `callId` allocation and before the middleware chain is entered — before
+   * `@gullabs/quota` (never consumes budget on a violation) and before the
+   * retry middleware (validated exactly once per logical call, never per
+   * attempt). On violation, throws `LlmError('bad_request')`, not
+   * retryable, with structured `issues` and `callId` attached; because this
+   * is post-`callId`, the refusal writes a synthetic zero-usage ledger row
+   * (D5).
+   *
+   * Consumed by the engine only: `inputContract` is never copied onto the
+   * `ResolvedRequest` an adapter sees. `runStructured` builds its
+   * `LlmRequest` internally and never sets this field — callsite consumers
+   * use `CallSite.inputSchema` instead (D2); the two are independent, one
+   * contract per path.
+   */
+  inputContract?: {
+    /** StandardSchema validator for `value`. */
+    schema: StandardSchemaV1
+    /** The value to validate against `schema`. */
+    value: unknown
+  }
 }
 
 // ---------------------------------------------------------------------------

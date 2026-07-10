@@ -10,6 +10,8 @@ import type {
   LlmError,
   CallSite,
   StandardSchemaV1,
+  LlmRequest,
+  ClientConfig,
 } from './index.js'
 
 const removedConfigSchemaFactory = `makeGeminiConfig${'Schema'}`
@@ -86,5 +88,19 @@ describe('@gullabs/core package surface', () => {
   it('exports CallSite.inputSchema as an optional StandardSchemaV1 (D2 surface)', () => {
     expectTypeOf<CallSite>().toHaveProperty('inputSchema')
     expectTypeOf<CallSite['inputSchema']>().toEqualTypeOf<StandardSchemaV1 | undefined>()
+  })
+
+  it('exports LlmRequest.inputContract as an optional { schema, value } pair (D3 surface)', () => {
+    expectTypeOf<LlmRequest>().toHaveProperty('inputContract')
+    expectTypeOf<LlmRequest['inputContract']>().toEqualTypeOf<
+      { schema: StandardSchemaV1; value: unknown } | undefined
+    >()
+  })
+
+  it('exports ClientConfig.requireInputContract as an optional boolean (D4 surface)', () => {
+    expectTypeOf<ClientConfig>().toHaveProperty('requireInputContract')
+    expectTypeOf<ClientConfig['requireInputContract']>().toEqualTypeOf<
+      boolean | undefined
+    >()
   })
 })

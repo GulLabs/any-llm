@@ -175,6 +175,29 @@ export interface ClientConfig {
    * ```
    */
   middleware?: Middleware[]
+  /**
+   * Opt-in fleet-wide strict mode (D4): when `true`, every call is required
+   * to carry an input contract.
+   *
+   * - `generate()` refuses any request whose `inputContract` (D3) is absent.
+   *   The existing prologue checks (provider presence, model registration,
+   *   `validateResolvedConfig`) run first and win — a request that is both
+   *   missing its contract and misconfigured fails with the existing
+   *   prologue error, row-less, exactly as today. The missing-contract
+   *   refusal itself happens inside `runPipeline`, immediately after
+   *   `callId` allocation — post-`callId`, so it writes a ledger row (D5).
+   * - `runStructured` refuses any call whose `callSite.inputSchema` (D2) is
+   *   absent. This is the FIRST check in the `runStructured` prologue —
+   *   before D2 validation, D1 interpolation, and request building.
+   *   Row-less (pre-`callId`).
+   *
+   * Both refusals throw `LlmError('bad_request')`, not retryable, naming
+   * the option and the missing contract.
+   *
+   * Default: absent (off). `countTokens` is unaffected — it dispatches no
+   * generation and spends no tokens producing output.
+   */
+  requireInputContract?: boolean
 }
 
 /**
@@ -794,6 +817,42 @@ async function validateCallSiteInput(
 }
 
 /**
+ * D3 — opt-in request input contract (the `generate()` path).
+ *
+ * Validates `contract.value` against `contract.schema` via the
+ * `~standard.validate` seam — the same machinery {@link validateCallSiteInput}
+ * and {@link validateResolvedConfig} use. Called by `runPipeline` immediately
+ * after `callId` allocation and before the middleware chain is entered: never
+ * consumes `@gullabs/quota` budget on a violation, and validated exactly once
+ * per logical call (before the retry middleware, never per attempt).
+ *
+ * On violation, throws `LlmError('bad_request')`, not retryable, with one
+ * `issues` entry per failing path (D6). Async validators are supported.
+ */
+async function validateInputContract(contract: {
+  schema: StandardSchemaV1
+  value: unknown
+}): Promise<void> {
+  const syncOrAsync = contract.schema['~standard'].validate(contract.value)
+  const validationResult =
+    syncOrAsync instanceof Promise ? await syncOrAsync : syncOrAsync
+
+  if (validationResult.issues !== undefined) {
+    const normalized = normalizeSchemaIssues(validationResult.issues)
+    const message = normalized
+      .map(
+        (issue) => `inputContract${issue.path ? `.${issue.path}` : ''}: ${issue.message}`,
+      )
+      .join('; ')
+    throw new LlmError(`Request input contract violated: ${message}`, {
+      kind: 'bad_request',
+      retryable: false,
+      issues: toErrorIssues(normalized),
+    })
+  }
+}
+
+/**
  * Assembles the {@link LlmCallRecord} for the success path (Step 10).
  */
 function buildSuccessRecord(
@@ -1151,6 +1210,13 @@ export function createClient(config: ClientConfig): Client {
     callSiteId: string | undefined,
     callerSignal: AbortSignal | undefined,
     callAuth: AuthMaterial,
+    // D4: only `generate()` enforces `requireInputContract` here.
+    // `runStructured()` enforces its own callsite-level check (missing
+    // `callSite.inputSchema`) in its own prologue, pre-callId, before this
+    // function is ever called — re-checking `request.inputContract` here
+    // would wrongly refuse every `runStructured()` call, since D3 says
+    // `runStructured` never sets `inputContract` (that's D2's job).
+    enforceInputContract: boolean,
   ): Promise<LlmResult> {
     // ── (a) Call-level prologue ────────────────────────────────────────────
     // ONE callId per logical call.  ONE onStart.  ONE log-start entry.
@@ -1546,6 +1612,33 @@ export function createClient(config: ClientConfig): Client {
     // telemetry.onSuccess / onError and the call-level logger events fire
     // ONCE here, after the chain (including any retry middleware) settles.
     try {
+      // D4 (generate() path only) / D3: input-contract enforcement. Runs
+      // immediately after callId allocation, BEFORE the middleware chain is
+      // entered — before `@gullabs/quota` (never consumes budget on a
+      // violation) and before the retry middleware (validated exactly once
+      // per logical call, never per attempt). A throw here is caught by the
+      // epilogue below exactly like a pre-attempt middleware refusal: the
+      // same telemetry.onError / logger.error / D5 synthetic-record path.
+      if (enforceInputContract && request.inputContract === undefined) {
+        throw new LlmError(
+          'createClient({ requireInputContract: true }): request is missing "inputContract".',
+          {
+            kind: 'bad_request',
+            retryable: false,
+            issues: [
+              {
+                path: 'inputContract',
+                message:
+                  'inputContract is required when requireInputContract is enabled.',
+              },
+            ],
+          },
+        )
+      }
+      if (request.inputContract !== undefined) {
+        await validateInputContract(request.inputContract)
+      }
+
       const result = await chain(preResolvedReq, engineCtx)
       const latencyMs = clock.now() - callStartMs
       try {
@@ -1587,6 +1680,46 @@ export function createClient(config: ClientConfig): Client {
         ...(lastAttemptId !== undefined ? { attemptId: lastAttemptId } : {}),
       })
       const latencyMs = clock.now() - callStartMs
+
+      // D5: generic pre-attempt ledger record. When no attempt ran (the
+      // middleware chain threw before `runAttempt` ever began — e.g. a
+      // D3/D4 input-contract refusal, or a quota-style pre-attempt denial),
+      // write ONE synthetic zero-usage record so "callId ⇒ ledger row"
+      // holds exceptionlessly (§0.4). Detected via `lastAttemptId`, which
+      // `runAttempt` sets only once it actually starts (see (b) above) —
+      // still `undefined` here means `runAttempt` never began. Errors
+      // thrown AFTER an attempt ran already have their own per-attempt
+      // record from `runAttempt`'s own catch block; this branch must not
+      // duplicate that (boundary pinned by tests).
+      //
+      // `attemptId` follows the EXISTING first-attempt idempotency rule
+      // verbatim (see `runAttempt` above): `request.idempotencyKey` when
+      // supplied, a freshly minted id otherwise. `attemptNumber: 0` marks
+      // "refused before any attempt ran" — real attempts start at 1.
+      // Telemetry is deliberately unaffected: `CallErrorEvent.attemptId`
+      // below still derives from `lastAttemptId` (undefined here), not from
+      // this synthetic id — it has no telemetry counterpart.
+      if (lastAttemptId === undefined) {
+        const syntheticAttemptId = request.idempotencyKey ?? ids.attemptId()
+        const syntheticRecord = buildErrorRecord(
+          callId,
+          syntheticAttemptId,
+          callSiteId,
+          request.provider,
+          request.model,
+          request.metadata,
+          resolvedConfig,
+          EMPTY_USAGE,
+          0,
+          undefined,
+          callStartMs,
+          err,
+          0,
+          request.externalId,
+        )
+        await recordToSink(sink, syntheticRecord, safeLogger, callId)
+      }
+
       try {
         const attemptIdForEvent = err.attemptId ?? lastAttemptId
         const errorEvent: CallErrorEvent = {
@@ -1666,6 +1799,7 @@ export function createClient(config: ClientConfig): Client {
         request.callSiteId,
         runtimeOpts?.signal,
         callAuth,
+        config.requireInputContract === true,
       )
     },
 
@@ -1674,6 +1808,25 @@ export function createClient(config: ClientConfig): Client {
       varsOrOpts: Record<string, string> | RunStructuredOptions,
       opts?: RunStructuredOptions,
     ): Promise<LlmResult> {
+      // D4: FIRST check in the runStructured prologue — before D2 validation,
+      // D1 interpolation, and request building (before even the overload
+      // detection / provider / auth checks below). Row-less (pre-callId).
+      if (config.requireInputContract === true && callSite.inputSchema === undefined) {
+        throw new LlmError(
+          `createClient({ requireInputContract: true }): call site "${callSite.id}" is missing "inputSchema".`,
+          {
+            kind: 'bad_request',
+            retryable: false,
+            issues: [
+              {
+                path: 'inputSchema',
+                message: 'inputSchema is required when requireInputContract is enabled.',
+              },
+            ],
+          },
+        )
+      }
+
       // Detect overload: (callSite, opts) vs (callSite, vars, opts)
       let vars: Record<string, string>
       let resolvedOpts: RunStructuredOptions
@@ -1765,6 +1918,11 @@ export function createClient(config: ClientConfig): Client {
         callSite.id,
         runtimeOpts?.signal,
         callAuth,
+        // `runStructured` never sets `LlmRequest.inputContract` (D3 is the
+        // generate() path; this call site uses `CallSite.inputSchema`, D2) —
+        // the requireInputContract precondition was already enforced above,
+        // pre-callId, so runPipeline must not re-check it here.
+        false,
       )
     },
 
