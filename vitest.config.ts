@@ -9,6 +9,7 @@ export default defineConfig({
     alias: {
       '@gullabs/core': src('core'),
       '@gullabs/google': src('google'),
+      '@gullabs/xai': src('xai'),
       '@gullabs/drizzle': src('drizzle'),
       '@gullabs/quota': src('quota'),
       '@gullabs/testing': src('testing'),

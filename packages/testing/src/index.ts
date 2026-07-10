@@ -33,6 +33,19 @@ export type {
   FakeGeminiModels,
   FakeGeminiClient,
 } from './fake-gemini.js'
+export { fakeXaiResponse, makeFakeXai } from './fake-xai.js'
+export type {
+  XaiReasoningSummaryPartLike,
+  XaiReasoningOutputItemLike,
+  XaiOutputTextPartLike,
+  XaiMessageOutputItemLike,
+  XaiOutputItemLike,
+  XaiUsageLike,
+  XaiResponseLike,
+  FakeXaiResponseOpts,
+  XaiScript,
+  FakeXaiClient,
+} from './fake-xai.js'
 export { FakeAdapter } from './fake-adapter.js'
 export type { FakeAdapterEntry } from './fake-adapter.js'
 export { SignalAwareFakeAdapter } from './signal-aware-fake-adapter.js'

@@ -53,6 +53,7 @@ function collectSourceFiles(dir: string): string[] {
 const MONOREPO_ROOT = resolve(import.meta.dirname, '../../..')
 const CORE_SRC = resolve(MONOREPO_ROOT, 'packages/core/src')
 const GOOGLE_SRC = resolve(MONOREPO_ROOT, 'packages/google/src')
+const XAI_SRC = resolve(MONOREPO_ROOT, 'packages/xai/src')
 const CLAUDE_CLI_SRC = resolve(MONOREPO_ROOT, 'packages/claude-cli/src')
 const CODEX_CLI_SRC = resolve(MONOREPO_ROOT, 'packages/codex-cli/src')
 
@@ -101,6 +102,27 @@ describe('no-ambient-auth: no process.env in source files', () => {
     expect(
       violations,
       `process.env found in google source files:\n${violations.join('\n')}`,
+    ).toHaveLength(0)
+  })
+
+  it('packages/xai/src — no non-test source file reads process.env', () => {
+    const files = collectSourceFiles(XAI_SRC)
+    expect(files.length).toBeGreaterThan(0)
+
+    const violations: string[] = []
+    for (const file of files) {
+      const content = readFileSync(file, 'utf-8')
+      const codeLines = content
+        .split('\n')
+        .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      if (codeLines.some((line) => line.includes('process.env'))) {
+        violations.push(file.replace(MONOREPO_ROOT + '/', ''))
+      }
+    }
+
+    expect(
+      violations,
+      `process.env found in xai source files:\n${violations.join('\n')}`,
     ).toHaveLength(0)
   })
 

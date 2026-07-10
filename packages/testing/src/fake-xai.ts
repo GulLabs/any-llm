@@ -1,0 +1,282 @@
+/**
+ * fake-xai — a structural stub of the `openai` SDK's `client.responses`
+ * surface used by the xAI Grok adapter.
+ *
+ * The xAI adapter (`@gullabs/xai`) depends on `openai` as a peer-dependency.
+ * Tests must never touch the real network, so this module provides a fully
+ * structural (no import of `openai` or `@gullabs/xai`) fake that scripts
+ * responses, captures calls, and can inject errors. `packages/testing`
+ * depends only on `@gullabs/core` — this fake re-derives the xAI Responses
+ * API shapes structurally rather than importing them.
+ *
+ * @module
+ */
+
+// ---------------------------------------------------------------------------
+// Response shape (mirrors the xAI Responses API surface the adapter consumes)
+// ---------------------------------------------------------------------------
+
+/** A single summary-text segment of a `type: 'reasoning'` output item. */
+export interface XaiReasoningSummaryPartLike {
+  type: 'summary_text'
+  text: string
+}
+
+/** A `type: 'reasoning'` item in `output`. */
+export interface XaiReasoningOutputItemLike {
+  type: 'reasoning'
+  id?: string
+  summary: XaiReasoningSummaryPartLike[]
+  status?: string
+}
+
+/** A single text content segment of a `type: 'message'` output item. */
+export interface XaiOutputTextPartLike {
+  type: 'output_text'
+  text: string
+  logprobs?: unknown[]
+  annotations?: unknown[]
+}
+
+/** A `type: 'message'` item in `output`. */
+export interface XaiMessageOutputItemLike {
+  type: 'message'
+  id?: string
+  role?: string
+  status?: string
+  content: XaiOutputTextPartLike[]
+}
+
+/** Union of output-item shapes the Responses API may return. */
+export type XaiOutputItemLike = XaiReasoningOutputItemLike | XaiMessageOutputItemLike
+
+/**
+ * Token usage metadata returned alongside an xAI response.
+ *
+ * All fields are optional/loose because the real API may omit them for
+ * certain request types, and has been observed to add additional
+ * provider-specific numeric fields.
+ */
+export interface XaiUsageLike {
+  input_tokens?: number
+  input_tokens_details?: { cached_tokens?: number }
+  output_tokens?: number
+  output_tokens_details?: { reasoning_tokens?: number }
+  total_tokens?: number
+  [otherKeys: string]: unknown
+}
+
+/**
+ * The structural shape of an xAI Responses API response that the adapter
+ * consumes. Mirrors the subset of the real response body we actually read —
+ * nothing more, so the adapter can swap in the real type trivially.
+ */
+export interface XaiResponseLike {
+  id?: string
+  model?: string
+  /** Observed values: `'completed'`, `'incomplete'`. */
+  status?: string
+  incomplete_details?: { reason?: string } | null
+  output?: XaiOutputItemLike[]
+  usage?: XaiUsageLike
+  reasoning?: { effort?: string; summary?: string }
+  store?: boolean
+  prompt_cache_key?: string | null
+}
+
+// ---------------------------------------------------------------------------
+// Builder: fakeXaiResponse
+// ---------------------------------------------------------------------------
+
+/**
+ * Options for {@link fakeXaiResponse}.
+ */
+export interface FakeXaiResponseOpts {
+  /**
+   * The main text output from the model.
+   * Placed in an `output_text` part of a `type: 'message'` output item.
+   */
+  text?: string
+  /**
+   * Reasoning summary text (placed in a `type: 'reasoning'` output item,
+   * ordered before the message item — mirrors the live API's ordering).
+   */
+  reasoningText?: string
+  /**
+   * Structured JSON text output (mutually exclusive with `text`; use one or
+   * the other). Placed in the same `output_text` part — the adapter does
+   * not distinguish JSON text from regular text at the part level.
+   */
+  structuredJson?: string
+  // Usage metadata fields
+  inputTokens?: number
+  cachedTokens?: number
+  outputTokens?: number
+  reasoningTokens?: number
+  totalTokens?: number
+  /** e.g. `'completed'` | `'incomplete'` */
+  status?: string
+  incompleteReason?: string
+  id?: string
+  model?: string
+  promptCacheKey?: string
+}
+
+/**
+ * Build an {@link XaiResponseLike} from a concise options object.
+ *
+ * ```ts
+ * const resp = fakeXaiResponse({
+ *   text: 'Hello',
+ *   reasoningText: 'thinking...',
+ *   inputTokens: 10,
+ *   outputTokens: 5,
+ *   status: 'completed',
+ * })
+ * ```
+ */
+export function fakeXaiResponse(opts: FakeXaiResponseOpts = {}): XaiResponseLike {
+  const output: XaiOutputItemLike[] = []
+
+  if (opts.reasoningText !== undefined) {
+    output.push({
+      type: 'reasoning',
+      summary: [{ type: 'summary_text', text: opts.reasoningText }],
+      status: 'completed',
+    })
+  }
+
+  const mainText = opts.structuredJson ?? opts.text
+  if (mainText !== undefined) {
+    output.push({
+      type: 'message',
+      role: 'assistant',
+      status: 'completed',
+      content: [{ type: 'output_text', text: mainText }],
+    })
+  }
+
+  const usage: XaiUsageLike = {
+    ...(opts.inputTokens !== undefined ? { input_tokens: opts.inputTokens } : {}),
+    ...(opts.cachedTokens !== undefined
+      ? { input_tokens_details: { cached_tokens: opts.cachedTokens } }
+      : {}),
+    ...(opts.outputTokens !== undefined ? { output_tokens: opts.outputTokens } : {}),
+    ...(opts.reasoningTokens !== undefined
+      ? { output_tokens_details: { reasoning_tokens: opts.reasoningTokens } }
+      : {}),
+    ...(opts.totalTokens !== undefined ? { total_tokens: opts.totalTokens } : {}),
+  }
+
+  return {
+    id: opts.id ?? 'fake-xai-response-id',
+    model: opts.model ?? 'grok-4.5',
+    status: opts.status ?? 'completed',
+    incomplete_details:
+      opts.incompleteReason !== undefined ? { reason: opts.incompleteReason } : null,
+    output,
+    usage,
+    ...(opts.promptCacheKey !== undefined
+      ? { prompt_cache_key: opts.promptCacheKey }
+      : {}),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Script type for makeFakeXai
+// ---------------------------------------------------------------------------
+
+/**
+ * A script that controls what {@link makeFakeXai} returns.
+ *
+ * - **Single response** — every call returns the same response.
+ * - **Array of responses** — calls are served sequentially (first call gets
+ *   `script[0]`, second gets `script[1]`, etc.). Throws `RangeError` when
+ *   the script is exhausted.
+ * - **Function** — called with the raw `params` on each invocation. May
+ *   return a response or throw synchronously (including throwing a plain
+ *   object like `{ status: 429 }` for error-classification tests).
+ */
+export type XaiScript =
+  | XaiResponseLike
+  | XaiResponseLike[]
+  | ((params: unknown) => XaiResponseLike | Promise<XaiResponseLike>)
+
+// ---------------------------------------------------------------------------
+// Fake client shape
+// ---------------------------------------------------------------------------
+
+/**
+ * The object returned by {@link makeFakeXai}.
+ *
+ * Structurally compatible with the subset of the `openai` SDK's
+ * `client.responses` the adapter uses. The extra `calls` array is for test
+ * assertions.
+ */
+export interface FakeXaiClient {
+  /** Drop-in replacement for `new OpenAI(...).responses`. */
+  readonly responses: {
+    create(params: unknown): Promise<XaiResponseLike>
+  }
+  /**
+   * Every argument object passed to `responses.create()`, in order.
+   * Inspect this in tests to assert the adapter constructed the right params.
+   */
+  readonly calls: unknown[]
+}
+
+// ---------------------------------------------------------------------------
+// makeFakeXai
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a fake xAI Responses API client that serves scripted responses.
+ *
+ * ```ts
+ * // Sequential responses
+ * const client = makeFakeXai([
+ *   fakeXaiResponse({ text: 'first' }),
+ *   fakeXaiResponse({ text: 'second' }),
+ * ])
+ * await client.responses.create({})  // → first response
+ * await client.responses.create({})  // → second response
+ * expect(client.calls).toHaveLength(2)
+ *
+ * // Error injection (mimics a 429 object thrown by the real SDK)
+ * const errorClient = makeFakeXai(() => { throw { status: 429 } })
+ * await expect(errorClient.responses.create({})).rejects.toMatchObject({ status: 429 })
+ * ```
+ */
+export function makeFakeXai(script: XaiScript): FakeXaiClient {
+  const calls: unknown[] = []
+  let callIndex = 0
+
+  const create = async (params: unknown): Promise<XaiResponseLike> => {
+    calls.push(params)
+
+    if (typeof script === 'function') {
+      return await script(params)
+    }
+
+    if (Array.isArray(script)) {
+      const response = script[callIndex]
+      if (response === undefined) {
+        throw new RangeError(
+          `makeFakeXai: script exhausted after ${callIndex} call(s); no response for call ${
+            callIndex + 1
+          }`,
+        )
+      }
+      callIndex += 1
+      return response
+    }
+
+    // Single response — always return the same value.
+    return script
+  }
+
+  return {
+    responses: { create },
+    calls,
+  }
+}
