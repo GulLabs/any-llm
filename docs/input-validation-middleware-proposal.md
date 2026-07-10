@@ -2,9 +2,9 @@
 
 ## Status
 
-Proposed. Not accepted. Written for owner/any-llm-team triage — no implementation
-has started and no ADR number has been assigned. If accepted, this should become
-an ADR in `DECISIONS.md` following the pattern of ADR-023/ADR-024; if rejected or
+Triaged — reshaped per maintainer review (see Consumer response). Not yet
+implemented; no ADR number assigned. If accepted, this should become an ADR in
+`DECISIONS.md` following the pattern of ADR-023/ADR-024; if rejected or
 deferred, it stays here as a record of the incident and the design space that was
 considered.
 
@@ -210,3 +210,68 @@ Small-to-medium, contained to `@gullabs/core`:
 
 Total: roughly 2–3 days including tests and docs, most of it gated on resolving
 the open questions above rather than on implementation complexity.
+
+## Consumer response (ai-studio, 2026-07-10)
+
+The any-llm team's review correctly identified that the proposal's seam was
+wrong on all three counts: middleware sees the post-render `ResolvedRequest`,
+not the raw fields that were actually malformed; ai-studio calls `generate()`
+with already-rendered strings, so the library never sees the pre-template
+value bag middleware would need; and ledger rows for refusals require new
+engine wiring, since sink writes live inside `runAttempt` and quota refusals
+today produce no row at all. They also surfaced a latent reject-don't-map
+violation of their own in the process — `interpolate()` silently leaves
+`{{placeholder}}` literals in place when a variable is missing or null, which
+is the same failure class as the incident, just one layer downstream.
+
+Responding to the reshaped four-piece design and the specific rulings:
+
+1. **Agreed on all three seam facts — middleware shape withdrawn.** The
+   reshaped design is better than the proposal: piece (3), engine-level
+   `LlmRequest.inputContract`, is the one ai-studio will adopt — we render
+   prompts ourselves and call `generate()`, so the contract has to ride the
+   request, not sit in a pre-render middleware we'd never reach. Piece (1),
+   strict template interpolation in `runStructured` throwing `bad_request` on
+   an unresolved/null placeholder pre-render, doesn't touch our call path, but
+   we endorse it as a default: it's the exact failure class we hit, living in
+   the library's own default path, and greenfield P0 makes the break free.
+   Piece (4), `createClient({ requireInputContract: true })`, is exactly the
+   fleet-wide hard rule we asked for; we'll enable it once every pipeline call
+   site carries a contract.
+
+2. **Urgency framing accepted.** Our commit `3de25977` closed the incident
+   app-side the same night; the library feature's value is standardization and
+   enforcement going forward, not the incident itself. Our tracker item M6
+   (`agents.input_schema`) stays gated on this design landing.
+
+3. **One material consequence of the `StandardSchemaV1` ruling for M6 —
+   flagging so the design lands eyes-open.** Our original plan stored input
+   schemas as _data_: a jsonb `agents.input_schema` column beside
+   `response_schema`, seeded from `pipelines/*/INPUT_SCHEMA.json` and rendered
+   in the admin UI. `StandardSchemaV1` contracts are _code_ — runtime
+   validator objects, not JSON. Two integration options on our side:
+   - (a) Keep zod contracts in ai-studio code, keyed by `pipelineKey`, with the
+     DB/UI storing only the contract's key+version plus a rendered JSON-Schema
+     copy for display. Source of truth is code, git-versioned — this mirrors
+     how our zod _output_ parse already lives in code even though
+     `response_schema` jsonb is what actually goes to providers.
+   - (b) A `jsonSchema → validator` compiler dependency app-side, to keep the
+     DB as source of truth. Adds a dependency and a translation layer we'd
+     rather not carry.
+
+   We're leaning (a) and will note it on M6. If the team sees a reason to
+   prefer (b), say so before we build.
+
+4. **Ledger ruling endorsed, with an operator emphasis.** Tonight's entire
+   debugging method was DB-first, via `llm_calls`. A refusal that leaves no
+   ledger row is invisible to that method — we would have re-learned that the
+   hard way if input contracts had shipped without the synthetic zero-usage
+   row. The engine wiring is worth it. We'd also ask that quota refusals get
+   routed through the same call-level catch once it exists — their current
+   row-less behavior has the identical observability hole.
+
+5. **`bad_request` + structured `issues` field: agreed.** This matches how we
+   already classify caller faults into non-retryable `ApplicationFailure` in
+   Temporal activities. A structured issues array also lets our postmortems
+   record exact field paths instead of parsing message strings out of a free
+   text error.
