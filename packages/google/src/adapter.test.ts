@@ -961,6 +961,20 @@ describe('error classification', () => {
     expect(err).toBeInstanceOf(LlmError)
     expect((err as LlmError).provider).toBe('google')
   })
+
+  it('rethrows an undici "fetch failed" TypeError as retryable server, not unknown', async () => {
+    const client = makeFakeGemini(() => {
+      throw new TypeError('fetch failed')
+    })
+    const adapter = geminiAdapter({ client })
+
+    const err = await adapter.run(makeResolvedReq(), FAKE_CTX).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(LlmError)
+    const llmErr = err as LlmError
+    expect(llmErr.kind).toBe('server')
+    expect(llmErr.retryable).toBe(true)
+    expect(llmErr.provider).toBe('google')
+  })
 })
 
 // ---------------------------------------------------------------------------

@@ -296,6 +296,68 @@ function isXaiAuthFailureBody(rawErr: unknown): boolean {
 }
 
 /**
+ * Message/errno signatures of a transport-level failure: the request never
+ * reached xAI's servers (or the connection was severed mid-flight), so there
+ * is no HTTP response for {@link classifyHttpStatus} to route by status.
+ * Covers the `openai` SDK's own default message (`"Connection error."`,
+ * thrown by `APIConnectionError`) plus the Node/undici errno codes that
+ * surface when the underlying `fetch` rejects before a response arrives.
+ */
+const XAI_TRANSPORT_ERROR_PATTERN =
+  /connection error|econnreset|econnrefused|etimedout|eai_again|epipe|socket hang up|fetch failed/i
+
+/** True iff `err.message` or `err.code` matches a known transport-failure signature. */
+function matchesXaiTransportSignature(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  if (XAI_TRANSPORT_ERROR_PATTERN.test(err.message)) return true
+  const code = (err as { code?: unknown }).code
+  return typeof code === 'string' && XAI_TRANSPORT_ERROR_PATTERN.test(code)
+}
+
+/**
+ * True iff `rawErr` is (or wraps) a transport-level connection failure —
+ * observed live killing Temporal-orchestrated audit runs when the `openai`
+ * SDK's `APIConnectionError` ("Connection error.") fell through
+ * `classifyError`'s generic HTTP-status classification to `kind: 'unknown',
+ * retryable: false`.
+ *
+ * Detection order:
+ * 1. `rawErr.constructor.name` matches the `openai` SDK's
+ *    `APIConnectionError` / `APIConnectionTimeoutError` classes. Matched by
+ *    constructor name rather than `instanceof` so this file does not need a
+ *    runtime import of `openai` — per `client.ts`, that package is imported
+ *    ONLY in `buildXaiClient`, keeping unit tests independent of the real
+ *    SDK.
+ * 2. `rawErr.message` / `rawErr.code` matches a known transport-failure
+ *    signature (handles the SDK's default message text directly, without
+ *    relying on the class name surviving minification).
+ * 3. A wrapped `rawErr.cause` matches either of the above —
+ *    `APIConnectionError` attaches the underlying fetch/socket error as
+ *    `.cause`.
+ */
+function isXaiTransportError(rawErr: unknown): boolean {
+  if (!(rawErr instanceof Error)) return false
+
+  const ctorName = rawErr.constructor.name
+  if (ctorName === 'APIConnectionError' || ctorName === 'APIConnectionTimeoutError') {
+    return true
+  }
+
+  if (matchesXaiTransportSignature(rawErr)) return true
+
+  const cause = (rawErr as { cause?: unknown }).cause
+  if (cause instanceof Error) {
+    const causeCtorName = cause.constructor.name
+    if (causeCtorName === 'APIConnectionError' || causeCtorName === 'APIConnectionTimeoutError') {
+      return true
+    }
+    if (matchesXaiTransportSignature(cause)) return true
+  }
+
+  return false
+}
+
+/**
  * Classify a raw error thrown from the xAI Responses API call into a typed
  * {@link LlmError}.
  *
@@ -310,6 +372,17 @@ function isXaiAuthFailureBody(rawErr: unknown): boolean {
  * user content) stays `bad_request`. When the structured body is unavailable
  * or unparseable, classification falls through to the status-based
  * `classifyError` from `@gullabs/core`.
+ *
+ * A second special case widens `classifyError`'s generic fallback: when the
+ * base classification lands on `kind: 'unknown'` (no HTTP status to route
+ * by) AND the raw error matches a known transport-failure signature (see
+ * {@link isXaiTransportError}), it is reclassified `kind: 'server',
+ * retryable: true` — the same "provider fault, not caller fault, safe to
+ * retry" bucket this adapter's `countTokens` path already uses for
+ * provider-side failures with no HTTP status. A connection that never
+ * reached xAI is not the caller's fault and is safe to retry; it must never
+ * be surfaced as the non-retryable `unknown` kind, which Temporal treats as
+ * fatal and uses to kill the run outright.
  */
 export function classifyXaiError(rawErr: unknown): LlmError {
   if (rawErr instanceof LlmError) {
@@ -323,6 +396,15 @@ export function classifyXaiError(rawErr: unknown): LlmError {
       kind: 'invalid_auth',
       retryable: false,
       httpStatus: base.httpStatus,
+      provider: 'xai',
+      cause: base.cause ?? rawErr,
+    })
+  }
+
+  if (base.kind === 'unknown' && isXaiTransportError(rawErr)) {
+    return new LlmError(base.message, {
+      kind: 'server',
+      retryable: true,
       provider: 'xai',
       cause: base.cause ?? rawErr,
     })

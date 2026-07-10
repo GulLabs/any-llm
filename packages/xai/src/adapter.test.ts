@@ -852,3 +852,121 @@ describe('error classification', () => {
     expect(result.kind).toBe('bad_request')
   })
 })
+
+describe('transport-failure classification', () => {
+  it('classifies the openai SDK APIConnectionError message as retryable server, not unknown', () => {
+    class APIConnectionError extends Error {
+      constructor() {
+        super('Connection error.')
+      }
+    }
+    const result = classifyXaiError(new APIConnectionError())
+    expect(result.kind).toBe('server')
+    expect(result.retryable).toBe(true)
+    expect(result.provider).toBe('xai')
+  })
+
+  it('classifies APIConnectionTimeoutError (subclass of APIConnectionError) as retryable', () => {
+    // The openai SDK's default message for this subclass is "Request timed
+    // out.", which core's classifyError already recognizes via its own
+    // timeout heuristic (kind: 'timeout', retryable: true) — so this never
+    // even needs the transport-fallback path to be safe to retry. Confirm
+    // it does NOT fall through to the non-retryable 'unknown' kind.
+    class APIConnectionError extends Error {}
+    class APIConnectionTimeoutError extends APIConnectionError {
+      constructor() {
+        super('Request timed out.')
+      }
+    }
+    const result = classifyXaiError(new APIConnectionTimeoutError())
+    expect(result.kind).toBe('timeout')
+    expect(result.retryable).toBe(true)
+  })
+
+  it('classifies an APIConnectionTimeoutError with a non-timeout-worded message via the transport fallback', () => {
+    // Simulate a caller-supplied custom message that does not happen to
+    // contain the word "timeout" — the constructor-name check must still
+    // catch it.
+    class APIConnectionError extends Error {}
+    class APIConnectionTimeoutError extends APIConnectionError {
+      constructor() {
+        super('Connection error.')
+      }
+    }
+    const result = classifyXaiError(new APIConnectionTimeoutError())
+    expect(result.kind).toBe('server')
+    expect(result.retryable).toBe(true)
+  })
+
+  it('classifies a plain Error with "Connection error." message as retryable server', () => {
+    const result = classifyXaiError(new Error('Connection error.'))
+    expect(result.kind).toBe('server')
+    expect(result.retryable).toBe(true)
+  })
+
+  it.each(['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'EPIPE'])(
+    'classifies a Node errno %s (on .code) as retryable server',
+    (code) => {
+      const err = new Error(`read ${code}`) as Error & { code: string }
+      err.code = code
+      const result = classifyXaiError(err)
+      expect(result.kind).toBe('server')
+      expect(result.retryable).toBe(true)
+    },
+  )
+
+  it('classifies "socket hang up" as retryable server', () => {
+    const result = classifyXaiError(new Error('socket hang up'))
+    expect(result.kind).toBe('server')
+    expect(result.retryable).toBe(true)
+  })
+
+  it('classifies undici "fetch failed" as retryable server', () => {
+    const result = classifyXaiError(new TypeError('fetch failed'))
+    expect(result.kind).toBe('server')
+    expect(result.retryable).toBe(true)
+  })
+
+  it('detects a transport failure wrapped as .cause (APIConnectionError shape)', () => {
+    class APIConnectionError extends Error {
+      constructor(cause: Error) {
+        super('Connection error.')
+        this.cause = cause
+      }
+    }
+    const causeErr = new Error('connect ECONNREFUSED 127.0.0.1:443') as Error & {
+      code: string
+    }
+    causeErr.code = 'ECONNREFUSED'
+    const result = classifyXaiError(new APIConnectionError(causeErr))
+    expect(result.kind).toBe('server')
+    expect(result.retryable).toBe(true)
+  })
+
+  it('does not reclassify errors that already have a real HTTP status', () => {
+    const result = classifyXaiError({ status: 500, message: 'Connection error.' })
+    expect(result.kind).toBe('server')
+    expect(result.retryable).toBe(true)
+    // Confirm this took the status-based path, not the transport fallback,
+    // by checking httpStatus made it through.
+    expect(result.httpStatus).toBe(500)
+  })
+
+  it('does not reclassify an unrelated unknown error as retryable', () => {
+    const result = classifyXaiError(new Error('something totally unrelated broke'))
+    expect(result.kind).toBe('unknown')
+    expect(result.retryable).toBe(false)
+  })
+
+  it('end-to-end: adapter.run surfaces a connection error as retryable server, not unknown', async () => {
+    const client = makeFakeXai(() => {
+      throw new Error('Connection error.')
+    })
+    const adapter = xaiAdapter({ client })
+    await expect(adapter.run(makeResolvedReq(), FAKE_CTX)).rejects.toMatchObject({
+      kind: 'server',
+      retryable: true,
+      provider: 'xai',
+    })
+  })
+})

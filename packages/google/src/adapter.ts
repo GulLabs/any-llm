@@ -7,7 +7,7 @@
  * @module
  */
 
-import { LlmError, classifyError, assertNever } from '@gullabs/core'
+import { LlmError, assertNever } from '@gullabs/core'
 import type {
   ProviderAdapter,
   ResolvedRequest,
@@ -40,6 +40,7 @@ import type {
   GeminiCountTokensParams,
 } from './client.js'
 import { isGeminiCapacityError } from './flex-fallback.js'
+import { classifyGoogleError } from './errors.js'
 
 type GeminiGoogleSearchTool = { googleSearch: Record<string, never> }
 
@@ -873,20 +874,10 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
         response = await dispatch()
       } catch (rawErr) {
         // Classify SDK errors → LlmError
-        const classified = classifyError(rawErr)
-        const typed = new LlmError(classified.message, {
-          kind: classified.kind,
-          retryable: classified.retryable,
-          ...(classified.httpStatus !== undefined
-            ? { httpStatus: classified.httpStatus }
-            : {}),
-          ...(classified.retryAfterMs !== undefined
-            ? { retryAfterMs: classified.retryAfterMs }
-            : {}),
-          provider: 'google',
-          cause: classified.cause ?? rawErr,
-          ...(servedServiceTier !== undefined ? { servedServiceTier } : {}),
-        })
+        const typed = classifyGoogleError(
+          rawErr,
+          servedServiceTier !== undefined ? { servedServiceTier } : undefined,
+        )
 
         if (
           config.serviceTier === 'flex' &&
@@ -907,20 +898,7 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
           try {
             response = await dispatch()
           } catch (fallbackRawErr) {
-            const fallbackClassified = classifyError(fallbackRawErr)
-            throw new LlmError(fallbackClassified.message, {
-              kind: fallbackClassified.kind,
-              retryable: fallbackClassified.retryable,
-              ...(fallbackClassified.httpStatus !== undefined
-                ? { httpStatus: fallbackClassified.httpStatus }
-                : {}),
-              ...(fallbackClassified.retryAfterMs !== undefined
-                ? { retryAfterMs: fallbackClassified.retryAfterMs }
-                : {}),
-              provider: 'google',
-              cause: fallbackClassified.cause ?? fallbackRawErr,
-              servedServiceTier: 'standard',
-            })
+            throw classifyGoogleError(fallbackRawErr, { servedServiceTier: 'standard' })
           }
         } else {
           throw typed
@@ -1084,20 +1062,7 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
           raw: response as unknown as JsonValue,
         }
       } catch (rawErr) {
-        if (rawErr instanceof LlmError) throw rawErr
-        const classified = classifyError(rawErr)
-        throw new LlmError(classified.message, {
-          kind: classified.kind,
-          retryable: classified.retryable,
-          ...(classified.httpStatus !== undefined
-            ? { httpStatus: classified.httpStatus }
-            : {}),
-          ...(classified.retryAfterMs !== undefined
-            ? { retryAfterMs: classified.retryAfterMs }
-            : {}),
-          provider: 'google',
-          cause: classified.cause ?? rawErr,
-        })
+        throw classifyGoogleError(rawErr)
       }
     },
   }
