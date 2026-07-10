@@ -57,14 +57,15 @@ implementation (repo process).
 ## B-003 — Input-validation middleware (pre-dispatch input contracts)
 
 - **Priority:** P2
-- **Status:** proposed, not accepted; awaiting owner triage with the any-llm team. If
-  accepted, becomes an ADR in `DECISIONS.md`.
+- **Status:** IMPLEMENTED as ADR-025 (PR #30, 2026-07-10) — strict interpolation
+  default, `CallSite.inputSchema`, `LlmRequest.inputContract`, `requireInputContract`,
+  callId⇒ledger-row rule. See `docs/input-contracts-plan.md`.
 - **Origin:** `docs/input-validation-middleware-proposal.md` (ai-studio pipeline team,
   live incident 2026-07-10: null-saturated template fill produced schema-valid but
   empty outputs across `grok-4.5` and `gpt-5.4` with no `LlmError` raised).
 - **Scope:** per the proposal doc — a pre-dispatch input-validation `Middleware` on the
   same seam `@gullabs/quota` uses.
-- **Next step:** owner triage decision.
+- **Next step:** none — done.
 
 ---
 
