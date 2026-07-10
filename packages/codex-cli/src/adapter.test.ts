@@ -277,10 +277,20 @@ describe('structured output', () => {
     const inputSchema = {
       type: 'object',
       additionalProperties: false,
+      required: [
+        'nested',
+        'list',
+        'tuple',
+        'prefixed',
+        'variant',
+        'variantOne',
+        'variantAll',
+      ],
       properties: {
         nested: {
           type: 'object',
           additionalProperties: false,
+          required: ['a'],
           properties: { a: { type: 'string' } },
         },
         list: {
@@ -288,6 +298,7 @@ describe('structured output', () => {
           items: {
             type: 'object',
             additionalProperties: false,
+            required: ['b'],
             properties: { b: { type: 'number' } },
           },
         },
@@ -297,6 +308,7 @@ describe('structured output', () => {
             {
               type: 'object',
               additionalProperties: false,
+              required: ['x'],
               properties: { x: { type: 'string' } },
             },
             { type: 'string' },
@@ -308,6 +320,7 @@ describe('structured output', () => {
             {
               type: 'object',
               additionalProperties: false,
+              required: ['y'],
               properties: { y: { type: 'number' } },
             },
           ],
@@ -317,6 +330,7 @@ describe('structured output', () => {
             {
               type: 'object',
               additionalProperties: false,
+              required: ['c'],
               properties: { c: { type: 'string' } },
             },
             { type: 'string' },
@@ -327,6 +341,7 @@ describe('structured output', () => {
             {
               type: 'object',
               additionalProperties: false,
+              required: ['d'],
               properties: { d: { type: 'string' } },
             },
             { type: 'number' },
@@ -337,6 +352,7 @@ describe('structured output', () => {
             {
               type: 'object',
               additionalProperties: false,
+              required: ['e'],
               properties: { e: { type: 'string' } },
             },
           ],
@@ -346,6 +362,7 @@ describe('structured output', () => {
         Foo: {
           type: 'object',
           additionalProperties: false,
+          required: ['z'],
           properties: { z: { type: 'string' } },
         },
       },
@@ -353,6 +370,7 @@ describe('structured output', () => {
         Bar: {
           type: 'object',
           additionalProperties: false,
+          required: ['w'],
           properties: { w: { type: 'string' } },
         },
       },

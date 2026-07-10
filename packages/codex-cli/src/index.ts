@@ -28,6 +28,8 @@ export { codexCliAdapter } from './adapter.js'
 export type { CodexCliAdapterOptions } from './adapter.js'
 export { codexCliProvider } from './provider.js'
 
+export { toOpenAiStrictOutputSchema } from './output-schema.js'
+
 export { createCodexCliRunner } from './runner.js'
 export type { CodexCliRunner, CodexCliRunResult } from './runner.js'
 
