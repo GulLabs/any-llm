@@ -69,6 +69,31 @@ implementation (repo process).
 
 ---
 
+## B-004 — Dependency review: pending dependabot PRs, notably `@google/genai` 2.x major
+
+- **Priority:** P3
+- **Status:** parked by owner (2026-07-10) — explicitly deprioritized.
+- **Origin:** open dependabot PRs (#14, #21–#25). Most are routine dev-dep patches;
+  the one requiring deliberate review is `@google/genai` 1.52.0 → 2.11.0 (#24), a
+  major bump of the `@gullabs/google` peer SDK. Known context: our adapter carries
+  mitigations for upstream bugs #1277/#1468 and depends on live-verified 1.x
+  behavior; a 2.x upgrade needs its own verification pass, not an auto-merge.
+- **Scope:** triage the routine dev-dep bumps (merge when green), then a scoped
+  `@google/genai` 2.x review — changelog read, adapter compile/tests against 2.x,
+  re-check the bug mitigations still apply, live smoke verification per the usual
+  discipline.
+- **Next step:** none until the owner reprioritizes.
+
+## B-005 — Response chaining (`previous_response_id` passthrough) — proposal triage
+
+- **Priority:** P3
+- **Status:** proposal dropped by owner, awaiting triage.
+- **Origin:** `docs/response-chaining-enhancement.md` — opt-in xAI Responses-API
+  server-side conversation chaining.
+- **Next step:** owner triage decision.
+
+---
+
 ## Recently completed
 
 - OpenAI-strict output-schema preflight + `toOpenAiStrictOutputSchema` helper shipped
