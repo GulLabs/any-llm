@@ -39,6 +39,17 @@ legacy field the provider may still accept.
 
 ## Deletion Inventory Before Signoff
 
+**Status: shipped.** The strict-schema rollout landed in `feat: enforce strict
+model config schemas` and the subsequent provider-plugin-architecture split —
+Gemini/Gemma config schemas, descriptors, and pricing now live in
+`@gullabs/google` (`packages/google/src/models.ts`, `packages/google/src/cost.ts`,
+`packages/google/src/pricing.ts`); `packages/core/src/reasoning.ts` and the
+public reasoning helper are deleted; `packages/core/src/registry.ts` retains
+only the generic `ModelDescriptor` / `ModelRegistry` / `createModelRegistry`
+machinery with zero provider knowledge. The list below is kept as the
+historical record of what the rollout removed — treat every item as done, not
+as an outstanding TODO.
+
 The strict-schema rollout is not complete until the old contract and its
 teaching surfaces are removed, not wrapped.
 

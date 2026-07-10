@@ -2,6 +2,14 @@
 
 ## Status
 
+Executed — kept as a historical record of the plan as written. Two details have
+since been superseded by the provider-plugin refactor (ADR-023): the per-model
+Gemini/Gemma schemas now live in `@gullabs/google` (not `@gullabs/core`), and
+`flexFallback` is no longer a top-level `GenConfig` field — it lives under
+`providerOptions.google.flexFallback`. References below to a top-level
+`flexFallback` or to core-owned model schemas reflect the layout at the time of
+writing.
+
 Draft plan for implementation after `docs/model-config-strict-schema-design.md`.
 
 Inputs:
@@ -172,28 +180,28 @@ strict objects, unions, enums, min/max, and array length constraints.
 
 ## Target File Layout
 
+At plan time this targeted a core-owned location. As shipped, the
+provider-plugin-architecture split moved every Gemini/Gemma-specific file out
+of `@gullabs/core` and into `@gullabs/google`; core kept only the
+provider-agnostic pieces (`index.ts`, `standard-schema.ts`, `json-schema.ts`
+equivalents — `packages/core/src/model-config/index.ts` exporting
+`toConfigJsonSchema`/`zodToStandardSchema`):
+
 ```text
 packages/core/src/model-config/
-  index.ts
-  standard-schema.ts
-  json-schema.ts
-  gemini-2.5-pro.ts
-  gemini-2.5-flash.ts
-  gemini-2.5-flash-lite.ts
-  gemini-3.5-flash.ts
-  gemini-3.1-flash-lite.ts
-  gemini-3.1-pro-preview.ts
-  gemini-3-flash-preview.ts
-  gemma-4-31b-it.ts
-  gemma-4-26b-a4b-it.ts
-  invariant.test.ts
+  index.ts               # toConfigJsonSchema, zodToStandardSchema — generic, no provider knowledge
+
+packages/google/src/
+  models.ts               # geminiModelDescriptors, gemmaModelDescriptors, defaultGeminiRegistry
+                           # (per-model schemas for gemini-2.5-pro, gemini-2.5-flash, ...,
+                           # gemma-4-31b-it, gemma-4-26b-a4b-it)
 ```
 
-Each model file owns its full schema. Do not import shared reasoning/provider
+Each model owns its full schema. Do not import shared reasoning/provider
 schema fragments. If two models have identical fields, duplicate the schema in
-the model file. This is intentional: model docs drift independently, and the
-cost of a little duplication is lower than another family-level abstraction that
-lies about exact support.
+the model definition. This is intentional: model docs drift independently, and
+the cost of a little duplication is lower than another family-level
+abstraction that lies about exact support.
 
 Evidence table:
 
@@ -286,8 +294,11 @@ Tasks:
   intended design because it keeps each model contract inspectable and prevents
   accidental family-level coupling.
 - Encode top-level fields: `temperature`, `topP`, `topK`,
-  `maxOutputTokens`, `stopSequences`, `timeoutMs`, `flexFallback`,
-  `serviceTier`, `reasoning`, and `providerOptions`.
+  `maxOutputTokens`, `stopSequences`, `timeoutMs`, `serviceTier`, `reasoning`,
+  and `providerOptions` (as shipped, `flexFallback` is not a core `GenConfig`
+  field — it is a `GoogleProviderOptions` field reached via
+  `providerOptions.google.flexFallback`; each schema still encodes it inside
+  that provider-options allowlist).
 - Encode model-specific fixed sampling by omitting fields, not by accepting and
   rejecting them later.
 - Encode reasoning as structural unions:
@@ -300,8 +311,8 @@ Tasks:
 
 Acceptance:
 
-- `defaultGeminiRegistry.listDescriptors()` returns only descriptors with all
-  three schema artifacts.
+- `defaultGeminiRegistry.listDescriptors()` (exported by `@gullabs/google`, not
+  core) returns only descriptors with all three schema artifacts.
 - Every built-in schema has `additionalProperties: false` in derived JSON
   Schema at every object boundary.
 - Negative tests reject unknown keys, wrong scalar types, unsupported sampling,

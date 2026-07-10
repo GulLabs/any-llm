@@ -324,12 +324,17 @@ export interface Usage {
 /**
  * Cost in micro-USD, frozen at write time.
  *
- * The `details` breakdown **must** satisfy:
+ * When the cost is **priced** (`microUsd` is a `number`), the `details`
+ * breakdown **must** satisfy:
  * ```
  * details.input + details.cached + details.output === microUsd
  * ```
  * Thinking tokens are billed at the output rate and are folded into
  * `details.output` — there is no separate `thinking` lane.
+ *
+ * When the cost is **unpriced** (`microUsd: null`), this invariant does not
+ * apply: `details` is zero-filled (`{ input: 0, cached: 0, output: 0 }`)
+ * rather than meaningful, so it trivially sums to `0`, not to `microUsd`.
  */
 export interface Cost {
   /**

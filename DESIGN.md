@@ -20,8 +20,9 @@ given its ports.
 Every place where providers diverge has three lanes:
 
 - A **typed lane** for common, well-understood options and fields (first-class, validated).
-- A **raw passthrough lane** (`providerOptions`) that adapters forward verbatim to the raw SDK —
-  so a brand-new request parameter works the day a provider ships it with no core change.
+- A **provider extension lane** (`providerOptions`) for options each provider package defines and
+  validates itself via `ProviderOptionsMap` declaration merging — a strict, per-model-schema
+  allowlist (see "`providerOptions` Passthrough" below), not an unvalidated raw-SDK passthrough.
 - A **raw capture lane** — adapters copy the provider's entire raw usage object and response
   metadata into the result and persisted record so a new usage field is never lost even before
   the library models it.
@@ -95,14 +96,22 @@ error messages before they are written to the sink (via `redactSecrets` in `buil
 
 ### `providerOptions` Passthrough
 
-`GenConfig.providerOptions` is a `Record<string, JsonValue>` forwarded to adapters verbatim. The
-Gemini adapter applies `providerOptions['google']` last, after all typed-field mapping, so any
-key the adapter does not know how to handle reaches the raw SDK call unchanged. This is the
-intentional safety valve: a new SDK parameter available today in `@google/genai` does not require
-a library release.
+`GenConfig.providerOptions` is typed as `ProviderOptionsMap` (`packages/core/src/types.ts`) — an
+open, empty-by-default interface that provider packages extend via declaration merging, not a raw
+`Record<string, JsonValue>` passthrough. `@gullabs/google` augments it with
+`interface ProviderOptionsMap { google?: GoogleProviderOptions }` (`packages/google/src/types.ts`);
+the `google` key only appears on the type once `@gullabs/google` is imported.
 
-Adapters that implement `validateProviderOptions` (planned, not in v1) can emit `Warning` entries
-for unknown keys rather than silently forwarding them.
+This is not an unbounded forwarding lane, either: `GoogleProviderOptions` is a strict allowlist
+(`cachedContent`, `safetySettings`, `tools`, `httpOptions`, `flexFallback`) enforced per-model by
+each Gemini/Gemma descriptor's own `configSchema` (see
+[`docs/model-config-strict-schema-design.md`](./docs/model-config-strict-schema-design.md)) —
+reserved fields such as `temperature`, `serviceTier`, or `thinkingConfig` are rejected inside
+`providerOptions.google` rather than silently forwarded, and the adapter maps allowlisted fields
+one-by-one instead of `Object.assign`-ing the raw object onto the SDK call. A brand-new SDK
+parameter still requires a schema update to become admitted, not a full library release cut for
+every provider package, but there is no unvalidated "anything goes" escape hatch — callers needing
+genuinely raw SDK access should inject their own `ProviderAdapter` instead.
 
 ### `Usage.details` and `Usage.raw`
 
@@ -209,8 +218,10 @@ Resolution order:
 - `generate`: `libDefaults → request.config`
 - `runStructured`: `libDefaults → callSite.config → opts.config`
 
-`serviceTier` is defaulted to `'flex'` after the merge so the resolved config always has a tier.
-This default is applied in the engine, not in merge logic, to keep the merge function pure.
+Omitted `serviceTier` stays omitted — the engine no longer injects a `'flex'` default after the
+merge. An earlier design defaulted every resolved config to `'flex'`, but that broke models with
+no supported service tiers (e.g. Gemma), so the strict-schema rollout removed the implicit
+default: no `serviceTier` in the merged config means provider-standard request behavior.
 
 ---
 
@@ -229,8 +240,10 @@ and reference-only; resource handles are passed to requests as `FileUriPart.uri`
 `providerOptions.google.cachedContent`.
 
 **Model-bound config validation.** `ModelDescriptor` now carries `configJsonSchema` (plain JSON
-Schema, for UX) and `validateConfig` (Standard Schema v1 validator). The engine validates a
-projection of the resolved config before auth and rate-limiter acquire. Gemini 3.x descriptors
+Schema, for UX) and `validateConfig` (Standard Schema v1 validator). The engine validates the
+**full** resolved config — including `providerOptions` — against `descriptor.validateConfig`
+before auth and rate-limiter acquire; this replaced an earlier projection-only validation step
+that excluded `providerOptions` and let the adapter re-check after merge. Gemini 3.x descriptors
 have `sampling: 'fixed'` and reject `temperature`, `topP`, `topK` at call time.
 
 **Grounding.** Requested via `providerOptions.google.tools: [{ googleSearch: {} }]`. The adapter
@@ -248,7 +261,8 @@ canonical and is the only value persisted.
 ## Planned Seams (not yet)
 
 The following capabilities have documented ports or type-system placeholders. They are excluded
-because the Gemini-only, non-streaming foundation needs to be stable first.
+because the one-call, non-streaming foundation (now multi-provider via the ADR-023 plugin
+architecture: google, xai, and the dev-only CLI providers) needs to be stable first.
 
 **Streaming.** A `stream()` method that returns an async iterable of normalized `StreamEvent`
 objects plus a `final: Promise<LlmResult>`. The `ProviderAdapter` interface is designed to
@@ -256,9 +270,14 @@ accommodate a `runStream` method. Records are written on every terminal stream o
 abort, with `usage.source = 'estimated'` when the provider did not return usage before the stream
 ended.
 
-**Additional providers.** The `ProviderAdapter` port and routing infrastructure are ready.
-`AuthMaterial` is currently `{ apiKey: string }` only. Additional forms (OAuth token, bearer
-token) would extend the union. Vertex AI specifically is on the roadmap; see ROADMAP.md.
+**Additional providers.** Beyond the `ProviderAdapter` port and routing infrastructure, adding a
+provider package is now a first-class, shipped workflow: a package exports a `ProviderPlugin`
+(adapter + model descriptors + optional pricing source, see `packages/core/src/plugin.ts`) and
+hosts wire it in via `composeProviders([...])` (e.g. `composeProviders([googleProvider()])`) —
+see [`docs/architecture.md`](./docs/architecture.md) and the README Quickstart. `AuthMaterial` is
+currently `{ apiKey: string } | { cliSession: true }` (the CLI-session form shipped with the dev
+CLI providers below). Additional forms (OAuth token, bearer token) would extend the union further.
+Vertex AI specifically is on the roadmap; see ROADMAP.md.
 
 **Function calling.** The `Part` union's `kind` discriminant is reserved for future `tool-call`
 and `tool-result` variants. `LlmRequest` does not yet carry a `tools` field.
@@ -280,14 +299,14 @@ to avoid duplicate instances in the host's dependency tree.
 
 Packages:
 
-| Package               | Role                                                                                                      |
-| --------------------- | --------------------------------------------------------------------------------------------------------- |
-| `@gullabs/core`       | Engine, types, ports, retry middleware, model registry, record builder, pricing. No provider SDK imports. |
-| `@gullabs/google`     | Gemini adapter over `@google/genai`.                                                                      |
-| `@gullabs/drizzle`    | Reference Postgres schema (`llm_calls` table) and `drizzleUsageSink`.                                     |
-| `@gullabs/testing`    | `FakeClock`, `FakeIds`, `RecordingSink`, `makeFakeGemini`. No network in tests.                           |
-| `@gullabs/claude-cli` | **Dev-only.** Adapter over the local `claude` CLI. Not published to prod consumers' deps.                 |
-| `@gullabs/codex-cli`  | **Dev-only.** Adapter over the local `codex` CLI. Not published to prod consumers' deps.                  |
+| Package               | Role                                                                                                                                                                                                                                                                                                            |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@gullabs/core`       | Engine, types, ports, `ProviderPlugin`/`composeProviders`, generic model-registry machinery (`ModelDescriptor`, `ModelRegistry`, `createModelRegistry`), record builder, generic cost computation (`computeCost`). No provider SDK imports, no provider-specific model descriptors, schemas, or pricing tables. |
+| `@gullabs/google`     | Gemini/Gemma adapter over `@google/genai`, plus everything provider-specific: model descriptors and strict per-model config schemas (`geminiModelDescriptors`, `gemmaModelDescriptors`, `defaultGeminiRegistry`), `GoogleProviderOptions`, and pricing (`GEMINI_PRICING`, `geminiPricingSource`).               |
+| `@gullabs/drizzle`    | Reference Postgres schema (`llm_calls` table) and `drizzleUsageSink`.                                                                                                                                                                                                                                           |
+| `@gullabs/testing`    | `FakeClock`, `FakeIds`, `RecordingSink`, `makeFakeGemini`. No network in tests.                                                                                                                                                                                                                                 |
+| `@gullabs/claude-cli` | **Dev-only.** Adapter over the local `claude` CLI. Not published to prod consumers' deps.                                                                                                                                                                                                                       |
+| `@gullabs/codex-cli`  | **Dev-only.** Adapter over the local `codex` CLI. Not published to prod consumers' deps.                                                                                                                                                                                                                        |
 
 ---
 

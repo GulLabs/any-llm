@@ -1,14 +1,11 @@
 /**
  * @gullabs/xai — model descriptor + registry tests.
  *
- * `assertRegistryInvariants` from `@gullabs/testing` does not exist yet on
- * this branch (a later phase-1 commit), so the equivalent invariant checks
- * described by the commit-3 task brief are hand-rolled here instead.
- *
  * @module
  */
 
 import { describe, it, expect } from 'vitest'
+import { assertRegistryInvariants } from '@gullabs/testing'
 import {
   Grok45ConfigSchema,
   grok45ModelDescriptor,
@@ -16,6 +13,8 @@ import {
   xaiRegistry,
 } from './models.js'
 import { xaiPricingSource } from './pricing.js'
+
+const EXPECTED_XAI_MODEL_IDS = ['grok-4.5'] as const
 
 describe('grok45ModelDescriptor', () => {
   it('is keyed by provider "xai" and model "grok-4.5"', () => {
@@ -64,12 +63,14 @@ describe('grok45ModelDescriptor', () => {
 })
 
 describe('xaiModelDescriptors', () => {
-  it('is pinned to exactly ["grok-4.5"]', () => {
-    expect(xaiModelDescriptors.map((d) => d.model)).toEqual(['grok-4.5'])
-  })
-
-  it('is priced (xaiPricingSource knows grok-4.5)', () => {
-    expect(xaiPricingSource().hasModel('grok-4.5')).toBe(true)
+  it('fails model onboarding unless schema, fixtures, and pricing decisions are explicit', () => {
+    assertRegistryInvariants({
+      descriptors: xaiModelDescriptors,
+      expectedModelIds: EXPECTED_XAI_MODEL_IDS,
+      pricingSource: xaiPricingSource(),
+      adapterFixtureModelIds: ['grok-4.5'],
+      negativeContractFixtureModelIds: ['grok-4.5'],
+    })
   })
 })
 

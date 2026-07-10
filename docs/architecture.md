@@ -36,16 +36,16 @@ Concrete implementations live outside the engine, in separate packages or in hos
 
 ### Ports
 
-| Port              | Who implements                                           | Notes                                                                                                                                                                                |
-| ----------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ProviderAdapter` | `@gullabs/google`, future provider packages              | Translates `ResolvedRequest` ↔ raw SDK. Never validates, costs, or persists.                                                                                                         |
-| `UsageSink`       | Host app, `@gullabs/drizzle`                             | Receives completed `LlmCallRecord`. Called fail-open.                                                                                                                                |
-| `PricingSource`   | `@gullabs/core` (built-in Gemini snapshot), or custom    | Provider-scoped source configured per provider via `ClientConfig.pricingSources`; exposes `hasModel`/`listModels` for strict construction-time checks. Runtime pricing is fail-open. |
-| `RateLimiter`     | Host app, `@gullabs/quota`, or another companion package | Pre-send backpressure. `acquire` is fail-closed. Default is a no-op; wait time is recorded as `queueDelayMs`.                                                                        |
-| `Telemetry`       | Host app (Sentry / PostHog / OTel hook)                  | Optional; all callbacks are optional. Called fail-open.                                                                                                                              |
-| `Logger`          | Host app                                                 | Structured logger (`info`, `warn`, `error`). Defaults to no-op.                                                                                                                      |
-| `Clock`           | `@gullabs/testing` (`FakeClock`) or default              | `Date.now()` abstraction for deterministic latency in tests.                                                                                                                         |
-| `IdGenerator`     | `@gullabs/testing` (`FakeIds`) or default                | `crypto.randomUUID()` abstraction for deterministic records in tests.                                                                                                                |
+| Port              | Who implements                                                                   | Notes                                                                                                                                                                                                                                                                           |
+| ----------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ProviderAdapter` | `@gullabs/google`, `@gullabs/xai`, dev-only CLI provider packages                | Translates `ResolvedRequest` ↔ raw SDK. Never validates, costs, or persists.                                                                                                                                                                                                    |
+| `UsageSink`       | Host app, `@gullabs/drizzle`                                                     | Receives completed `LlmCallRecord`. Called fail-open.                                                                                                                                                                                                                           |
+| `PricingSource`   | Each provider package (`geminiPricingSource()`, `xaiPricingSource()`), or custom | Provider-scoped source configured per provider via `ClientConfig.pricingSources` (assembled by `composeProviders`); exposes `hasModel`/`listModels` for strict construction-time checks. Core owns only the generic, parameterized `computeCost`. Runtime pricing is fail-open. |
+| `RateLimiter`     | Host app, `@gullabs/quota`, or another companion package                         | Pre-send backpressure. `acquire` is fail-closed. Default is a no-op; wait time is recorded as `queueDelayMs`.                                                                                                                                                                   |
+| `Telemetry`       | Host app (Sentry / PostHog / OTel hook)                                          | Optional; all callbacks are optional. Called fail-open.                                                                                                                                                                                                                         |
+| `Logger`          | Host app                                                                         | Structured logger (`info`, `warn`, `error`). Defaults to no-op.                                                                                                                                                                                                                 |
+| `Clock`           | `@gullabs/testing` (`FakeClock`) or default                                      | `Date.now()` abstraction for deterministic latency in tests.                                                                                                                                                                                                                    |
+| `IdGenerator`     | `@gullabs/testing` (`FakeIds`) or default                                        | `crypto.randomUUID()` abstraction for deterministic records in tests.                                                                                                                                                                                                           |
 
 ### Component Diagram
 
@@ -60,7 +60,8 @@ Concrete implementations live outside the engine, in separate packages or in hos
   │                  Core Engine                           │
   │  createClient(ClientConfig): Client                    │
   │                                                        │
-  │  • Config resolution (deep-merge, serviceTier default) │
+  │  • Config resolution (deep-merge; omitted serviceTier  │
+  │    stays omitted)                                      │
   │  • callId assignment + telemetry.onStart               │
   │  • Middleware chain composition (reduceRight)          │
   │  • Per-attempt: route → auth → acquire → adapter.run   │
@@ -74,12 +75,17 @@ Concrete implementations live outside the engine, in separate packages or in hos
     Telemetry  Logger  Clock  IdGenerator
        │
        ▼
-  @gullabs/google (geminiAdapter)
-    └── @google/genai SDK
+  Provider plugins (composed via composeProviders)
+    ├── @gullabs/google (googleProvider → geminiAdapter → @google/genai SDK)
+    ├── @gullabs/xai    (xaiProvider → xaiAdapter → openai SDK @ api.x.ai)
+    └── @gullabs/claude-cli / @gullabs/codex-cli (dev-only local CLI sessions)
 ```
 
-The engine never imports `@gullabs/google` or any provider SDK. The adapter packages import the
-engine's port interfaces but nothing internal.
+The engine never imports any provider package or provider SDK. The provider packages import the
+engine's port interfaces but nothing internal, and each ships as a self-contained plugin
+(`adapter + model descriptors + pricing source`) exposed through a single factory
+(`googleProvider()` in `packages/google/src/provider.ts`, `xaiProvider()` in
+`packages/xai/src/provider.ts`) composed via `composeProviders` (ADR-023).
 
 ---
 
@@ -386,10 +392,17 @@ fallback — `req.provider` is explicit and authoritative on every request.
 
 ### Default Registry
 
-`defaultGeminiRegistry` is pre-populated from `geminiModelDescriptors` and
-`gemmaModelDescriptors` in `registry.ts`. It covers current Gemini 2.5/3.x model families plus
-two API-verified Gemma 4 models: `gemma-4-31b-it` and `gemma-4-26b-a4b-it`. Hosts supply
-`ClientConfig.modelRegistry` to extend or replace it.
+Core owns only the generic registry machinery (`ModelDescriptor`, `ModelRegistry`,
+`createModelRegistry`) — it ships with zero provider knowledge. Each provider package builds and
+exports its own descriptor arrays and a ready-to-use registry; `@gullabs/google` exports
+`geminiModelDescriptors`, `gemmaModelDescriptors`, and `defaultGeminiRegistry` (built from
+`createModelRegistry([...geminiModelDescriptors, ...gemmaModelDescriptors])` in
+`packages/google/src/models.ts`). It covers current Gemini 2.5/3.x model families plus two
+API-verified Gemma 4 models: `gemma-4-31b-it` and `gemma-4-26b-a4b-it`. Hosts wire it in
+explicitly via `composeProviders`, e.g. `composeProviders([googleProvider()])`, which flattens
+every plugin's `modelDescriptors` into `ClientConfig.modelRegistry` — nothing is auto-populated
+into `createClient` without that call. Hosts can also supply `ClientConfig.modelRegistry`
+directly to extend or replace it.
 
 ---
 
@@ -426,23 +439,33 @@ const myAdapter: ProviderAdapter = {
 }
 ```
 
-Register model descriptors with a custom `ModelRegistry`:
+Bundle the adapter with model descriptors (and an optional pricing source) into a
+`ProviderPlugin`, and compose it via `composeProviders` (ADR-023) — the same shape
+`googleProvider()` and `xaiProvider()` use:
 
 ```ts
-import { createModelRegistry } from '@gullabs/core'
+import { composeProviders, createClient } from '@gullabs/core'
+import type { ProviderPlugin } from '@gullabs/core'
+import { toConfigJsonSchema, zodToStandardSchema } from '@gullabs/core'
 
-const registry = createModelRegistry([
-  {
-    model: 'my-model-v1', // bare provider-native string; identity is (provider, model)
-    provider: 'myprovider',
-    pricingFamily: 'my-model-v1',
-    configSchema: MyModelConfigSchema, // strict Zod schema — required
-    configJsonSchema: toConfigJsonSchema(MyModelConfigSchema),
-    validateConfig: zodToStandardSchema(MyModelConfigSchema),
-  },
-])
+function myProvider(): ProviderPlugin {
+  return {
+    adapter: myAdapter,
+    modelDescriptors: [
+      {
+        model: 'my-model-v1', // bare provider-native string; identity is (provider, model)
+        provider: 'myprovider',
+        pricingFamily: 'my-model-v1',
+        configSchema: MyModelConfigSchema, // strict Zod schema — required
+        configJsonSchema: toConfigJsonSchema(MyModelConfigSchema),
+        validateConfig: zodToStandardSchema(MyModelConfigSchema),
+      },
+    ],
+    // pricingSource: myPricingSource(),  // optional; omitted models record unpriced cost
+  }
+}
 
-const client = createClient({ adapters: [myAdapter], modelRegistry: registry, ... })
+const client = createClient({ ...composeProviders([myProvider()]), ... })
 ```
 
 ### Adding a Sink
@@ -542,18 +565,19 @@ exported constants from `@gullabs/google`.
 
 ## 12. Not in v1 / Deliberate Scope Boundaries
 
-These capabilities have designed seams in the type system but are not implemented in v1. They are
-not deferred because of time pressure; they are excluded because the one-call, Gemini-only
-foundation needs to be solid before the surface expands.
+These capabilities have designed seams in the type system but are not implemented yet. They are
+not deferred because of time pressure; they are excluded because the one-call foundation needs
+to be solid before the surface expands.
 
 **Streaming.** `generate` and `runStructured` return complete responses. The `Middleware` and
 `ProviderAdapter` interfaces are designed to accommodate a future `stream()` path without a
 breaking change to the engine.
 
-**Additional providers.** The `ProviderAdapter` port and routing infrastructure are in place for
-Anthropic, OpenAI, and others. v1 ships the Google adapter for Gemini and Gemma. Multi-adapter
-setups work today: the default router matches `req.provider` against adapter ids directly, one
-adapter configured or ten.
+**Additional providers.** Shipped today: `@gullabs/google` (Gemini and Gemma), `@gullabs/xai`
+(grok-4.5), and the dev-only CLI providers. The provider-plugin shape (ADR-023) means an
+Anthropic or OpenAI API provider is a new self-contained package composed via
+`composeProviders` — zero core edits. Multi-adapter setups work today: the default router
+matches `req.provider` against adapter ids directly, one adapter configured or ten.
 
 **Function calling / tool use.** `LlmRequest` does not yet carry a `tools` field. The `Part`
 union's `kind` discriminant is reserved for future `tool-call` and `tool-result` variants.

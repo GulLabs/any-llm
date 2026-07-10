@@ -1,10 +1,43 @@
 # Implementation Plan: Provider-Plugin Architecture + xAI Grok 4.5 Provider
 
-Status: APPROVED — codex adversarial review, 3 rounds
-(final: VERDICT APPROVED, codex session 019f4937-2cd9-7d03-b970-15a83aed8446).
-Every implementation commit additionally requires individual codex signoff (§4).
+Status: IMPLEMENTED — Phase 1, Phase 2, and Phase 3 have landed on
+`feat/provider-plugin-architecture`. Plan originally approved via codex
+adversarial review, 3 rounds (final: VERDICT APPROVED, codex session
+019f4937-2cd9-7d03-b970-15a83aed8446); every implementation commit received
+individual codex signoff per §4. This docs-closeout commit finalizes Phase
+1/2/3 documentation (§5 item 4 resolved with live-verified answers; new §6
+added for Phase 3, which was not originally scoped in this document).
+
+Full commit sequence landed (`git log --oneline --reverse ba21620..HEAD`):
+
+```
+8a9134f docs: codex-approved plan — provider-plugin architecture + @gullabs/xai grok-4.5
+
+# Phase 1 — core refactor (§2)
+a5f422c feat!: ProviderOptionsMap module augmentation; google owns its options type
+da3ac61 feat: ProviderPlugin + composeProviders composition helper
+1080ee2 feat!: provider-neutral service tiers; flexFallback into providerOptions.google; drop engine guard
+d13bad2 feat!: move all Google model configs, descriptors, pricing, types into @gullabs/google
+
+# Phase 3 — adoption-gap closures (new §6; not originally scoped in this plan)
+fea6496 feat: countTokens adapter port + client API; GoogleCacheStore token pre-flight
+e969d7f feat(google): geminiContentToMessages migration utility — exhaustive genai Content[] conversion
+51dd5ce feat: shared assertRegistryInvariants in @gullabs/testing; provider-payload error taxonomy fixes
+
+# Phase 2 — @gullabs/xai + grok-4.5 (§3)
+5809828 feat: @gullabs/xai package skeleton — client port, provider options augmentation, wiring
+2fc3080 feat: xai adapter — Responses API mapping, error classifier, usage accounting
+171d2fc feat: grok-4.5 descriptor, strict config schema, pricing (live-verified), provider plugin, fixtures
+```
+
+Note: `assertRegistryInvariants` (§2.5, Phase 1 scope) shipped as part of the
+51dd5ce commit alongside Phase 3 error-taxonomy fixes — the commit sequence
+above reflects actual landing order, not the original phase grouping.
+
 Branch: `feat/provider-plugin-architecture`.
-Date: 2026-07-09
+Date: 2026-07-09 (plan approval). Implementation completed: 2026-07-09
+(same day; `171d2fc` — Phase 2/xai final commit — and this docs-closeout
+commit both land 2026-07-09).
 
 ## 0. Goals
 
@@ -468,12 +501,132 @@ ONLY after live verification (§5.4); until then omitted and documented.
 3. **openai-node minor churn** (~weekly minors): pin behavior with an
    integration-shaped fixture test against recorded response payloads; `^6`
    range.
-4. **Live verifications required (need XAI_API_KEY)**: (a) >200k long-context
-   pricing tier exists? (b) `reasoning.effort: 'none'` accepted on grok-4.5?
-   (c) exact Responses structured-output field shape; (d) usage field names for
-   cached/reasoning tokens; (e) max output tokens. Runs as a scratchpad script;
-   results recorded in the plan/ADR before the corresponding commit.
+4. **Live verifications — RESOLVED.** All five items were live-verified with
+   `XAI_API_KEY` before the corresponding Phase 2 commits and are now shipped
+   in `packages/xai/src/pricing.ts` and
+   `packages/xai/src/model-config/grok-4-5.ts`:
+   (a) **>200k long-context pricing tier: CONFIRMED exists.** $4.00/$1.00
+   (cached)/$12.00 per million tokens above 200,000 GROSS input tokens (vs.
+   $2.00/$0.50/$6.00 standard) — see `XAI_PRICING['grok-4.5'].gt200k` in
+   `packages/xai/src/pricing.ts`, selected via `selectRates()` on GROSS
+   `inputTokens` strictly greater than `LONG_CONTEXT_THRESHOLD = 200_000`.
+   (b) **`reasoning.effort: 'none'` accepted?: REJECTED.** Live verification
+   confirmed only `'low'` and `'high'` are accepted by the API; `'none'` and
+   `'medium'` are rejected — see `admittedReasoningEfforts`/the
+   `reasoning.effort` enum (`z.enum(['low', 'high'])`) in
+   `packages/xai/src/model-config/grok-4-5.ts`.
+   (c) **Exact Responses structured-output field shape: confirmed as
+   `text.format`**, with `{ type: 'json_schema', name, schema, strict: true }`
+   — NOT `response_format` (OpenAI's own convention on chat completions). See
+   the "Structured output → text.format (NOT response_format)" mapping block
+   in `packages/xai/src/adapter.ts`.
+   (d) **Usage field names for cached/reasoning tokens: confirmed.**
+   `cachedInputTokens` is read from `usage.input_tokens_details.cached_tokens`
+   and `thinkingTokens` from `usage.output_tokens_details.reasoning_tokens`
+   (both top-level `input_tokens`/`output_tokens` are already GROSS, per
+   ADR-004) — see `mapUsage()` in `packages/xai/src/adapter.ts`.
+   (e) **Max output tokens: confirmed no artificial ceiling.** xAI accepts
+   arbitrarily large `max_output_tokens` values; truncation is surfaced via
+   response `status: 'incomplete'` with
+   `incomplete_details.reason === 'max_output_tokens'`, mapped to
+   `finishReason: 'length'` (not an error) — see `mapFinishReason()` in
+   `packages/xai/src/adapter.ts`.
 5. **EU unavailability** and region routing: no code impact (host concern);
    documented in package README.
 6. **Hallucination-rate regression on grok-4.5** (AA report): not a library
    concern; noted for consumers in README.
+
+## 6. Phase 3 — Adoption-Gap Closures (consumer feedback)
+
+This phase was **not scoped in the original plan above** (§0–§5 describe only
+Phase 1 core-refactor and Phase 2 xai work). It closes gaps identified after
+Phase 1/2 shipped, driven directly by consumer feedback. Three commits landed
+under this phase: `fea6496`, `e969d7f`, `51dd5ce` (see the commit sequence in
+the status header above).
+
+### 6.1 P3-1 — countTokens port + GoogleCacheStore pre-flight
+
+Addresses consumer GAP 1 — no way to count tokens for a prospective request
+without generating.
+
+- **New optional port**: `ProviderAdapter.countTokens(req, ctx)` in
+  `packages/core/src/ports.ts`, alongside new `TokenCountRequest` (`provider`,
+  `model`, optional `system`, `messages` — deliberately narrower than
+  `ResolvedRequest`: no `config`, no `outputJsonSchema`, no `modelDescriptor`)
+  and `TokenCount` (`totalTokens`, optional `details` breakdown, `raw` payload
+  verbatim) types.
+- **New engine method**: `Client.countTokens` in `packages/core/src/engine.ts`
+  mirrors `generate()`'s auth/signal/registry/routing semantics exactly, but
+  performs **no cost computation and no sink/record emission** — it is a
+  metadata query only. It emits `llm.count_tokens.{start,success,error}`
+  logger events (no call-record persistence). Throws if the resolved
+  adapter does not implement `countTokens`.
+- **Google implementation**: `geminiAdapter` in `packages/google/src/adapter.ts`
+  implements `countTokens` via `@google/genai`'s `models.countTokens`,
+  sharing the message→contents mapping with `run()` through the extracted
+  `mapMessagesToGeminiContents` helper. `ctx.signal` propagates via
+  `config.abortSignal`, and SDK errors are classified identically to `run()`.
+- **GoogleCacheStore pre-flight gate**: `packages/google/src/cache-store.ts`'s
+  `GoogleCacheStore.create()`/`getOrCreate()` gain an optional `preflight`
+  option (`{ minTokens, countTokens }`) — a token-count gate enforced **once**
+  before any SDK call, covering both the direct `create()` path and the
+  coalesced `getOrCreate()` path. If the counted tokens fall below
+  `minTokens`, `create()`/`getOrCreate()` reject before ever calling the
+  provider.
+- **Breaking addition (P0, no compat shim)**: `GeminiClientLike.countTokens`
+  becomes a **required** method on the structural fake interface in
+  `packages/testing/src/fake-gemini.ts` — all existing fakes must implement
+  it; there is no back-compat shim for callers still constructing a fake
+  without it.
+
+### 6.2 P3-2 — geminiContentToMessages converter
+
+Addresses consumer GAP 3 — no supported path for migrating hand-authored
+`@google/genai` prompts onto any-llm's normalized request shape.
+
+`packages/google/src/content-to-messages.ts` exports
+`geminiContentToMessages({ contents, systemInstruction? })`, converting
+hand-authored `@google/genai` `Content[]`/`Part[]` prompts into any-llm's
+normalized `{ system?, messages }` shape, for migration use cases only (not
+used internally by `run()`/`countTokens()`).
+
+Reject-don't-map throughout, exactly per the P0 house rule:
+
+- **Role mapping has no inference**: `Content.role` must be exactly `'user'`
+  or `'model'` (mapped to `'user'`/`'assistant'`); a missing or unrecognized
+  role throws `LlmError('bad_request')`.
+- **`system` is derived only from the explicit `systemInstruction` input** —
+  never inferred from `contents`. A `systemInstruction` may be a plain string
+  or a `Content` whose only defined key is `parts`, and whose parts must be
+  text-only.
+- **Unsupported part-kinds and sub-fields throw `LlmError('bad_request')`
+  naming the offending field**, via an exhaustive own-defined-key scan of
+  each `Part`/`Content` rather than an allowlist-and-ignore pass. The
+  documented (non-exhaustive-by-name, but exhaustively enforced) reject list
+  includes: `functionCall`, `functionResponse`, `executableCode`,
+  `codeExecutionResult`, tool-call/tool-response shapes, thought-flagged
+  parts, `thoughtSignature`, `videoMetadata`, `partMetadata`,
+  `inlineData.displayName`/`fileData.displayName`,
+  `mediaResolution.numTokens`, and unknown `mediaResolution.level` enum
+  values (only `MEDIA_RESOLUTION_LOW`/`MEDIUM`/`HIGH` map to
+  `'low'`/`'medium'`/`'high'`). Nothing is ever silently dropped.
+- **No runtime SDK dependency**: `@google/genai` types (`Content`, `Part`) are
+  imported with `import type` only — the converter has zero runtime coupling
+  to the `@google/genai` package.
+
+### 6.3 Error-taxonomy correction (landed alongside P3-1/P3-2 in `51dd5ce`)
+
+`packages/google/src/cache-store.ts` and `packages/google/src/file-store.ts`
+previously classified a malformed-provider-payload response (SDK call
+succeeds, but the response is missing a required field) as `bad_request`
+(caller fault). Per the `errors.ts` taxonomy, a malformed **provider**
+payload is a **provider** fault, not a caller fault — both were corrected to
+kind `'server'`, `provider: 'google'`. They stay `retryable: false`: the
+affected paths are `create()`/`upload()`, which are side-effecting and not
+idempotent — the provider may have already created the cache/file
+server-side even though the payload carries no handle, so an automatic retry
+could orphan or duplicate provider-side resources. This differs from the
+read-only `adapter.countTokens` precedent, where a bad payload is safely
+retryable. See commit `51dd5ce` ("feat: shared assertRegistryInvariants in
+@gullabs/testing; provider-payload error taxonomy fixes") for the full
+rationale and test updates.

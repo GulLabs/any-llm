@@ -177,6 +177,7 @@ The design is **Ports & Adapters (hexagonal)**: the core engine depends only on 
 | [`@gullabs/any-llm`](./packages/any-llm) | Default batteries-included package: re-exports core + Gemini adapter and installs `@google/genai` for one-package setup.                                                                                                                                                                                                                                            |
 | [`@gullabs/core`](./packages/core)       | Types, ports, engine (`createClient`, `generate`, `runStructured`), cost computation, record builder. No provider dependencies.                                                                                                                                                                                                                                     |
 | [`@gullabs/google`](./packages/google)   | Google adapter over `@google/genai`. Maps Gemini Flex tier, thinking config, multimodal parts, structured output, Gemma 4 routing, and error classification. Ships `isGeminiCapacityError` (Flex capacity-error detection) and `normalizeGroundingCitations`. Optional `GoogleFileStore` and `GoogleCacheStore` helpers for Gemini Files API and Context Cache API. |
+| [`@gullabs/xai`](./packages/xai)         | xAI Grok adapter over the `openai` SDK's Responses API. `grok-4.5` with level-effort reasoning, native structured output (`text.format`), vision, and automatic caching (`promptCacheKey`).                                                                                                                                                                         |
 | [`@gullabs/drizzle`](./packages/drizzle) | Reference Postgres schema (`llm_calls` table) and `drizzleUsageSink` — a `UsageSink` port implementation for Drizzle ORM.                                                                                                                                                                                                                                           |
 | [`@gullabs/testing`](./packages/testing) | Test fakes: `FakeClock`, `FakeIds`, `RecordingSink`, `FakeAdapter`, `makeFakeGemini`, `fakeGeminiResponse`. No network in tests.                                                                                                                                                                                                                                    |
 
@@ -635,7 +636,7 @@ is stored **verbatim** — do not put secrets there.
 
 These are **designed seams** — the ports exist, the machinery is not built yet:
 
-- **Multiple providers** — only Gemini (`gemini-*`) is wired. The `ProviderAdapter` port and router are in place for others.
+- **Multiple providers** — Gemini (`gemini-*`, `gemma-*`) and xAI (`grok-*`) are wired. The `ProviderAdapter` port and router are in place for others.
 - **Streaming** — `generate` / `runStructured` return a full response. A `stream()` seam is in the design but unimplemented.
 - **Tool use** — no function-calling machinery. The `Part` union's `kind` discriminant is reserved for future `tool-call` and `tool-result` variants.
 - **Vertex AI** — removed; depended on ambient ADC. See [Roadmap](./ROADMAP.md).

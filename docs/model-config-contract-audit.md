@@ -38,10 +38,11 @@ control surfaces:
 - Gemini 2.5 budget-api models use `thinkingBudget`.
 - Gemini 3.x and Gemma level-api models use `thinkingLevel`.
 
-The current library shape has two problems:
+At the time this gap was found, the library shape had two problems (Gemini/Gemma
+model descriptors and schemas were still core-owned, before the `@gullabs/google`
+package split — they now live in `packages/google/src/models.ts`):
 
-- `packages/core/src/registry.ts` builds Gemini JSON schemas with
-  `additionalProperties: true`.
+- The registry built Gemini JSON schemas with `additionalProperties: true`.
 - The old validator factory does not reject a `reasoning` object that contains
   both `effort` and `budgetTokens`.
 
@@ -171,6 +172,8 @@ For every built-in model descriptor:
 Recommended invariant test:
 
 ```ts
+import { defaultGeminiRegistry } from '@gullabs/google'
+
 for (const descriptor of defaultGeminiRegistry.listDescriptors?.() ?? []) {
   expect(descriptor.configJsonSchema).toBeDefined()
   expect(descriptor.validateConfig).toBeDefined()
@@ -210,9 +213,11 @@ Follow these steps in the `any-llm` repo.
 Start with:
 
 - `docs/architecture.md`
-- `packages/core/src/registry.ts`
+- `packages/core/src/registry.ts` (generic registry machinery only — no
+  provider-specific schemas)
 - `packages/core/src/engine.ts`
 - `packages/core/src/reasoning.ts`
+- `packages/google/src/models.ts` (Gemini/Gemma model descriptors and schemas)
 - `packages/google/src/adapter.ts`
 - `packages/core/src/config-validation.test.ts`
 - `packages/core/src/registry.test.ts`

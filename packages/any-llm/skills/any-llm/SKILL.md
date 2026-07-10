@@ -2,31 +2,42 @@
 name: any-llm
 description: >-
   Guidance for writing, reviewing, or debugging TypeScript code that calls
-  @gullabs/any-llm, @gullabs/core, or @gullabs/google to talk to Gemini models.
-  Applies when adding a new LLM call site, wiring createClient/generate/runStructured,
+  @gullabs/any-llm, @gullabs/core, @gullabs/google, or @gullabs/xai to talk to Gemini
+  or xAI Grok models. Applies when adding a new LLM call site, composing provider
+  plugins with composeProviders, wiring createClient/generate/runStructured/countTokens,
   defining a defineCallSite prompt template, requesting structured JSON output,
-  catching or narrowing an LlmError, configuring reasoning/thinking budgets, or wiring
-  a UsageSink for cost tracking. Also applies whenever the user mentions any-llm, the
-  Gemini adapter, Gemini Flex tier, structured-output validation, or per-call auth for
-  this library. Covers the mandatory per-call `{ auth: { apiKey } }` pattern (there is
-  no env-var or ambient auth), the caller-owned output-validation contract, the
-  descriptor-owned strict model-config boundary (`configSchema` / `configJsonSchema`),
-  and the reject-don't-map error philosophy — the things a developer used to other
-  LLM SDKs would otherwise get wrong by default.
+  catching or narrowing an LlmError, configuring reasoning/thinking budgets, wiring a
+  UsageSink for cost tracking, augmenting ProviderOptionsMap for a new provider
+  package, using GoogleCacheStore for Gemini context caching, or migrating raw
+  @google/genai prompts via geminiContentToMessages. Also applies whenever the user
+  mentions any-llm, the Gemini adapter, the xAI/Grok adapter, Gemini Flex tier,
+  structured-output validation, token counting, or per-call auth for this library.
+  Covers the mandatory per-call `{ auth: { apiKey } }` pattern (there is no env-var or
+  ambient auth), the caller-owned output-validation contract, the descriptor-owned
+  strict model-config boundary (`configSchema` / `configJsonSchema`), the
+  provider-qualified `(provider, model)` identity contract, and the reject-don't-map
+  error philosophy — the things a developer used to other LLM SDKs would otherwise get
+  wrong by default.
 ---
 
 # any-llm
 
-Typed, provider-agnostic-by-design (currently Gemini-only) LLM call engine with cost
-tracking, retries, rate limiting, structured output, and per-call observability.
+Typed, provider-agnostic-by-design LLM call engine with cost tracking, retries, rate
+limiting, structured output, and per-call observability. Providers are plugged in
+explicitly via `composeProviders` — nothing is auto-wired.
 
-Three packages:
+Core packages:
 
-- `@gullabs/core` — engine (`createClient`), types, errors, `defineCallSite`.
-- `@gullabs/google` — Gemini adapter (`geminiAdapter`) over `@google/genai`.
-- `@gullabs/any-llm` — batteries-included: re-exports both of the above plus `@google/genai` as a dependency.
+- `@gullabs/core` — engine (`createClient`), types, errors, `defineCallSite`,
+  `composeProviders`.
+- `@gullabs/google` — Gemini + Gemma adapter (`geminiAdapter`) over `@google/genai`.
+- `@gullabs/xai` — xAI Grok adapter (`xaiAdapter`) over the Responses API.
+- `@gullabs/any-llm` — batteries-included: re-exports `@gullabs/core` + `@gullabs/google`
+  plus `@google/genai` as a dependency. Does **not** bundle `@gullabs/xai` or any other
+  provider package — install those separately and compose them alongside.
 
-Install `@gullabs/any-llm` for a one-package setup, or the two modular packages for
+Install `@gullabs/any-llm` for a one-package Gemini setup, or `@gullabs/core` plus
+whichever provider package(s) you need (`@gullabs/google`, `@gullabs/xai`, ...) for
 explicit dependency control. Import names are identical either way.
 
 ## #1 gotcha: auth is per-call, always
@@ -94,6 +105,104 @@ console.log(result.cost?.microUsd) // integer micro-USD, or null if unpriced
 `{ kind: 'text', text }`, `{ kind: 'inline-media', mimeType, data /* raw base64, no data: prefix */ }`,
 and `{ kind: 'file-uri', uri, mimeType }` freely in one `parts` array.
 
+## Counting tokens without generating
+
+`client.countTokens` is a metadata-only dry run — no generation, no cost, no
+`result.output`. Same `(provider, model)` routing and required `auth` as `generate`;
+throws `LlmError('bad_request')` when the pair is unregistered or the resolved adapter
+doesn't implement token counting (`ProviderAdapter.countTokens` is optional).
+
+```ts
+const count = await client.countTokens(
+  {
+    provider: 'google',
+    model: 'gemini-2.5-flash',
+    system: 'You are a concise summarizer.',
+    messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hello!' }] }],
+  },
+  { auth: { apiKey: myResolvedGeminiKey } },
+)
+
+console.log(count.totalTokens) // number
+console.log(count.details) // optional per-category breakdown, e.g. { cached: 128 }
+console.log(count.raw) // provider's raw token-count response, verbatim
+```
+
+`TokenCountRequest` is deliberately narrower than a generate request — no `config`, no
+`output`, no `providerOptions`; token counting only needs `provider`, `model`,
+`system`, and `messages`.
+
+## Composing multiple providers — xAI Grok example
+
+`composeProviders` takes any number of plugins; pass every provider a single client
+should route to. `@gullabs/xai`'s `xaiProvider()` follows the identical plugin shape
+as `googleProvider()`:
+
+```ts
+import { createClient, composeProviders } from '@gullabs/core'
+import { googleProvider } from '@gullabs/google'
+import { xaiProvider } from '@gullabs/xai'
+
+const client = createClient({
+  ...composeProviders([googleProvider(), xaiProvider()]),
+})
+
+const result = await client.generate(
+  {
+    provider: 'xai',
+    model: 'grok-4.5',
+    messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hello, Grok.' }] }],
+    config: { reasoning: { effort: 'high' } },
+  },
+  { auth: { apiKey: myResolvedXaiKey } },
+)
+```
+
+`grok-4.5`'s `reasoning.effort` admits only `'low' | 'high'` (live-verified) —
+`'none'`, `'medium'`, and `'xhigh'` are rejected by both the live API and
+`Grok45ConfigSchema`. Unlike Gemini, xai has no `serviceTier` concept and no `topK`;
+its config schema is a single strict object with no tier branching.
+
+## Migrating raw `@google/genai` prompts
+
+`geminiContentToMessages` (from `@gullabs/google`) converts hand-authored
+`@google/genai` `Content[]` into any-llm's normalized `{ system?, messages }` shape.
+Reject-don't-map: a missing/unrecognized `Content.role` (only `'user'` and `'model'`
+are accepted, never inferred), a `systemInstruction` containing anything other than
+plain text parts, or any `Part` sub-field this library can't losslessly represent
+(function calls, executable code, tool results, thought-flagged parts,
+`thoughtSignature`, unknown future fields, etc.) throws `LlmError('bad_request')`
+naming the offending field — nothing is ever silently dropped.
+
+```ts
+import { geminiContentToMessages } from '@gullabs/google'
+import type { Content } from '@google/genai'
+
+const contents: Content[] = [
+  {
+    role: 'user',
+    parts: [
+      { text: 'Describe this image.' },
+      { inlineData: { mimeType: 'image/png', data } },
+    ],
+  },
+  { role: 'model', parts: [{ text: 'A red bicycle leaning against a brick wall.' }] },
+]
+
+const { system, messages } = geminiContentToMessages({
+  contents,
+  systemInstruction: 'You are a concise visual describer.',
+})
+
+const result = await client.generate(
+  { provider: 'google', model: 'gemini-2.5-pro', system, messages },
+  { auth: { apiKey: myResolvedGeminiKey } },
+)
+```
+
+`system` is derived only from the explicit `systemInstruction` input — never inferred
+from `contents`.
+
 ## `defineCallSite` — reusable prompt templates
 
 ```ts
@@ -146,6 +255,47 @@ Important distinctions:
 - `request.output.jsonSchema` is only the output-format hint for structured responses.
 - `providerOptions.google` is a typed provider-extension lane, not a caller-wins
   override lane for `serviceTier`, sampling, reasoning, or response schema.
+
+## Extending `ProviderOptionsMap` for a third-party provider
+
+`GenConfig.providerOptions` is typed as `ProviderOptions`, an alias for
+`ProviderOptionsMap` — an empty, augmentable interface owned by `@gullabs/core`. It
+carries no keys until a provider package augments it via TypeScript declaration
+merging. `@gullabs/google` and `@gullabs/xai` are the two reference implementations
+(`packages/google/src/types.ts`, `packages/xai/src/types.ts`):
+
+```ts
+declare module '@gullabs/core' {
+  interface ProviderOptionsMap {
+    google?: GoogleProviderOptions
+  }
+}
+```
+
+A third-party provider package follows the identical pattern. For a hypothetical
+`@acme/my-provider` package:
+
+```ts
+// packages/my-provider/src/types.ts
+export type MyProviderOptions = {
+  someAllowlistedKnob?: string
+}
+
+declare module '@gullabs/core' {
+  interface ProviderOptionsMap {
+    myProvider?: MyProviderOptions
+  }
+}
+```
+
+Importing anything from that module — even a type-only import — pulls in the
+augmentation, so re-export it unconditionally from the package's `index.ts` (the way
+`packages/google/src/index.ts` and `packages/xai/src/index.ts` both do) to guarantee
+the `myProvider` key is visible on `ProviderOptionsMap` whenever a caller imports
+anything from the package. Once loaded, `config.providerOptions.myProvider`
+type-checks at call sites — but the model's `configSchema` must also allowlist that
+key for the value to survive validation; the Zod schema remains the runtime boundary,
+the type augmentation only makes the shape visible to the compiler.
 
 ## Structured output — auth + validation together
 
@@ -270,6 +420,47 @@ Exact model reminders:
 - Gemma 4 is binary: only `effort: 'none'` or `effort: 'high'`
 - Omit `serviceTier` for provider-standard; set `flex` explicitly
 - `priority` remains rejected by the library even though Google documents it
+
+## Context caching — `GoogleCacheStore`
+
+`GoogleCacheStore` (from `@gullabs/google`) is a thin, **process-scoped** wrapper over
+the Gemini Context Cache API (`create` / `getOrCreate` / `refreshIfExpiringSoon` /
+`delete`). Pass the resulting `cacheName` as `providerOptions.google.cachedContent` on
+a request. Reuse is only within this store instance's in-memory map — it is not
+shared across processes, workers, or restarts.
+
+Optional preflight gate: pass `preflight` to the constructor to refuse a cache
+`create()` — including through `getOrCreate()` and its coalesced in-flight path —
+when the token-bearing payload (`model` + `contents` + `systemInstruction` only;
+`ttl` and `displayName` are excluded) doesn't clear a minimum token count. This
+mirrors Gemini's own explicit-caching minimum (2048 tokens on 3.x) without
+hard-coding it into the store.
+
+```ts
+import { GoogleCacheStore } from '@gullabs/google'
+
+const cacheStore = new GoogleCacheStore({
+  auth: { apiKey: myResolvedGeminiKey },
+  preflight: {
+    minTokens: 2048,
+    // Receives genai-native Content[]/Content|string — NOT the library's
+    // Message[] shape; there is no automatic conversion. Hosts building from
+    // Message[] should call client.countTokens separately instead.
+    countTokens: async (payload) => {
+      const result = await genaiClient.models.countTokens(payload)
+      return result.totalTokens ?? 0
+    },
+  },
+})
+
+const handle = await cacheStore.create({
+  model: 'gemini-3.1-pro-preview',
+  ttlSeconds: 3600,
+  contents: myGenaiContents,
+})
+// Throws LlmError('bad_request') before any I/O if preflight.countTokens resolves
+// below minTokens — nothing is silently allowed through under the minimum.
+```
 
 ## Rate limiting and cost tracking
 
