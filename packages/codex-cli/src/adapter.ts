@@ -325,20 +325,26 @@ function classifyCodexStreamError(rawMessage: string): LlmError {
  * total) — it is surfaced as `thinkingTokens` / `details.thinking` but is
  * NOT added on top of `outputTokens`, since it is already inside
  * `output_tokens`. Likewise `cached_input_tokens` is a subset of
- * `input_tokens`. No `totalTokens` field is present in the captured
- * envelope — omitted here rather than derived.
+ * `input_tokens`. `totalTokens` is not reported by codex's
+ * `turn.completed.usage` payload — it is derived as
+ * `inputTokens + outputTokens` (a GROSS total; `reasoning_output_tokens`/
+ * `cached_input_tokens` are already subsets of those two, not added again)
+ * whenever a usage payload was present; left undefined when there was no
+ * usage payload at all.
  */
 function mapUsage(usage: TurnUsage | undefined): Usage {
   const inputTokens = usage?.input_tokens ?? 0
   const outputTokens = usage?.output_tokens ?? 0
   const cachedInputTokens = usage?.cached_input_tokens
   const thinkingTokens = usage?.reasoning_output_tokens
+  const totalTokens = usage !== undefined ? inputTokens + outputTokens : undefined
 
   const details: Record<string, number> = {
     input: inputTokens,
     output: outputTokens,
     ...(cachedInputTokens !== undefined ? { cached: cachedInputTokens } : {}),
     ...(thinkingTokens !== undefined ? { thinking: thinkingTokens } : {}),
+    ...(totalTokens !== undefined ? { total: totalTokens } : {}),
   }
 
   const raw: JsonValue = usage !== undefined ? (usage as unknown as JsonValue) : null
@@ -350,6 +356,7 @@ function mapUsage(usage: TurnUsage | undefined): Usage {
     raw,
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
     ...(thinkingTokens !== undefined ? { thinkingTokens } : {}),
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
   }
 }
 

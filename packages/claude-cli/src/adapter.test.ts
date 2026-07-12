@@ -152,8 +152,13 @@ describe('happy path: text', () => {
     expect(result.usage.inputTokens).toBe(3605)
     expect(result.usage.outputTokens).toBe(30)
     expect(result.usage.cachedInputTokens).toBe(0)
-    expect(result.usage.details).toEqual({ input: 3605, output: 30, cached: 0 })
-    expect(result.usage.totalTokens).toBeUndefined()
+    expect(result.usage.details).toEqual({
+      input: 3605,
+      output: 30,
+      cached: 0,
+      total: 3635,
+    })
+    expect(result.usage.totalTokens).toBe(3635)
     expect(result.usage.raw).toEqual(PLAIN_ENVELOPE.usage)
   })
 })

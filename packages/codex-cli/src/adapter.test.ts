@@ -442,12 +442,13 @@ describe('usage mapping', () => {
     expect(result.usage.outputTokens).toBe(27)
     expect(result.usage.cachedInputTokens).toBe(4480)
     expect(result.usage.thinkingTokens).toBe(20)
-    expect(result.usage.totalTokens).toBeUndefined()
+    expect(result.usage.totalTokens).toBe(14954)
     expect(result.usage.details).toEqual({
       input: 14927,
       output: 27,
       cached: 4480,
       thinking: 20,
+      total: 14954,
     })
     expect(result.usage.raw).toEqual({
       input_tokens: 14927,
@@ -871,6 +872,7 @@ describe('false success on empty/truncated/malformed JSONL', () => {
 
     expect(result.text).toBe('hi')
     expect(result.usage.inputTokens).toBe(0)
+    expect(result.usage.totalTokens).toBeUndefined()
     expect(result.warnings).toContainEqual(
       expect.objectContaining({
         type: 'other',

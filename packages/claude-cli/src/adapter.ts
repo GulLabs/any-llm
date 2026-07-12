@@ -122,17 +122,23 @@ function mapFinishReason(stopReason: string | undefined): FinishReason | undefin
 
 // ---------------------------------------------------------------------------
 // Usage mapping — GROSS convention
+//
+// `totalTokens` is not reported by the claude-cli usage payload — it is
+// derived as `inputTokens + outputTokens` whenever a usage payload was
+// present; left undefined when there was no usage payload at all.
 // ---------------------------------------------------------------------------
 
 function mapUsage(usage: ClaudeCliUsageShape | undefined): Usage {
   const inputTokens = usage?.input_tokens ?? 0
   const outputTokens = usage?.output_tokens ?? 0
   const cachedInputTokens = usage?.cache_read_input_tokens
+  const totalTokens = usage !== undefined ? inputTokens + outputTokens : undefined
 
   const details: Record<string, number> = {
     input: inputTokens,
     output: outputTokens,
     ...(cachedInputTokens !== undefined ? { cached: cachedInputTokens } : {}),
+    ...(totalTokens !== undefined ? { total: totalTokens } : {}),
   }
 
   const raw: JsonValue = usage !== undefined ? (usage as unknown as JsonValue) : null
@@ -143,6 +149,7 @@ function mapUsage(usage: ClaudeCliUsageShape | undefined): Usage {
     details,
     raw,
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
   }
 }
 
