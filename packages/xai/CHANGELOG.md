@@ -1,5 +1,12 @@
 # @gullabs/xai
 
+## 0.2.5
+
+### Patch Changes
+
+- Updated dependencies [a3f74be]
+  - @gullabs/core@0.10.0
+
 ## 0.2.4
 
 ### Patch Changes
