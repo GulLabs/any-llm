@@ -16,6 +16,7 @@ export const llmCalls = pgTable(
     attemptId: text('attempt_id').primaryKey(),
     callSiteId: text('call_site_id'),
     externalId: text('external_id'),
+    authKeyId: text('auth_key_id'),
     provider: text('provider').notNull(),
     model: text('model').notNull(),
     modelVersion: text('model_version'),

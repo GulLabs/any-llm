@@ -27,6 +27,7 @@ import type { LlmCallRecord, JsonValue } from '@gullabs/core'
 //   attempt_id:          text PRIMARY KEY
 //   call_site_id:        text (nullable)
 //   external_id:         text (nullable)
+//   auth_key_id:         text (nullable)
 //   provider:            text NOT NULL
 //   model:               text NOT NULL
 //   model_version:       text (nullable)
@@ -64,6 +65,7 @@ const CREATE_TABLE_SQL = /* sql */ `
     attempt_id            TEXT         PRIMARY KEY,
     call_site_id          TEXT,
     external_id           TEXT,
+    auth_key_id           TEXT,
     provider              TEXT         NOT NULL,
     model                 TEXT         NOT NULL,
     model_version         TEXT,
@@ -110,6 +112,7 @@ function makeRecord(overrides: Partial<LlmCallRecord> = {}): LlmCallRecord {
     attemptId: 'attempt_integration_1',
     attemptNumber: 1,
     callSiteId: 'site_integration',
+    authKeyId: 'gemini-paid',
     provider: 'google',
     model: 'gemini-2.5-pro',
     modelVersion: 'gemini-2.5-pro-001',
@@ -195,6 +198,7 @@ describe('drizzleUsageSink — real PGlite integration', () => {
     expect(row.callId).toBe('call_integration_1')
     expect(row.attemptId).toBe('attempt_integration_1')
     expect(row.callSiteId).toBe('site_integration')
+    expect(row.authKeyId).toBe('gemini-paid')
 
     // Routing
     expect(row.provider).toBe('google')

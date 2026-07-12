@@ -89,8 +89,11 @@ client.runStructured(callSite, { auth: { apiKey } }) // no template vars
 client.runStructured(callSite, { ...vars }, { auth: { apiKey } }) // with template vars
 ```
 
-`auth` is required. `AuthMaterial` is `{ apiKey: string }`. Where the key comes from is entirely
-your concern — read it from an environment variable, a secret vault, a database, or per-user input:
+`auth` is required. `AuthMaterial` is `{ apiKey: string, keyId?: string }`. Where the key comes from
+is entirely your concern — read it from an environment variable, a secret vault, a database, or
+per-user input. `keyId` is an optional opaque label (e.g. `'gemini-paid'`) for per-key attribution:
+it is persisted verbatim to `LlmCallRecord.authKeyId`, never redacted, and must never be the secret
+itself (see ADR-026).
 
 ```ts
 // For an 18-call loop, build auth once and pass it each time:

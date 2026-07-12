@@ -1401,3 +1401,85 @@ and, as of this ADR, the same issue-normalization helper).
 - No `errorIssues` column added to `LlmCallRecord` / `@gullabs/drizzle` in this ADR — `issues` is not
   persisted; the record keeps `errorMessage` only. A structured `errorIssues` column remains a
   possible follow-up, out of scope here.
+
+## ADR-026: Auth Key Attribution (`keyId`) Lives in the Engine
+
+**Status:** Accepted
+
+**Context:**
+A client team built its own per-key attribution layer on top of `any-llm`: a companion table
+mapping `llm_call_context` rows to an `api_key_id`, populated from whatever key the client-side
+code _believed_ it had passed for a given call. After retries, provider fallbacks, and profile
+translation inside the engine, that belief drifted from reality — 364 `xai` (Grok) calls ended up
+billed to the client's "Gemini paid" key in their own denormalized table, because the client-side
+attribution was recorded before dispatch, not at it. The engine is the only component that
+authoritatively knows which auth material was actually used for the attempt that produced a given
+outcome, since it owns auth resolution (`requireAuth`), retry, fallback, and config/profile
+translation. Pushing key identity through client code as a separate, parallel-maintained field is
+exactly the pattern that produced this bug: two sources of truth for the same fact, one of them
+derived by inference instead of by observation.
+
+**Decision:**
+Key attribution is a first-class, opaque _label_ carried on `AuthMaterial` and captured by the
+engine at the same point it resolves the concrete auth material for a dispatch attempt — not
+inferred, not passed separately by the caller after the fact.
+
+1. **`ApiKeyAuth` gains an optional `keyId?: string`** (`packages/core/src/ports.ts`). Caller-chosen,
+   opaque — e.g. `'gemini-paid'`, `'grok-team-A'` — with no meaning to the library beyond "a label
+   to persist verbatim." It is NEVER the secret itself.
+2. **Validation ("reject, don't map"):** `requireAuth` in `packages/core/src/engine.ts` — the
+   library's one auth-material validation site — rejects a `keyId` that is an empty/whitespace
+   string, or that equals `apiKey` (the caller passed the secret as its own label), with
+   `LlmError('bad_request', retryable: false)`. No length cap, no charset rule, no other semantic
+   check — the label's meaning is entirely caller-owned.
+3. **Engine-resolved, not client-threaded.** The engine captures `keyId` from the exact
+   `AuthMaterial` it threads through `AdapterCtx` for the attempt that produced the recorded
+   outcome (`authKeyIdOf(callAuth)` at each `buildSuccessRecord` / `buildErrorRecord` call site in
+   `packages/core/src/engine.ts`, including the pre-attempt synthetic record from ADR-025's D5
+   rule) — the same resolved value used for dispatch, not the caller's original request input. If a
+   future credential-refresh path ever swaps auth material between retry attempts, attribution
+   still tracks whatever was actually used, because it reads off the same resolved value at the
+   same point dispatch does.
+4. **Persisted as `LlmCallRecord.authKeyId`** (`packages/core/src/record.ts`), following the
+   existing conditional-spread convention for optional fields — present only when the resolved auth
+   material had a `keyId`. Explicitly excluded from redaction (`redactSecrets` never sees it): it is
+   a label by design, not a secret, and case (2) above is the only guard against a caller
+   accidentally aliasing it to one.
+5. **`@gullabs/drizzle`:** `llm_calls` gains a nullable `authKeyId: text('auth_key_id')` column,
+   written from `r.authKeyId` in `drizzleUsageSink` — same pattern as every other optional
+   `LlmCallRecord` field in the sink. No migration framework exists in this package (`schema.ts` is
+   the single source of truth, per the precedent set when `attemptNumber` was added); this ADR
+   follows that precedent rather than introducing one.
+
+**Non-goals (explicit scope boundary):**
+
+- **No `keyId` on `CliSessionAuth`.** CLI-session providers (`@gullabs/claude-cli`,
+  `@gullabs/codex-cli`) have no key identity to attribute — the CLI binary owns its own local
+  session auth out of band, and there is no caller-supplied secret to label. Adding `keyId` there
+  would be a label with nothing to identify.
+- **No key registry or key-management surface in the library.** `keyId` is a caller-supplied string,
+  full stop — the library does not validate it against any known-keys list, does not map it back to
+  a secret, and does not offer any lookup/rotation/lifecycle API around it.
+- **No validation of label semantics beyond non-empty and not-the-secret.** No length cap, no
+  charset restriction, no uniqueness check, no reserved-word list. Any further validation policy is
+  the caller's concern.
+- **No client-side companion table requirement.** This ADR does not mandate deprecating
+  denormalized client-side key-attribution tables — a client project may still maintain one for its
+  own convenience (e.g. joining on `metadata`). The point is that `llm_calls.auth_key_id`, populated
+  by the engine at dispatch time, is now available as the authoritative source; a client table
+  becomes a derived convenience instead of the only record of the truth.
+
+**References:** ADR-019 (no-ambient-auth, per-call auth model — this ADR extends `ApiKeyAuth` within
+that same per-call contract, adds no new auth-resolution timing); ADR-021 (per-attempt records,
+fail-open sink-write discipline that `authKeyId` follows); ADR-025 (`buildErrorRecord`'s synthetic
+pre-attempt record, which also receives `authKeyId` via the same `authKeyIdOf(callAuth)` call).
+
+**Consequences:**
+
+- **Breaking, pre-1.0, no compatibility shim (per the P0 no-legacy rule):** none — `keyId` is purely
+  additive and optional on `ApiKeyAuth`; every existing call site that omits it is unaffected.
+- New public core surface: `ApiKeyAuth.keyId`, `LlmCallRecord.authKeyId`, `BuildRecordInput.authKeyId`.
+- New `@gullabs/drizzle` column: `llm_calls.auth_key_id` (nullable `text`).
+- A caller that passes `keyId === apiKey` now gets a `bad_request` at call time instead of silently
+  persisting its secret into an unredacted column — this is the intended fail-closed behavior for
+  the exact production mistake this ADR exists to prevent.

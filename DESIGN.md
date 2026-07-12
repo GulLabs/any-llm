@@ -66,7 +66,8 @@ providers with different config schemas.
 
 **No-ambient-reads invariant.** The library never reads credentials from `process.env`, a
 credentials file, an instance metadata service, or any other ambient source. There is no
-`envAuth()` helper and no `AuthProvider` port. The `AuthMaterial` type is `{ apiKey: string }`.
+`envAuth()` helper and no `AuthProvider` port. The `AuthMaterial` type is
+`{ apiKey: string, keyId?: string }` (plus the `{ cliSession: true }` variant below).
 
 **Per-call model.** `auth` is a required option on every `generate()` and `runStructured()` call:
 
@@ -89,6 +90,9 @@ an explicit, non-ADC credential shape. See ROADMAP.md.
 
 **Secret redaction.** `auth.apiKey` is redacted from any persisted `LlmCallRecord` and from
 error messages before they are written to the sink (via `redactSecrets` in `buildRecord`).
+`auth.keyId` (ADR-026) is the opposite by design: an opaque, non-secret, caller-chosen label
+persisted verbatim to `LlmCallRecord.authKeyId` for per-key attribution, and deliberately excluded
+from redaction.
 
 ---
 
@@ -275,8 +279,9 @@ provider package is now a first-class, shipped workflow: a package exports a `Pr
 (adapter + model descriptors + optional pricing source, see `packages/core/src/plugin.ts`) and
 hosts wire it in via `composeProviders([...])` (e.g. `composeProviders([googleProvider()])`) —
 see [`docs/architecture.md`](./docs/architecture.md) and the README Quickstart. `AuthMaterial` is
-currently `{ apiKey: string } | { cliSession: true }` (the CLI-session form shipped with the dev
-CLI providers below). Additional forms (OAuth token, bearer token) would extend the union further.
+currently `{ apiKey: string, keyId?: string } | { cliSession: true }` (the CLI-session form shipped
+with the dev CLI providers below; `keyId` is the ADR-026 attribution label, `ApiKeyAuth`-only).
+Additional forms (OAuth token, bearer token) would extend the union further.
 Vertex AI specifically is on the roadmap; see ROADMAP.md.
 
 **Function calling.** The `Part` union's `kind` discriminant is reserved for future `tool-call`
@@ -328,7 +333,7 @@ login (`claude auth login` / `codex login`) that does not exist on a server.
 `AuthMaterial` becomes a union:
 
 ```ts
-type AuthMaterial = { apiKey: string } | { cliSession: true }
+type AuthMaterial = { apiKey: string; keyId?: string } | { cliSession: true }
 ```
 
 This is the union anticipated by the "Additional providers" planned seam (see above), realized

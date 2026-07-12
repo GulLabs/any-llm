@@ -29,6 +29,7 @@ export function drizzleUsageSink(db: InsertableDb, table = llmCalls): UsageSink 
         attemptId: r.attemptId,
         callSiteId: r.callSiteId,
         externalId: r.externalId,
+        authKeyId: r.authKeyId,
         provider: r.provider,
         model: r.model,
         modelVersion: r.modelVersion,

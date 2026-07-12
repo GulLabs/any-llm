@@ -58,6 +58,14 @@ export interface LlmCallRecord {
   callSiteId?: string
   /** Optional caller-owned correlation id for host ledgers. */
   externalId?: string
+  /**
+   * Opaque caller-supplied label identifying which credential (`ApiKeyAuth.keyId`)
+   * was used for the dispatch attempt that produced this record (ADR-026).
+   * Absent when the resolved auth material had no `keyId` (e.g. `CliSessionAuth`,
+   * or an `ApiKeyAuth` that omitted it). Never a secret — safe to display
+   * unredacted in per-key analytics.
+   */
+  authKeyId?: string
 
   // --- routing ---
   /** Provider identifier (e.g. `"google"`). */
@@ -174,6 +182,8 @@ export interface BuildRecordInput {
   callSiteId?: string
   /** Optional caller-owned correlation id. */
   externalId?: string
+  /** Opaque attribution label from the resolved auth material's `keyId` (ADR-026). */
+  authKeyId?: string
   /** Provider identifier. */
   provider: string
   /** Requested model string. */
@@ -592,6 +602,7 @@ export function buildRecord(input: BuildRecordInput): LlmCallRecord {
     attemptNumber: input.attemptNumber,
     ...(input.callSiteId !== undefined ? { callSiteId: input.callSiteId } : {}),
     ...(input.externalId !== undefined ? { externalId: input.externalId } : {}),
+    ...(input.authKeyId !== undefined ? { authKeyId: input.authKeyId } : {}),
     provider: input.provider,
     model: input.model,
     ...(input.modelVersion !== undefined ? { modelVersion: input.modelVersion } : {}),

@@ -73,7 +73,7 @@ describe('drizzleUsageSink', () => {
     const calls: InsertCall[] = []
     const db = makeDb(calls)
     const sink = drizzleUsageSink(db)
-    const record = makeRecord()
+    const record = makeRecord({ authKeyId: 'gemini-paid' })
 
     await sink.record(record)
 
@@ -87,6 +87,7 @@ describe('drizzleUsageSink', () => {
       callId: 'call_1',
       attemptId: 'attempt_1',
       callSiteId: 'site_1',
+      authKeyId: 'gemini-paid',
       provider: 'google',
       model: 'gemini-2.5-pro',
       modelVersion: 'gemini-2.5-pro-001',
@@ -136,5 +137,18 @@ describe('drizzleUsageSink', () => {
       errorKind: 'invalid_auth',
       errorMessage: 'upstream 503',
     })
+  })
+
+  it('writes authKeyId as undefined (no column value) when absent from the record', async () => {
+    const calls: InsertCall[] = []
+    const db = makeDb(calls)
+    const sink = drizzleUsageSink(db)
+    // makeRecord()'s defaults omit authKeyId — mirrors buildRecord's
+    // conditional-spread convention (absent, not present-as-undefined).
+    const record = makeRecord()
+
+    await sink.record(record)
+
+    expect(calls[0]?.values['authKeyId']).toBeUndefined()
   })
 })

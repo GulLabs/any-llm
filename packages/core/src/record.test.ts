@@ -82,6 +82,25 @@ describe('buildRecord — success path', () => {
     expect('callSiteId' in r).toBe(false)
   })
 
+  it('maps authKeyId when provided (ADR-026)', () => {
+    const r = buildRecord(makeBaseInput({ authKeyId: 'gemini-paid' }))
+    expect(r.authKeyId).toBe('gemini-paid')
+  })
+
+  it('authKeyId absent when not provided', () => {
+    const r = buildRecord(makeBaseInput())
+    expect('authKeyId' in r).toBe(false)
+  })
+
+  it('authKeyId is never redacted, even when it looks like a secret pattern', () => {
+    // A value that redactSecrets would normally scrub if it ran over this
+    // field (e.g. an AIza-prefixed Google API key shape). authKeyId is a
+    // label, not a secret, and must pass through byte-for-byte.
+    const suspiciousLabel = 'AIzaSyD-abcdefghijklmnopqrstuvwxyz1234567'
+    const r = buildRecord(makeBaseInput({ authKeyId: suspiciousLabel }))
+    expect(r.authKeyId).toBe(suspiciousLabel)
+  })
+
   it('maps routing fields', () => {
     const r = buildRecord(
       makeBaseInput({

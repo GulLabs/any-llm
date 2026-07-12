@@ -342,7 +342,21 @@ export interface PricingSource {
  * `runStructured` call; the library never reads credentials from the
  * environment or any ambient source (see ADR-019).
  */
-export type ApiKeyAuth = { apiKey: string }
+export type ApiKeyAuth = {
+  apiKey: string
+  /**
+   * Opaque caller-chosen label identifying which key was used (e.g.
+   * `'gemini-paid'`, `'grok-team-A'`), for per-key attribution in
+   * observability records (see ADR-026).
+   *
+   * Persisted verbatim to `LlmCallRecord.authKeyId` / `llm_calls.auth_key_id`
+   * — it is NOT redacted. It MUST NOT contain the secret itself (`keyId`
+   * equal to `apiKey` is rejected). Beyond non-empty and not-the-secret, the
+   * library imposes no length cap or charset rule; the label's meaning is
+   * entirely caller-owned.
+   */
+  keyId?: string
+}
 
 /**
  * Explicit opt-in to a locally-authenticated CLI session (dev-only providers,
@@ -351,6 +365,10 @@ export type ApiKeyAuth = { apiKey: string }
  * auth, etc.) — the library never reads or forwards any credential material
  * for this variant. Passing `{ cliSession: true }` is a deliberate, explicit
  * caller choice; it is never inferred or defaulted.
+ *
+ * Deliberately has no `keyId` (see ADR-026): CLI-session providers have no
+ * key identity to attribute — the CLI binary owns its own local auth, and
+ * there is no caller-supplied secret to label.
  */
 export type CliSessionAuth = { cliSession: true }
 

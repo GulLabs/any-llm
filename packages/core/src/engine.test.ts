@@ -2087,3 +2087,74 @@ describe('engine — fail-closed auth guard', () => {
     })
   })
 })
+
+// ---------------------------------------------------------------------------
+// ADR-026: auth.keyId attribution
+// ---------------------------------------------------------------------------
+
+describe('engine — auth.keyId attribution (ADR-026)', () => {
+  const req = {
+    provider: 'google',
+    model: 'gemini-2.5-pro',
+    messages: [{ role: 'user' as const, parts: [{ kind: 'text' as const, text: 'Hi' }] }],
+  }
+
+  it('ApiKeyAuth with keyId flows through to LlmCallRecord.authKeyId', async () => {
+    const { client, sink } = makeClient()
+
+    await client.generate(req, { auth: { apiKey: 'secret-key', keyId: 'gemini-paid' } })
+
+    expect(sink.last()!.authKeyId).toBe('gemini-paid')
+  })
+
+  it('omitted keyId → record has no authKeyId', async () => {
+    const { client, sink } = makeClient()
+
+    await client.generate(req, { auth: { apiKey: 'secret-key' } })
+
+    expect(sink.last()!.authKeyId).toBeUndefined()
+    expect(Object.hasOwn(sink.last()!, 'authKeyId')).toBe(false)
+  })
+
+  it('keyId === apiKey throws bad_request LlmError', async () => {
+    const { client } = makeClient()
+
+    await expect(
+      client.generate(req, { auth: { apiKey: 'shh-secret', keyId: 'shh-secret' } }),
+    ).rejects.toMatchObject({
+      kind: 'bad_request',
+      retryable: false,
+    })
+  })
+
+  it('empty-string keyId throws bad_request LlmError', async () => {
+    const { client } = makeClient()
+
+    await expect(
+      client.generate(req, { auth: { apiKey: 'secret-key', keyId: '' } }),
+    ).rejects.toMatchObject({
+      kind: 'bad_request',
+      retryable: false,
+    })
+  })
+
+  it('keyId also lands on the error-path record (adapter failure)', async () => {
+    const sink = new RecordingSink()
+    const adapter = new FakeAdapter(
+      'google',
+      new LlmError('boom', { kind: 'server', retryable: false }),
+    )
+    const client = createClient({
+      adapters: [adapter],
+      pricingSources: { google: PRICING },
+      modelRegistry: TEST_REGISTRY,
+      sink,
+    })
+
+    await expect(
+      client.generate(req, { auth: { apiKey: 'secret-key', keyId: 'gemini-paid' } }),
+    ).rejects.toMatchObject({ kind: 'server' })
+
+    expect(sink.last()!.authKeyId).toBe('gemini-paid')
+  })
+})

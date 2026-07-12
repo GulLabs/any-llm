@@ -102,12 +102,15 @@ interpolation and config-layer merging before handing off to the shared core.
 ### Phase 1 — Prologue (once per logical call)
 
 1. **Auth resolution.** `requireAuth(opts.auth)` validates the caller-supplied `AuthMaterial`
-   (`{ apiKey: string }`) once per logical call, before config resolution and before the
-   middleware chain runs. A missing, non-string, or empty `apiKey` throws
-   `LlmError('invalid_auth', retryable: false)` immediately. The resolved `AuthMaterial` is then
-   threaded through `AdapterCtx` unchanged on every retry attempt — it is **not** re-resolved per
-   attempt. There is no `AuthProvider` port and no environment/ambient credential lookup; the
-   caller supplies `{ apiKey }` on every `generate()` / `runStructured()` call.
+   (`{ apiKey: string, keyId?: string }`) once per logical call, before config resolution and
+   before the middleware chain runs. A missing, non-string, or empty `apiKey` throws
+   `LlmError('invalid_auth', retryable: false)` immediately; an invalid `keyId` (empty string, or
+   equal to `apiKey`) throws `LlmError('bad_request', retryable: false)`. The resolved
+   `AuthMaterial` is then threaded through `AdapterCtx` unchanged on every retry attempt — it is
+   **not** re-resolved per attempt. There is no `AuthProvider` port and no environment/ambient
+   credential lookup; the caller supplies `{ apiKey }` on every `generate()` / `runStructured()`
+   call. `keyId`, when present, is captured onto `LlmCallRecord.authKeyId` for per-key attribution
+   (ADR-026) — see item 9 below (`buildRecord`).
 
 2. **Config resolution.** `generate`: merges `libDefaults → request.config`. `runStructured`:
    merges `libDefaults → callSite.config → opts.config`. Merge is deep for `reasoning` and
@@ -225,7 +228,8 @@ attempt. Steps:
 9. **Record assembly.** `buildRecord` assembles an `LlmCallRecord` from all collected fields.
    This is a pure function with no I/O. Token hot fields (`inputTokens`, `outputTokens`, etc.)
    are promoted to typed columns; open maps (`tokenDetails`, `rawUsage`, `providerMetadata`,
-   `warnings`, `generationConfig`) are stored as JSONB-compatible `JsonValue`.
+   `warnings`, `generationConfig`) are stored as JSONB-compatible `JsonValue`. `authKeyId` (ADR-026)
+   is populated from the resolved `AuthMaterial`'s `keyId`, omitted otherwise; it is never redacted.
 
 10. **Sink write.** `sink.record(record)` is called inside a try/catch. Failure logs
     `llm.call.sink.failed` and is swallowed (fail-open). A record is written on both the success

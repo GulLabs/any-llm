@@ -873,6 +873,7 @@ function buildSuccessRecord(
   attemptNumber: number,
   externalId: string | undefined,
   outputParsed: boolean | undefined,
+  authKeyId: string | undefined,
 ): ReturnType<typeof buildRecord> {
   return buildRecord({
     callId,
@@ -880,6 +881,7 @@ function buildSuccessRecord(
     attemptNumber,
     ...(callSiteId !== undefined ? { callSiteId } : {}),
     ...(externalId !== undefined ? { externalId } : {}),
+    ...(authKeyId !== undefined ? { authKeyId } : {}),
     provider,
     model,
     ...(adapterResult.modelVersion !== undefined
@@ -934,6 +936,7 @@ function buildErrorRecord(
   err: LlmError,
   attemptNumber: number,
   externalId: string | undefined,
+  authKeyId: string | undefined,
 ): ReturnType<typeof buildRecord> {
   return buildRecord({
     callId,
@@ -941,6 +944,7 @@ function buildErrorRecord(
     attemptNumber,
     ...(callSiteId !== undefined ? { callSiteId } : {}),
     ...(externalId !== undefined ? { externalId } : {}),
+    ...(authKeyId !== undefined ? { authKeyId } : {}),
     provider,
     model,
     usage,
@@ -1100,7 +1104,38 @@ function requireAuth(auth: AuthMaterial | undefined): AuthMaterial {
       { kind: 'invalid_auth', retryable: false },
     )
   }
+
+  // keyId (ADR-026): opaque caller-supplied attribution label, ApiKeyAuth-only.
+  // "Reject, don't map" — validate strictly, never silently drop or coerce.
+  if (isValidApiKeyAuth && 'keyId' in auth) {
+    if (typeof auth.keyId !== 'string' || auth.keyId.trim() === '') {
+      throw new LlmError('auth.keyId must be a non-empty string when provided', {
+        kind: 'bad_request',
+        retryable: false,
+      })
+    }
+    if (auth.keyId === auth.apiKey) {
+      throw new LlmError(
+        'auth.keyId must not equal auth.apiKey — keyId is an opaque label, never the secret',
+        { kind: 'bad_request', retryable: false },
+      )
+    }
+  }
+
   return auth
+}
+
+/**
+ * Extracts the attribution label from the resolved {@link AuthMaterial} that
+ * was ACTUALLY used for a dispatch attempt (see ADR-026).
+ *
+ * Only `ApiKeyAuth` carries `keyId`; `CliSessionAuth` has no key identity and
+ * always yields `undefined`. Called at the same place the engine resolves
+ * the concrete auth material per attempt, so attribution stays correct if a
+ * future credential-refresh path ever swaps material between attempts.
+ */
+function authKeyIdOf(auth: AuthMaterial): string | undefined {
+  return 'apiKey' in auth ? auth.keyId : undefined
 }
 
 export function createClient(config: ClientConfig): Client {
@@ -1506,6 +1541,7 @@ export function createClient(config: ClientConfig): Client {
           attemptNumber,
           request.externalId,
           outputParsed,
+          authKeyIdOf(callAuth),
         )
 
         // Step 11: Sink — fail-open.
@@ -1582,6 +1618,7 @@ export function createClient(config: ClientConfig): Client {
           err,
           attemptNumber,
           request.externalId,
+          authKeyIdOf(callAuth),
         )
 
         // Sink error record — fail-open.
@@ -1716,6 +1753,7 @@ export function createClient(config: ClientConfig): Client {
           err,
           0,
           request.externalId,
+          authKeyIdOf(callAuth),
         )
         await recordToSink(sink, syntheticRecord, safeLogger, callId)
       }
