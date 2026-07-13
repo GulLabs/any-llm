@@ -47,7 +47,8 @@ import type { LlmCallRecord, JsonValue } from '@gullabs/core'
 //   cost_micro_usd:      integer (nullable)
 //   pricing_version:     text (nullable)
 //   token_details:       jsonb NOT NULL
-//   raw_usage:           jsonb NOT NULL
+//   raw_usage:           jsonb (nullable — null on error/refusal rows where
+//                         no provider usage payload ever existed; see schema.ts)
 //   provider_metadata:   jsonb (nullable)
 //   warnings:            jsonb (nullable)
 //   generation_config:   jsonb NOT NULL
@@ -85,7 +86,7 @@ const CREATE_TABLE_SQL = /* sql */ `
     cost_micro_usd        INTEGER,
     pricing_version       TEXT,
     token_details         JSONB        NOT NULL,
-    raw_usage             JSONB        NOT NULL,
+    raw_usage             JSONB,
     provider_metadata     JSONB,
     warnings              JSONB,
     generation_config     JSONB        NOT NULL,
@@ -360,6 +361,104 @@ describe('drizzleUsageSink — real PGlite integration', () => {
     expect(row.status).toBe('api_error')
     expect(row.errorKind).toBe('server')
     expect(row.errorMessage).toBe('upstream 503')
+  })
+
+  // Regression test for the raw_usage NOT NULL defect (Codex-adjudicated
+  // 2026-07-12): the engine's EMPTY_USAGE sentinel sets `Usage.raw = null` on
+  // every error/never-dispatched record path (packages/core/src/engine.ts),
+  // and buildRecord copies it verbatim (packages/core/src/record.ts). Before
+  // the fix, `raw_usage jsonb NOT NULL` rejected every such INSERT at the DB
+  // boundary — and because sinks are fail-open (ADR-002), that rejection was
+  // swallowed and the row silently never appeared in the ledger. This test
+  // exercises the real PGlite NOT NULL constraint, not a mock, so it would
+  // have caught the defect.
+  it('inserts an api_error record with rawUsage null (EMPTY_USAGE sentinel)', async () => {
+    const db = await createTestDb()
+    const sink = drizzleUsageSink(asInsertableDb(db))
+    // Mirrors the shape buildErrorRecord/buildRecord actually produce for an
+    // error-path record: optional fields the failed attempt never populated
+    // (finishReason, outputParsed, responseId, servedServiceTier, cost,
+    // reasoningText, queueDelayMs, token subset counts) are simply absent,
+    // not present-as-undefined — buildRecord's conditional-spread convention.
+    const record: LlmCallRecord = {
+      recordSchemaVersion: 1,
+      callId: 'call_error_null_raw_usage',
+      attemptId: 'error_null_raw_usage',
+      attemptNumber: 1,
+      provider: 'google',
+      model: 'gemini-2.5-pro',
+      status: 'api_error',
+      latencyMs: 42,
+      inputTokens: 0,
+      outputTokens: 0,
+      tokenDetails: {} satisfies JsonValue,
+      rawUsage: null,
+      generationConfig: { temperature: 0.7 } satisfies JsonValue,
+      metadata: { tenantId: 'tenant_int' } satisfies JsonValue,
+      createdAt: '2026-07-12T00:00:00.000Z',
+      errorKind: 'server',
+      errorMessage: 'upstream 503',
+    }
+
+    await expect(sink.record(record)).resolves.toBeUndefined()
+
+    const rows = await db
+      .select()
+      .from(llmCalls)
+      .where(eq(llmCalls.attemptId, 'error_null_raw_usage'))
+    expect(rows).toHaveLength(1)
+    const row = rows[0]!
+    expect(row.status).toBe('api_error')
+    expect(row.errorKind).toBe('server')
+    expect(row.rawUsage).toBeNull()
+    // tokenDetails/generationConfig/metadata remain NOT NULL and populated —
+    // only rawUsage is ever null per the invariant audit in schema.ts.
+    expect(row.tokenDetails).toEqual({})
+  })
+
+  // ADR-025 `attemptNumber: 0` synthetic pre-attempt refusal record (e.g. a
+  // D3/D4 input-contract violation, or a @gullabs/quota-style pre-attempt
+  // denial) — written before any provider dispatch was ever attempted, so
+  // rawUsage is null exactly like the error-path record above.
+  it('inserts an ADR-025 attemptNumber:0 pre-attempt refusal record with rawUsage null', async () => {
+    const db = await createTestDb()
+    const sink = drizzleUsageSink(asInsertableDb(db))
+    // Mirrors the D5 synthetic pre-attempt record buildErrorRecord assembles
+    // in engine.ts when the middleware chain throws before runAttempt ever
+    // begins (e.g. a D3/D4 input-contract refusal): EMPTY_USAGE throughout,
+    // attemptNumber: 0, and only the fields buildRecord always includes.
+    const record: LlmCallRecord = {
+      recordSchemaVersion: 1,
+      callId: 'call_refusal_attempt_0',
+      attemptId: 'refusal_attempt_0',
+      attemptNumber: 0,
+      provider: 'google',
+      model: 'gemini-2.5-pro',
+      status: 'api_error',
+      latencyMs: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      tokenDetails: {} satisfies JsonValue,
+      rawUsage: null,
+      generationConfig: { temperature: 0.7 } satisfies JsonValue,
+      metadata: { tenantId: 'tenant_int' } satisfies JsonValue,
+      createdAt: '2026-07-12T00:00:00.000Z',
+      errorKind: 'bad_request',
+      errorMessage: 'inputContract is required when requireInputContract is enabled.',
+    }
+
+    await expect(sink.record(record)).resolves.toBeUndefined()
+
+    const rows = await db
+      .select()
+      .from(llmCalls)
+      .where(eq(llmCalls.attemptId, 'refusal_attempt_0'))
+    expect(rows).toHaveLength(1)
+    const row = rows[0]!
+    expect(row.attemptNumber).toBe(0)
+    expect(row.status).toBe('api_error')
+    expect(row.errorKind).toBe('bad_request')
+    expect(row.rawUsage).toBeNull()
   })
 
   // Multiple distinct records are all persisted (no cross-contamination).

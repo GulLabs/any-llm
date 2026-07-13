@@ -8,6 +8,34 @@ import {
   timestamp,
 } from 'drizzle-orm/pg-core'
 
+/**
+ * `llm_calls` — the append-only ledger table for `@gullabs/core`'s
+ * `LlmCallRecord`. One row per attempt (including `attemptNumber: 0`
+ * pre-attempt refusals, ADR-025) and one synthetic-or-real row per
+ * `callId ⇒ ledger row` invariant (§0.4).
+ *
+ * JSONB-lane nullability invariants (verified against every engine record
+ * path — success, per-attempt error, and the ADR-025 `attemptNumber: 0`
+ * synthetic pre-attempt record — in `packages/core/src/engine.ts` and
+ * `packages/core/src/record.ts`):
+ *
+ * - `token_details` — ALWAYS populated (`{}` at minimum via `EMPTY_USAGE.details`).
+ *   Never null on any code path; `.notNull()` is correct.
+ * - `raw_usage` — NULLABLE. `EMPTY_USAGE.raw = null` on the error and
+ *   never-dispatched paths (no provider usage payload exists to persist —
+ *   persisting `{}` would fabricate a payload the provider never returned).
+ *   `.notNull()` was a defect: it rejected every error/refusal row at the
+ *   sink boundary, which — combined with sinks being fail-open (ADR-002) —
+ *   made those rows silently vanish instead of erroring loudly. Fixed here.
+ * - `generation_config` — ALWAYS populated (`resolvedConfig`, computed
+ *   before dispatch is attempted). Never null on any code path;
+ *   `.notNull()` is correct.
+ * - `metadata` — ALWAYS populated (`metadata ?? {}`, host-supplied or
+ *   defaulted). Never null on any code path; `.notNull()` is correct.
+ *
+ * Consumers upgrading from a version where `raw_usage` was `NOT NULL` must
+ * run: `ALTER TABLE llm_calls ALTER COLUMN raw_usage DROP NOT NULL;`
+ */
 export const llmCalls = pgTable(
   'llm_calls',
   {
@@ -36,7 +64,12 @@ export const llmCalls = pgTable(
     costMicroUsd: integer('cost_micro_usd'),
     pricingVersion: text('pricing_version'),
     tokenDetails: jsonb('token_details').notNull(),
-    rawUsage: jsonb('raw_usage').notNull(),
+    // Nullable: null means no provider usage payload existed for this row
+    // (error, timeout, aborted, content_filter, or an ADR-025 attemptNumber:0
+    // pre-attempt refusal — none of these ever reached a provider response to
+    // report usage from). See the table-level doc comment above for the full
+    // per-lane invariant audit.
+    rawUsage: jsonb('raw_usage'),
     providerMetadata: jsonb('provider_metadata'),
     warnings: jsonb('warnings'),
     generationConfig: jsonb('generation_config').notNull(),

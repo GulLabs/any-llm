@@ -1483,3 +1483,73 @@ pre-attempt record, which also receives `authKeyId` via the same `authKeyIdOf(ca
 - A caller that passes `keyId === apiKey` now gets a `bad_request` at call time instead of silently
   persisting its secret into an unredacted column — this is the intended fail-closed behavior for
   the exact production mistake this ADR exists to prevent.
+
+---
+
+## ADR-027: `llm_calls.raw_usage` Is Nullable
+
+**Status:** Accepted (Codex-adjudicated 2026-07-12)
+
+**Context:**
+`llm_calls.raw_usage jsonb NOT NULL` (`packages/drizzle/src/schema.ts`) assumed a provider usage
+payload always exists to persist. It does not. The engine's `EMPTY_USAGE` sentinel
+(`packages/core/src/engine.ts`) sets `raw: null` on every record path where no provider response
+was ever received: a per-attempt error caught in `runAttempt`'s catch block (`api_error`,
+`timeout`, `aborted`, `content_filter`) and the ADR-025 `attemptNumber: 0` synthetic pre-attempt
+record written when the middleware chain refuses a call before `runAttempt` ever begins.
+`buildRecord` (`packages/core/src/record.ts`) copies `usage.raw` into `LlmCallRecord.rawUsage`
+verbatim — no default substitution. Every such record therefore carried `rawUsage: null` into any
+`UsageSink`, including `drizzleUsageSink`.
+
+Because sinks are fail-open by design (ADR-002 — a broken sink write must never fail the LLM call),
+the resulting `NOT NULL` constraint violation was caught, logged to `llm.call.sink.failed`, and
+swallowed. The call itself succeeded or failed normally from the caller's perspective; only the
+ledger row silently never existed. `ADR-002`'s fail-open policy is correct for genuine sink
+infrastructure failures — it was never meant to mask a schema defect that guarantees every
+error/refusal row fails to insert.
+
+**Decision:**
+`raw_usage` drops `.notNull()`. `null` means "no provider usage payload existed for this record" —
+distinct from `{}`, which would assert that the provider returned an empty-but-present payload. A
+`{}` sentinel would fabricate provider data that was never received; `null` is the honest
+representation and is what the engine already produces, so this is not a new sentinel, only the
+schema catching up to what the engine has always emitted.
+
+The other three `NOT NULL` JSONB lanes (`token_details`, `generation_config`, `metadata`) were
+audited against the same engine record paths — `buildSuccessRecord`, `buildErrorRecord`'s
+per-attempt catch-block record, and the D5 `attemptNumber: 0` synthetic record:
+
+- `token_details` — always `usage.details`, which `EMPTY_USAGE.details = {}` on every
+  no-payload path. Never `null`. `.notNull()` remains correct.
+- `generation_config` — always `resolvedConfig`, computed before dispatch is ever attempted and
+  passed to every `buildErrorRecord`/`buildRecord` call site unconditionally. Never `null`.
+  `.notNull()` remains correct.
+- `metadata` — always `metadata ?? {}` (host-supplied `CallMetadata`, defaulted). Never `null`.
+  `.notNull()` remains correct.
+
+Only `raw_usage` was affected; the invariant for each lane is now documented directly on the
+`schema.ts` table and column definitions so a future field addition to the engine's no-payload
+paths is checked against this precedent rather than re-discovered by another silent drop.
+
+No migration framework exists in this package (`schema.ts` is the single source of truth, per the
+precedent set in ADR-026); this ADR follows that precedent. The schema doc comment states the
+required consumer migration: `ALTER TABLE llm_calls ALTER COLUMN raw_usage DROP NOT NULL;`.
+
+**Consequences:**
+
+- **Breaking for consumers with an existing table:** the column-level `NOT NULL` constraint in a
+  live Postgres database is not retroactively altered by this library change — consumers must run
+  the `ALTER TABLE` migration themselves. Until they do, the defect (rows silently dropped) persists
+  unless they've independently relaxed the constraint. Documented in the changeset and in
+  `schema.ts`.
+- Error and pre-attempt-refusal rows now insert successfully and become visible in the ledger for
+  the first time. Any downstream query, dashboard, or alert built on "the ledger already contains
+  every error row" was silently wrong until this fix and should be re-verified.
+- `LlmCallRecord.rawUsage`'s existing type (`JsonValue`, which already includes `null`) required no
+  change in `@gullabs/core` — only its doc comment was clarified. This is a schema-shape fix
+  entirely local to `@gullabs/drizzle`.
+
+**References:** ADR-002 (fail-open sink writes — the mechanism that made this defect silent rather
+than loud); ADR-025 (the `attemptNumber: 0` synthetic pre-attempt record, one of the two paths that
+produces `rawUsage: null`); ADR-026 (precedent for `schema.ts`-as-source-of-truth with no migration
+framework in this package).

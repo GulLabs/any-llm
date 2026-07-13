@@ -132,7 +132,16 @@ export interface LlmCallRecord {
   // --- forward-compat JSONB lanes ---
   /** Open token-type detail map from `Usage.details` (JSONB). */
   tokenDetails: JsonValue
-  /** Raw provider usage object from `Usage.raw` (JSONB). */
+  /**
+   * Raw provider usage object from `Usage.raw` (JSONB).
+   *
+   * `null` when no provider usage payload exists for this row (error,
+   * timeout, aborted, content_filter, or an ADR-025 `attemptNumber: 0`
+   * pre-attempt refusal — `EMPTY_USAGE.raw` in `engine.ts`). Persisting `{}`
+   * in that case would fabricate a payload the provider never returned, so
+   * `null` is preserved end-to-end into `@gullabs/drizzle`'s nullable
+   * `raw_usage` column rather than defaulted to an empty object.
+   */
   rawUsage: JsonValue
   /** Raw provider metadata (grounding, safety ratings, etc.) (JSONB). */
   providerMetadata?: JsonValue

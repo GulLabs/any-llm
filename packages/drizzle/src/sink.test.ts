@@ -139,6 +139,47 @@ describe('drizzleUsageSink', () => {
     })
   })
 
+  it('maps rawUsage null through to the insert values (EMPTY_USAGE sentinel, error path)', async () => {
+    const calls: InsertCall[] = []
+    const db = makeDb(calls)
+    const sink = drizzleUsageSink(db)
+
+    await sink.record(
+      makeRecord({
+        status: 'api_error',
+        errorKind: 'server',
+        errorMessage: 'upstream 503',
+        tokenDetails: {} satisfies JsonValue,
+        rawUsage: null,
+      }),
+    )
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.values['rawUsage']).toBeNull()
+    expect(calls[0]?.values['tokenDetails']).toEqual({})
+  })
+
+  it('maps rawUsage null for an ADR-025 attemptNumber:0 pre-attempt refusal record', async () => {
+    const calls: InsertCall[] = []
+    const db = makeDb(calls)
+    const sink = drizzleUsageSink(db)
+
+    await sink.record(
+      makeRecord({
+        attemptNumber: 0,
+        status: 'api_error',
+        errorKind: 'bad_request',
+        errorMessage: 'inputContract is required when requireInputContract is enabled.',
+        tokenDetails: {} satisfies JsonValue,
+        rawUsage: null,
+      }),
+    )
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.values['attemptNumber']).toBe(0)
+    expect(calls[0]?.values['rawUsage']).toBeNull()
+  })
+
   it('writes authKeyId as undefined (no column value) when absent from the record', async () => {
     const calls: InsertCall[] = []
     const db = makeDb(calls)
