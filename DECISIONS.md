@@ -171,8 +171,9 @@ constant couples cost accuracy to library release cadence.
 **Decision:**
 Pricing is expressed as a `PricingSource` port with a `version` string and a `price()` method.
 The library ships a built-in `geminiPricingSource()` that holds a dated, named snapshot
-(`gemini-2026-06-28`). The snapshot version is frozen into every `Cost` record at write time so
-historical records can identify which rate card was used.
+(currently `gemini-2026-08-12`; prior `gemini-2026-06-28` remains the version frozen
+into records written under that card). The snapshot version is frozen into every
+`Cost` record at write time so historical records can identify which rate card was used.
 
 Hosts can supply a custom `PricingSource` to override rates (e.g. committed-use discounts) without
 forking the library. The `pricingFamily` field on `ModelDescriptor` allows model variants

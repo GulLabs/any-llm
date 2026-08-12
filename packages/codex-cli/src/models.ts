@@ -42,9 +42,10 @@ export const CODEX_CLI_MODEL_IDS: readonly CodexCliModelId[] = [
 /**
  * Codex CLI's `model_reasoning_effort` levels.
  *
- * Distinct from core's `ReasoningEffort` (`'none'|'low'|'medium'|'high'`):
- * codex admits `'xhigh'` instead of `'none'`, so we define our own enum here
- * rather than reusing core's type.
+ * Distinct from core's `ReasoningEffort`
+ * (`'none'|'low'|'medium'|'high'|'xhigh'`): codex admits `'xhigh'` and does
+ * not admit `'none'`, so we keep a package-local enum rather than reuse
+ * core's type as-is.
  */
 export const CODEX_CLI_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const
 
@@ -115,11 +116,9 @@ const CONFIG_SCHEMA_BY_ID: Record<CodexCliModelId, z.ZodType> = {
  * `ModelDescriptor[]` for every Codex CLI model.
  *
  * `admittedReasoningEfforts` is deliberately omitted from `capabilities`:
- * core's `ReasoningEffort` type (`'none'|'low'|'medium'|'high'`) does not
- * admit `'xhigh'`, and `createModelRegistry`'s invariant only checks for the
- * presence of `configSchema`/`configJsonSchema`/`validateConfig` — not the
- * contents of `capabilities` — so omitting the field is the clean way out
- * rather than an unsafe cast.
+ * this package's Zod schema is the sole validator for `reasoning.effort`
+ * (codex does not admit `'none'`). `createModelRegistry`'s invariant only
+ * checks for the presence of `configSchema`/`configJsonSchema`/`validateConfig`.
  */
 export const codexCliModelDescriptors: ModelDescriptor[] = CODEX_CLI_MODEL_IDS.map(
   (id): ModelDescriptor => {

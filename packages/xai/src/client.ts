@@ -100,12 +100,17 @@ export interface XaiResponseCreateParams {
   model: string
   input: XaiInputItem[]
   instructions?: string
-  reasoning?: { effort: 'low' | 'high' }
+  reasoning?: { effort: 'low' | 'medium' | 'high' | 'xhigh' }
   text?: { format: XaiTextFormat }
   temperature?: number
   top_p?: number
   max_output_tokens?: number
   prompt_cache_key?: string
+  /**
+   * Responses `service_tier`. Only `'priority'` is forwarded (live-verified
+   * on grok-4.6, 2026-08-12). Omitted when the caller did not request a tier.
+   */
+  service_tier?: 'priority'
   /** Always `false` — this library never relies on xAI-side conversation storage. */
   store: false
 }
@@ -181,6 +186,11 @@ export interface XaiResponseShape {
   output: XaiOutputItem[]
   usage: XaiUsageShape
   reasoning?: { effort?: string; summary?: string }
+  /**
+   * Echoed served tier. Observed values: `"default"`, `"priority"`.
+   * Kept as a plain string — xAI may add further values.
+   */
+  service_tier?: string
   store?: boolean
   prompt_cache_key?: string | null
   /**

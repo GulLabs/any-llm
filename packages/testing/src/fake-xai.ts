@@ -90,6 +90,8 @@ export interface XaiResponseLike {
   output: XaiOutputItemLike[]
   usage: XaiUsageLike
   reasoning?: { effort?: string; summary?: string }
+  /** Echoed served tier. Observed values: `'default'`, `'priority'`. */
+  service_tier?: string
   store?: boolean
   prompt_cache_key?: string | null
 }
@@ -130,6 +132,8 @@ export interface FakeXaiResponseOpts {
   id?: string
   model?: string
   promptCacheKey?: string
+  /** Echoed Responses `service_tier` (e.g. `'priority'`). */
+  serviceTier?: string
   /**
    * Extra top-level numeric usage fields (e.g. `num_server_side_tools_used`
    * when attachment_search ran). Merged into the usage object for adapter tests.
@@ -195,6 +199,7 @@ export function fakeXaiResponse(opts: FakeXaiResponseOpts = {}): XaiResponseLike
     ...(opts.promptCacheKey !== undefined
       ? { prompt_cache_key: opts.promptCacheKey }
       : {}),
+    ...(opts.serviceTier !== undefined ? { service_tier: opts.serviceTier } : {}),
   }
 }
 

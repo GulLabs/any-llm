@@ -17,7 +17,9 @@ import {
   xaiAdapter,
   classifyXaiError,
   Grok45ConfigSchema,
+  Grok46ConfigSchema,
   grok45ModelDescriptor,
+  grok46ModelDescriptor,
   xaiModelDescriptors,
   xaiRegistry,
   XAI_PRICING,
@@ -62,16 +64,24 @@ describe('@gullabs/xai package surface: commit 3', () => {
     expect(grok45ModelDescriptor.model).toBe('grok-4.5')
   })
 
-  it('xaiModelDescriptors is reachable and pinned to grok-4.5', () => {
-    expect(xaiModelDescriptors.map((d) => d.model)).toEqual(['grok-4.5'])
+  it('xaiModelDescriptors is reachable and pinned to grok-4.5 then grok-4.6', () => {
+    expect(xaiModelDescriptors.map((d) => d.model)).toEqual(['grok-4.5', 'grok-4.6'])
   })
 
-  it('xaiRegistry is reachable and resolves grok-4.5', () => {
+  it('xaiRegistry is reachable and resolves grok-4.5 and grok-4.6', () => {
     expect(xaiRegistry.resolve('xai', 'grok-4.5')).toBeDefined()
+    expect(xaiRegistry.resolve('xai', 'grok-4.6')).toBeDefined()
+  })
+
+  it('Grok46ConfigSchema and grok46ModelDescriptor are reachable', () => {
+    expect(Grok46ConfigSchema.safeParse({}).success).toBe(true)
+    expect(grok46ModelDescriptor.provider).toBe('xai')
+    expect(grok46ModelDescriptor.model).toBe('grok-4.6')
   })
 
   it('XAI_PRICING, xaiPricingVersion, computeXaiCost, xaiPricingSource are reachable', () => {
     expect(XAI_PRICING['grok-4.5']).toBeDefined()
+    expect(XAI_PRICING['grok-4.6']).toBeDefined()
     expect(typeof xaiPricingVersion).toBe('string')
     expect(typeof computeXaiCost).toBe('function')
     expect(typeof xaiPricingSource).toBe('function')

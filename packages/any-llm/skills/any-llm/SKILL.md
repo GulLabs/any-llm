@@ -150,7 +150,7 @@ const client = createClient({
 const result = await client.generate(
   {
     provider: 'xai',
-    model: 'grok-4.5',
+    model: 'grok-4.6',
     messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hello, Grok.' }] }],
     config: { reasoning: { effort: 'high' } },
   },
@@ -158,10 +158,11 @@ const result = await client.generate(
 )
 ```
 
-`grok-4.5`'s `reasoning.effort` admits only `'low' | 'high'` (live-verified) —
-`'none'`, `'medium'`, and `'xhigh'` are rejected by both the live API and
-`Grok45ConfigSchema`. Unlike Gemini, xai has no `serviceTier` concept and no `topK`;
-its config schema is a single strict object with no tier branching.
+`grok-4.5`'s `reasoning.effort` admits only `'low' | 'high'` (`Grok45ConfigSchema`).
+`grok-4.6` admits `'low' | 'medium' | 'high' | 'xhigh'` (live-verified 2026-08-12);
+`'none'` is rejected. `grok-4.6` also admits `serviceTier: 'priority'` (2× list
+price, confirmed by live `cost_in_usd_ticks`). `grok-4.5` still rejects every
+`serviceTier`. No `topK`.
 
 ## xAI structured-output schemas vs. OpenAI-strict / codex-cli schemas
 
@@ -537,14 +538,16 @@ config: {
 }
 ```
 
-`ReasoningEffort` is `'none' | 'low' | 'medium' | 'high'`. Two provider APIs exist
-under the hood: Gemini 2.5 models take a token `budgetTokens`; Gemini 3.x / Gemma 4
-models take a discrete `effort` level (`thinkingLevel`).
+`ReasoningEffort` is `'none' | 'low' | 'medium' | 'high' | 'xhigh'`. Admitted values
+are per-model. Two provider APIs exist under the hood: Gemini 2.5 models take a
+token `budgetTokens`; Gemini 3.x / Gemma 4 / xAI take a discrete `effort` level.
 
 Use the model-native boundary directly:
 
-- Gemini 2.5: `reasoning.budgetTokens` or admitted `reasoning.effort`
-- Gemini 3 / Gemma 4: `reasoning.effort`
+- Gemini 2.5: `reasoning.budgetTokens` or admitted `reasoning.effort` (not `xhigh`)
+- Gemini 3 / Gemma 4: `reasoning.effort` (not `xhigh`)
+- xAI `grok-4.5`: `reasoning.effort` `'low' | 'high'`
+- xAI `grok-4.6`: `reasoning.effort` `'low' | 'medium' | 'high' | 'xhigh'`
 
 Exact model reminders:
 

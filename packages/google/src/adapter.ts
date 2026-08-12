@@ -637,7 +637,14 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
         }
 
         if (reasoningApi === 'budget') {
-          // gemini-2.5* → thinkingBudget
+          // gemini-2.5* → thinkingBudget. `xhigh` is not a Gemini thinking
+          // budget — reject rather than invent a token count.
+          if (reasoning.effort === 'xhigh') {
+            throw new LlmError(
+              `reasoning.effort "xhigh" is not supported for model "${model}".`,
+              { kind: 'bad_request', retryable: false },
+            )
+          }
           const budget =
             reasoning.budgetTokens !== undefined
               ? reasoning.budgetTokens
@@ -674,6 +681,11 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
               case 'high':
                 thinkingLevel = 'HIGH'
                 break
+              case 'xhigh':
+                throw new LlmError(
+                  `reasoning.effort "xhigh" is not supported for model "${model}".`,
+                  { kind: 'bad_request', retryable: false },
+                )
               default:
                 assertNever(reasoning.effort)
             }

@@ -103,6 +103,11 @@ describe('fakeXaiResponse', () => {
     expect(r.prompt_cache_key).toBe('ck')
   })
 
+  it('accepts a serviceTier override as service_tier', () => {
+    const r = fakeXaiResponse({ serviceTier: 'priority' })
+    expect(r.service_tier).toBe('priority')
+  })
+
   it('omits prompt_cache_key when not specified', () => {
     const r = fakeXaiResponse()
     expect(r).not.toHaveProperty('prompt_cache_key')

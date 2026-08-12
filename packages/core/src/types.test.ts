@@ -259,7 +259,7 @@ describe('part type guards', () => {
 describe('ReasoningIntent type shape', () => {
   it('effort is the expected union | undefined', () => {
     expectTypeOf<ReasoningIntent['effort']>().toEqualTypeOf<
-      'none' | 'low' | 'medium' | 'high' | undefined
+      'none' | 'low' | 'medium' | 'high' | 'xhigh' | undefined
     >()
   })
 

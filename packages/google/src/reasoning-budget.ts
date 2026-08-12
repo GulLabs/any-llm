@@ -1,6 +1,9 @@
 import type { ReasoningEffort } from '@gullabs/core'
 
-export const GOOGLE_REASONING_EFFORT_BUDGET: Record<ReasoningEffort, number> = {
+export const GOOGLE_REASONING_EFFORT_BUDGET: Record<
+  Exclude<ReasoningEffort, 'xhigh'>,
+  number
+> = {
   none: 0,
   low: 1024,
   medium: 8192,

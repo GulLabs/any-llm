@@ -37,8 +37,8 @@ const CLAUDE_CLI_MODEL_IDS: readonly ClaudeCliModelId[] = [
  * Reasoning effort levels admitted by the `claude` CLI's `--effort` flag.
  *
  * A strict superset of `@gullabs/core`'s `ReasoningEffort` union (which is
- * `'none' | 'low' | 'medium' | 'high'`) — `'xhigh'` and `'max'` are extra
- * values the CLI supports that core's engine-level type does not know about.
+ * `'none' | 'low' | 'medium' | 'high' | 'xhigh'`) — `'max'` is the extra
+ * value the CLI supports that core's engine-level type does not know about.
  * Because of this mismatch, `admittedReasoningEfforts` (typed
  * `ReadonlyArray<ReasoningEffort>` in `ModelDescriptor.capabilities`) is
  * intentionally OMITTED below rather than cast — this package's own zod

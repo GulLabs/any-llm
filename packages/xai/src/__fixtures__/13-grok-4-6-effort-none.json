@@ -1,0 +1,7 @@
+{
+  "status": 400,
+  "body": {
+    "code": "invalid-argument",
+    "error": "This model does not support `reasoning_effort` value `none`."
+  }
+}

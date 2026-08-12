@@ -527,23 +527,42 @@ export function xaiAdapter(opts?: XaiAdapterOptions): ProviderAdapter {
         params.max_output_tokens = genConfig.maxOutputTokens
       }
 
-      // serviceTier — xAI has no service-tier concept for grok-4.5.
+      // serviceTier — descriptor-driven. grok-4.5 admits none (live 2026-07-09
+      // rejected `service_tier`). grok-4.6 admits `'priority'` only
+      // (live-verified 2026-08-12: `priority` is echoed; `flex` is silently
+      // remapped to `default` by xAI, so this adapter rejects it rather
+      // than forwarding a no-op).
+      const admittedTiers = req.modelDescriptor?.capabilities?.serviceTiers
       if (genConfig.serviceTier !== undefined) {
-        throw badXaiRequest(
-          `serviceTier is not supported for xai models (got "${genConfig.serviceTier}").`,
-        )
+        if (
+          admittedTiers === undefined ||
+          !admittedTiers.includes(genConfig.serviceTier)
+        ) {
+          throw badXaiRequest(
+            `serviceTier is not supported for xai model "${model}" (got "${genConfig.serviceTier}").`,
+          )
+        }
+        if (genConfig.serviceTier !== 'priority') {
+          throw badXaiRequest(
+            `serviceTier "${genConfig.serviceTier}" is not supported for xai model "${model}" (only "priority" is admitted).`,
+          )
+        }
+        params.service_tier = 'priority'
       }
 
       // ------------------------------------------------------------------
-      // 3. Reasoning → { effort: 'low' | 'high' }
+      // 3. Reasoning → { effort }
       //
-      // grok-4.5 admits ONLY 'low' | 'high' (default 'high'); 'none' and
-      // 'medium' are rejected by the live API. budgetTokens is not
-      // supported (level-style reasoning, no token budget). includeThoughts
-      // is a no-op for xAI — reasoning summaries come back unconditionally
-      // whenever reasoning ran, so reasoningText is always surfaced below
-      // regardless of this flag; we do not throw on it since it is a
-      // legitimate ReasoningIntent field this provider simply doesn't need.
+      // Admitted efforts are descriptor-owned. grok-4.5: `'low' | 'high'`
+      // (2026-07-09 live probe; 2026-08-12 also accepted `medium`/`xhigh`
+      // but this library does not silently widen 4.5 — hosts stay on the
+      // frozen 4.5 schema). grok-4.6: `'low' | 'medium' | 'high' | 'xhigh'`
+      // (live-verified 2026-08-12). `'none'` is rejected by both. budgetTokens
+      // is not supported (level-style reasoning). includeThoughts is a no-op
+      // for xAI — reasoning summaries come back unconditionally whenever
+      // reasoning ran, so reasoningText is always surfaced below regardless
+      // of this flag; we do not throw on it since it is a legitimate
+      // ReasoningIntent field this provider simply doesn't need.
       // ------------------------------------------------------------------
       const reasoning = genConfig.reasoning
       if (reasoning !== undefined) {
@@ -555,13 +574,16 @@ export function xaiAdapter(opts?: XaiAdapterOptions): ProviderAdapter {
 
         if (reasoning.effort !== undefined) {
           const effort = reasoning.effort
-          if (effort !== 'low' && effort !== 'high') {
+          if (effort === 'none') {
             throw badXaiRequest(
-              `reasoning.effort "${effort}" is not supported for xai model "${model}" (only "low" and "high" are admitted).`,
+              `reasoning.effort "none" is not supported for xai model "${model}".`,
             )
           }
           const admitted = req.modelDescriptor?.capabilities?.admittedReasoningEfforts
-          if (admitted !== undefined && !admitted.includes(effort)) {
+          // Fail-closed without a descriptor, matching the serviceTier branch:
+          // a host-supplied descriptor that omits admittedReasoningEfforts
+          // must not silently re-admit medium/xhigh onto grok-4.5.
+          if (admitted === undefined || !admitted.includes(effort)) {
             throw badXaiRequest(
               `reasoning.effort "${effort}" is not supported for xai model "${model}".`,
             )
@@ -687,6 +709,14 @@ export function xaiAdapter(opts?: XaiAdapterOptions): ProviderAdapter {
         providerMeta['metadata'] = response.metadata as unknown as JsonValue
       }
 
+      // Surface the echoed tier verbatim. xAI can remap (flex → default);
+      // discarding non-priority values would let the engine fall back to the
+      // requested tier and bill 2× on a default-served call.
+      const servedServiceTier =
+        typeof response.service_tier === 'string' && response.service_tier.length > 0
+          ? response.service_tier
+          : undefined
+
       const result: AdapterResult = {
         model: response.model,
         usage,
@@ -696,6 +726,7 @@ export function xaiAdapter(opts?: XaiAdapterOptions): ProviderAdapter {
         ...(text.length > 0 ? { text } : {}),
         ...(reasoningText !== undefined ? { reasoningText } : {}),
         ...(rawStructured !== undefined ? { rawStructured } : {}),
+        ...(servedServiceTier !== undefined ? { servedServiceTier } : {}),
         ...(Object.keys(providerMeta).length > 0
           ? { providerMetadata: providerMeta }
           : {}),
