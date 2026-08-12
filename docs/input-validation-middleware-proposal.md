@@ -5,7 +5,7 @@
 Accepted and implemented. Recorded as ADR-025 in `DECISIONS.md`, per the reshaped
 engine-level design in `docs/input-contracts-plan.md`.
 
-Attribution: proposed by the ai-studio pipeline team, from a live incident during
+Attribution: proposed by the a host application pipeline team, from a live incident during
 the V2 pipeline (2026-07-10). Owner will triage with the any-llm team.
 
 ## Purpose
@@ -37,7 +37,7 @@ middleware — the same middleware seam `@gullabs/quota`
 (`packages/quota/src/index.ts`) already proves out for a different cross-cutting
 concern (rate/quota enforcement via `Middleware` from `packages/core/src/ports.ts`).
 
-## Concrete Incident (2026-07-10, PostBuzz AI Studio V2 pipeline)
+## Concrete Incident (2026-07-10, a host application host pipeline pipeline)
 
 A concept-generation call was dispatched with a prompt template filled from a
 request object that carried only 2 of the ~9 context fields the template
@@ -116,13 +116,13 @@ mechanism.
 4. **Optional strict mode at client construction.** `createClient({
 requireInputContract: true, ... })` refuses any request dispatched _without_
    an `inputContract` at all. This is the fleet-wide hard rule consumers like
-   ai-studio actually want: not "validate the contracts callers remember to
+   a host application actually want: not "validate the contracts callers remember to
    attach," but "no call leaves this client without one." Left off by default —
    this is opt-in per the library's existing posture of shipping strict
    contracts but not forcing every consumer into every contract's ceremony
    (e.g. `outputJsonSchema` is likewise optional).
 
-5. **Consumer story (ai-studio, not part of this proposal's scope).** ai-studio
+5. **Consumer story (a host application, not part of this proposal's scope).** a host application
    plans to store `agents.input_schema` beside the existing `response_schema`
    column, seeded from `pipelines/*/INPUT_SCHEMA.json`, and thread it per call.
    This middleware is the enforcement point that story needs; it does not exist
@@ -136,7 +136,7 @@ requireInputContract: true, ... })` refuses any request dispatched _without_
   request objects before calling `generate()`. Rejected as the default answer:
   it is exactly the per-consumer duplication the library's other contracts
   (output schema, model config) already exist to eliminate, and it is exactly
-  what failed here — ai-studio's pipeline _could_ have validated this input, and
+  what failed here — a host application's pipeline _could_ have validated this input, and
   didn't, because there is no shared seam that makes "validate before you spend
   tokens" the path of least resistance. App-level validation remains valid as a
   belt-and-suspenders layer on top of this middleware (the same relationship
@@ -230,11 +230,11 @@ Total: roughly 2–3 days including tests and docs, most of it now concentrated
 in pieces 3 and 5 (engine-level validation and the generic ledger rule) rather
 than spread evenly, since those are where the actual interception logic lives.
 
-## Consumer response (ai-studio, 2026-07-10)
+## Consumer response (a host application, 2026-07-10)
 
 The any-llm team's review correctly identified that the proposal's seam was
 wrong on all three counts: middleware sees the post-render `ResolvedRequest`,
-not the raw fields that were actually malformed; ai-studio calls `generate()`
+not the raw fields that were actually malformed; a host application calls `generate()`
 with already-rendered strings, so the library never sees the pre-template
 value bag middleware would need; and ledger rows for refusals require new
 engine wiring, since sink writes live inside `runAttempt` and quota refusals
@@ -247,7 +247,7 @@ Responding to the reshaped four-piece design and the specific rulings:
 
 1. **Agreed on all three seam facts — middleware shape withdrawn.** The
    reshaped design is better than the proposal: piece (3), engine-level
-   `LlmRequest.inputContract`, is the one ai-studio will adopt — we render
+   `LlmRequest.inputContract`, is the one a host application will adopt — we render
    prompts ourselves and call `generate()`, so the contract has to ride the
    request, not sit in a pre-render middleware we'd never reach. Piece (1),
    strict template interpolation in `runStructured` throwing `bad_request` on
@@ -269,7 +269,7 @@ Responding to the reshaped four-piece design and the specific rulings:
    `response_schema`, seeded from `pipelines/*/INPUT_SCHEMA.json` and rendered
    in the admin UI. `StandardSchemaV1` contracts are _code_ — runtime
    validator objects, not JSON. Two integration options on our side:
-   - (a) Keep zod contracts in ai-studio code, keyed by `pipelineKey`, with the
+   - (a) Keep zod contracts in a host application code, keyed by `pipelineKey`, with the
      DB/UI storing only the contract's key+version plus a rendered JSON-Schema
      copy for display. Source of truth is code, git-versioned — this mirrors
      how our zod _output_ parse already lives in code even though
@@ -298,7 +298,7 @@ Responding to the reshaped four-piece design and the specific rulings:
 ## Maintainer ruling (2026-07-10)
 
 Items 1, 2, and 5 are settled with no argument: engine-level
-`LlmRequest.inputContract` is the ai-studio adoption path; strict template
+`LlmRequest.inputContract` is the a host application adoption path; strict template
 interpolation ships as a breaking default; refusals classify as `bad_request`
 with a structured `issues` array on `LlmErrorOptions`.
 

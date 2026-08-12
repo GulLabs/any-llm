@@ -1951,12 +1951,12 @@ describe('engine — reconcile loop (callId/attemptId/telemetry)', () => {
         provider: 'google',
         model: 'gemini-2.5-pro',
         messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
-        externalId: 'ai-studio-context-1',
+        externalId: 'host-context-1',
       },
       { auth: TEST_AUTH },
     )
 
-    expect(sink.last()!.externalId).toBe('ai-studio-context-1')
+    expect(sink.last()!.externalId).toBe('host-context-1')
   })
 
   it('error path: thrown LlmError carries callId and attemptId matching the error record', async () => {

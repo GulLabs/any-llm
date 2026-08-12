@@ -15,7 +15,7 @@
  * previously fell through to `kind: 'unknown', retryable: false`, which
  * Temporal treats as non-retryable and uses to kill the audit run outright
  * instead of retrying a transient network blip (live-observed 2026-07-10,
- * redline e2e runs f6eca8f9 / 51f64c2f).
+ * a consumer e2e run / 51f64c2f).
  *
  * These are reclassified `kind: 'server', retryable: true` — the same
  * "provider fault, not caller fault, safe to retry" bucket already used

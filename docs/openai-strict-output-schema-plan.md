@@ -2,7 +2,7 @@
 
 Status: IMPLEMENTED (branch feat/openai-strict-output-schema). Plan APPROVED by codex in 4 rounds (final session 019f4a22-6461-7ad0-98ac-d2f6dd08ee6c, 2026-07-09). NOTE: mentions of the deleted symbol `assertAdditionalPropertiesFalseDeep` below are historical spec context describing what was replaced; the symbol no longer exists anywhere in code, tests, README, or changesets.
 Date: 2026-07-09
-Origin: RED LINE consumer feedback — "codex-cli@0.4.0 still doesn't do strict-schema
+Origin: a host application consumer feedback — "codex-cli@0.4.0 still doesn't do strict-schema
 rewriting, so the app-side transformer stays (renamed
 `translateOpenAiStrictResponseSchema`) and is reused for grok, whose adapter also
 forwards schemas verbatim to an OpenAI-strict endpoint."
@@ -177,5 +177,5 @@ a generic "make this schema OpenAI-compatible" canonicalizer.
 Scratchpad (session-local): `xai-strict-probes/` (13 result JSONs + summary) and
 `codex-schema-probes/` (12 result JSONs + summary + raw run logs). D3's fixture is
 sourced from these. Before merge, copy both probe directories to
-`/Volumes/SSD/code/work/master-config/anyllm-strict-schema-probes-2026-07-09/`
+`[host-repo]`
 for durable reference (same convention as the xai live-verification artifacts).

@@ -4,7 +4,7 @@
 
 Proposed — not yet triaged.
 
-Attribution: proposed by the ai-studio pipeline team, from the V2 pipeline's
+Attribution: proposed by the a host application pipeline team, from the V2 pipeline's
 revise/regen loop design (2026-07-10). Owner will triage with the any-llm team.
 
 ## Purpose
@@ -19,7 +19,7 @@ default.
 
 ## Motivating use case
 
-The ai-studio V2 pipeline's revise/regen loop currently re-sends the full
+The a host application V2 pipeline's revise/regen loop currently re-sends the full
 assembled context (~19k tokens) on every round, plus a filtered copy of the
 model's previous output, so the model can revise against reviewer feedback.
 This mechanism is consumer-side and provider-neutral by design: it works
@@ -53,7 +53,7 @@ populated by the xai adapter today, unused for chaining.
 
 Rationale, from the consumer side:
 
-- **Portability.** ai-studio's Gemini production path has no equivalent to
+- **Portability.** a host application's Gemini production path has no equivalent to
   `previous_response_id`. Revision semantics must not diverge per provider —
   the consumer-side previous-output mechanism remains the baseline path for
   all providers; chaining would only ever be an opt-in optimization on top of
@@ -84,5 +84,5 @@ Rationale, from the consumer side:
 ## Effort estimate
 
 Roughly half a day: adapter schema field + passthrough + a fixture test.
-Consumer-side wiring (ai-studio threading `response_id` between pipeline
+Consumer-side wiring (a host application threading `response_id` between pipeline
 rounds) is separate and not included in this estimate.

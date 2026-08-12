@@ -3,7 +3,7 @@
 Status: APPROVED by codex in 3 rounds (final session 019f4a84-e2e5-7af1-91e4-db2c11891f4d, 2026-07-10). Implementation in progress on this branch.
 Date: 2026-07-10
 Branch: `feat/input-contracts`
-Origin: `docs/input-validation-middleware-proposal.md` (ai-studio incident 2026-07-09/10),
+Origin: `docs/input-validation-middleware-proposal.md` (a host application incident 2026-07-09/10),
 triaged and ruled in that doc's "Maintainer ruling (2026-07-10)" section. This plan
 implements the four-piece reshaped design plus the two rulings. If approved, the design
 becomes ADR-025 in `DECISIONS.md`.
@@ -263,7 +263,7 @@ Deliberate and documented — see §3 boundary note.
 Rationale for the asymmetry: callsite prologue failures are deterministic call-site
 code defects caught on first execution in dev/tests, in the same layer as
 unregistered-model; the ledger-visibility requirement in the proposal came from the
-`generate()` consumer (ai-studio), whose path is fully covered. The rule "callId ⇒
+`generate()` consumer (a host application), whose path is fully covered. The rule "callId ⇒
 row" stays simple and exceptionless. ADR-025 records this table.
 
 ## 4. Tests (all in `packages/core`; coverage gates 93/91/96/93 hold)

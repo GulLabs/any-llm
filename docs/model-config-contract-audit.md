@@ -3,7 +3,7 @@
 ## Purpose
 
 This document is a handoff for fixing a concrete `any-llm` design gap found while
-testing the AI Studio V2 pipeline, and for auditing the library for similar gaps.
+testing the host pipeline pipeline, and for auditing the library for similar gaps.
 
 The immediate bug class:
 
@@ -22,7 +22,7 @@ payloads, not act as the first real validator.
 
 ## Concrete Failure
 
-AI Studio seeds Gemini configs that can contain both:
+the host seeds Gemini configs that can contain both:
 
 ```ts
 reasoning: {
