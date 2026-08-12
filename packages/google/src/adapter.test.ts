@@ -573,6 +573,52 @@ describe('reasoning mapping', () => {
     expect(call?.config?.thinkingConfig?.thinkingLevel).toBe('LOW')
   })
 
+  it('rejects reasoning.effort=xhigh on Gemini budget models', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          model: 'gemini-2.5-pro',
+          modelDescriptor: makeGoogleDescriptor({
+            model: 'gemini-2.5-pro',
+            capabilities: {
+              reasoning: true,
+              reasoningApi: 'budget',
+              serviceTiers: ['flex', 'standard'],
+            },
+          }),
+          config: { serviceTier: 'flex', reasoning: { effort: 'xhigh' } },
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+  })
+
+  it('rejects reasoning.effort=xhigh on Gemini level models', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          model: 'gemini-3.5-flash',
+          modelDescriptor: makeGoogleDescriptor({
+            model: 'gemini-3.5-flash',
+            capabilities: {
+              reasoning: true,
+              reasoningApi: 'level',
+              serviceTiers: ['flex', 'standard'],
+            },
+          }),
+          config: { serviceTier: 'flex', reasoning: { effort: 'xhigh' } },
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+  })
+
   it('throws LlmError bad_request for gemini-3.x with budgetTokens', async () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })

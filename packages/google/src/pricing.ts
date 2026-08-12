@@ -21,7 +21,10 @@
  * the text/img/vid input rate. Per-modality input pricing is a deferred seam
  * (see DESIGN.md) — revisit when audio input is supported.
  *
- * Verified against https://ai.google.dev/gemini-api/docs/pricing on 2026-06-28.
+ * Re-verified against https://ai.google.dev/gemini-api/docs/pricing on 2026-08-12.
+ * Existing registered-model standard rates were unchanged from the 2026-06-28
+ * snapshot. `gemini-3.6-flash` appears on that page but is not a registered
+ * model in this package.
  *
  * @module
  */
@@ -35,7 +38,7 @@ import type { ModelRates } from '@gullabs/core'
  * core concept — it lives here (not `@gullabs/core`) alongside the rates it
  * dates.
  */
-export const pricingVersion = 'gemini-2026-06-28' as const
+export const pricingVersion = 'gemini-2026-08-12' as const
 
 /**
  * Service-tier price multipliers. Batch and Flex are a flat 50% of standard
@@ -62,7 +65,7 @@ export const TIER_FACTOR: Readonly<Record<string, number>> = Object.freeze({
  * engine matches exact first, then longest-prefix (see `lookupRates` in
  * `cost.ts`).
  *
- * Source: https://ai.google.dev/gemini-api/docs/pricing (2026-06-28).
+ * Source: https://ai.google.dev/gemini-api/docs/pricing (re-verified 2026-08-12).
  */
 export const GEMINI_PRICING: Readonly<Record<string, ModelRates>> = Object.freeze({
   // ── Gemini 2.5 Pro ──  $1.25/$10 (≤200k), $2.50/$15 (>200k); cached $0.125/$0.25

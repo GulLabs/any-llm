@@ -1,0 +1,96 @@
+{
+  "status": 200,
+  "headers": {
+    "x-ratelimit-limit-tokens": "490000000",
+    "x-ratelimit-remaining-tokens": "490000000",
+    "x-ratelimit-limit-requests": "140000",
+    "x-ratelimit-remaining-requests": "140000",
+    "x-request-id": "8e71bbbb-12b9-9a6d-95a2-398e4974fd86"
+  },
+  "body": {
+    "created_at": 1786575524,
+    "completed_at": 1786575528,
+    "id": "8e71bbbb-12b9-9a6d-95a2-398e4974fd86",
+    "max_output_tokens": 64,
+    "model": "grok-4.6",
+    "object": "response",
+    "output": [
+      {
+        "id": "rs_8e71bbbb-12b9-9a6d-95a2-398e4974fd86",
+        "summary": [
+          {
+            "text": "The user said \"Say hi\". This is a simple, harmless greeting request. I should respond in a friendly way.\n",
+            "type": "summary_text"
+          }
+        ],
+        "type": "reasoning",
+        "status": "completed"
+      },
+      {
+        "content": [
+          {
+            "type": "output_text",
+            "text": "Hi! How can I help you today?",
+            "logprobs": [],
+            "annotations": []
+          }
+        ],
+        "id": "msg_8e71bbbb-12b9-9a6d-95a2-398e4974fd86",
+        "role": "assistant",
+        "type": "message",
+        "status": "completed"
+      }
+    ],
+    "parallel_tool_calls": true,
+    "previous_response_id": null,
+    "reasoning": {
+      "effort": "xhigh",
+      "summary": "detailed"
+    },
+    "temperature": 0.7,
+    "text": {
+      "format": {
+        "type": "text"
+      }
+    },
+    "tool_choice": "auto",
+    "tools": [],
+    "top_p": 0.95,
+    "usage": {
+      "input_tokens": 1528,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 182,
+      "output_tokens_details": {
+        "reasoning_tokens": 173
+      },
+      "total_tokens": 1710,
+      "num_sources_used": 0,
+      "num_server_side_tools_used": 0,
+      "cost_in_usd_ticks": 82960000,
+      "context_details": {
+        "input_tokens": 1528,
+        "output_tokens": 182
+      }
+    },
+    "user": null,
+    "incomplete_details": null,
+    "status": "completed",
+    "store": false,
+    "metadata": {
+      "system_fingerprint": "fp_a7b4933f4a93564d"
+    },
+    "background": false,
+    "service_tier": "priority",
+    "truncation": "disabled",
+    "top_logprobs": 0,
+    "presence_penalty": 0.0,
+    "frequency_penalty": 0.0,
+    "prompt_cache_key": null,
+    "max_tool_calls": null,
+    "safety_identifier": null,
+    "error": null,
+    "instructions": null
+  }
+}

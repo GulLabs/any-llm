@@ -616,7 +616,7 @@ to be solid before the surface expands.
 breaking change to the engine.
 
 **Additional providers.** Shipped today: `@gullabs/google` (Gemini and Gemma), `@gullabs/xai`
-(grok-4.5), and the dev-only CLI providers. The provider-plugin shape (ADR-023) means an
+(grok-4.5 / grok-4.6), and the dev-only CLI providers. The provider-plugin shape (ADR-023) means an
 Anthropic or OpenAI API provider is a new self-contained package composed via
 `composeProviders` — zero core edits. Multi-adapter setups work today: the default router
 matches `req.provider` against adapter ids directly, one adapter configured or ten.

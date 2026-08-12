@@ -176,13 +176,14 @@ export type Message = { role: 'user' | 'assistant'; parts: Part[] }
  * Adapters map this to provider-specific knobs (e.g. Gemini `thinkingConfig`)
  * Adapters throw `LlmError('bad_request')` when the mapping cannot be applied.
  */
-export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high'
+export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh'
 
 export interface ReasoningIntent {
   /**
-   * Abstract effort level.
-   * - Gemini 2.5 → maps to `thinkingBudget` tokens.
-   * - Gemini 3.x → maps to `thinkingLevel`.
+   * Abstract effort level. Admitted values are per-model (`admittedReasoningEfforts`).
+   * - Gemini 2.5 → maps to `thinkingBudget` tokens (`xhigh` is rejected).
+   * - Gemini 3.x → maps to `thinkingLevel` (`xhigh` is rejected).
+   * - xAI grok-4.6 → Responses `reasoning.effort`, including native `xhigh`.
    */
   effort?: ReasoningEffort
   /** Explicit token budget for budget-API models; schemas reject it with `effort`. */

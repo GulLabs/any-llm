@@ -10,29 +10,27 @@
  * (those are Gemini-only). `PricingSource` is provider-scoped by contract
  * (see `packages/core/src/ports.ts`); this module is xai's own.
  *
- * **Long-context tier.** grok-4.5 charges a premium when the GROSS input
- * token count exceeds 200,000 (`long_context_threshold` in xAI's
+ * **Long-context tier.** grok-4.5 / grok-4.6 charge a premium when the GROSS
+ * input token count exceeds 200,000 (`long_context_threshold` in xAI's
  * `/v1/models` listing). Selected by `inputTokens` (incl. cached), not by
  * billable input — mirrors core's `selectRates` convention exactly (strictly
  * greater than 200,000).
  *
- * **Service tiers.** xAI has no service-tier concept for grok-4.5 — there is
- * no `TIER_FACTOR`-equivalent here. `price()`'s `tier` param is accepted for
- * `PricingSource` structural conformance but any *defined* tier is treated
- * as unrecognized → unpriced (reject-don't-map), mirroring core's own
- * defensive stance for an unrecognized tier. `undefined` (no tier requested,
- * the only value xAI adapters ever pass — `xaiAdapter` rejects `serviceTier`
- * upstream) prices normally.
+ * **Service tiers.** grok-4.5 has none. grok-4.6 admits `'priority'`
+ * (echo live-verified 2026-08-12). The 2× multiplier is confirmed by
+ * fixture `12-grok-4-6-xhigh-priority.json` (`cost_in_usd_ticks` equals
+ * exactly 2× standard list). `'default'` (the value xAI echoes when no
+ * priority is served) and `undefined` (no tier requested) price at the
+ * standard list. Any other defined tier is unpriced (reject-don't-map).
  *
  * **Conversion factor.** xAI's `/v1/models` raw `*_token_price` fields are
  * in hundred-thousandths of a dollar per token (i.e. divide the raw integer
- * by 10,000 to get USD per million tokens): e.g. `grok-4.5`'s raw
- * `prompt_text_token_price: 20000` ÷ 10,000 = $2.00/M, which matches the
- * confirmed live-verified figure.
+ * by 10,000 to get USD per million tokens): e.g. `grok-4.6`'s raw
+ * `prompt_text_token_price: 20000` ÷ 10,000 = $2.00/M.
  *
- * Verified against `/v1/models` fixture captured 2026-07-09 (see
- * `docs/provider-plugins-and-xai-grok-4-5-plan.md` and the live-verification
- * fixture directory referenced in the commit-3 task brief).
+ * Verified against `/v1/models` on 2026-08-12. Prior snapshot
+ * `xai-2026-07-09` priced grok-4.5 cached input at $0.50 / $1.00; the live
+ * listing now reports $0.30 / $0.60.
  *
  * @module
  */
@@ -40,7 +38,7 @@
 import type { Cost, PricingSource, Usage } from '@gullabs/core'
 
 /** Identifies this pricing snapshot — bump the date when rates change. */
-export const xaiPricingVersion = 'xai-2026-07-09' as const
+export const xaiPricingVersion = 'xai-2026-08-12' as const
 
 /**
  * Per-model rate entry (all values in µUSD per million tokens).
@@ -60,6 +58,14 @@ export interface XaiModelRates {
     cachedPerM: number
     outputPerM: number
   }
+  /**
+   * Multiplier for Responses `service_tier: "priority"`. Absent = this
+   * model does not admit priority (unpriced). Uncached standard-list 2×
+   * is confirmed by fixture `12-grok-4-6-xhigh-priority.json` ticks;
+   * cached and `gt200k` legs follow the official 2×-after-cache-discount
+   * docs rule (that fixture has cached=0 and input < 200k).
+   */
+  priorityFactor?: number
 }
 
 /**
@@ -71,8 +77,19 @@ export interface XaiModelRates {
  * id; anything else resolves to the unpriced path.
  */
 export const XAI_PRICING: Readonly<Record<string, XaiModelRates>> = Object.freeze({
-  // ── grok-4.5 ──  $2.00/$6.00 (≤200k), $4.00/$12.00 (>200k); cached $0.50/$1.00
+  // ── grok-4.5 ──  $2.00/$6.00 (≤200k), $4.00/$12.00 (>200k); cached $0.30/$0.60
   'grok-4.5': {
+    inputPerM: 2_000_000,
+    cachedPerM: 300_000,
+    outputPerM: 6_000_000,
+    gt200k: {
+      inputPerM: 4_000_000,
+      cachedPerM: 600_000,
+      outputPerM: 12_000_000,
+    },
+  },
+  // ── grok-4.6 ──  $2.00/$6.00 (≤200k), $4.00/$12.00 (>200k); cached $0.50/$1.00
+  'grok-4.6': {
     inputPerM: 2_000_000,
     cachedPerM: 500_000,
     outputPerM: 6_000_000,
@@ -81,6 +98,8 @@ export const XAI_PRICING: Readonly<Record<string, XaiModelRates>> = Object.freez
       cachedPerM: 1_000_000,
       outputPerM: 12_000_000,
     },
+    // Confirmed 2026-08-12 by fixture 12 cost_in_usd_ticks (2× list).
+    priorityFactor: 2,
   },
 })
 
@@ -133,8 +152,10 @@ function selectRates(
  * **Algorithm** (mirrors `@gullabs/core`'s `computeCost` exactly, xai-owned):
  * 1. Look up rates for `model`; if not found, return an unpriced `Cost`
  *    (`microUsd: null`) naming the model.
- * 2. A defined `tier` is always unpriced (xai has no tiers; reject-don't-map).
- *    `undefined` prices normally.
+ * 2. `undefined` or `'default'` prices at the standard list.
+ *    `'priority'` applies `rates.priorityFactor` when present.
+ *    Any other defined tier, or `'priority'` on a model without
+ *    `priorityFactor`, is unpriced (reject-don't-map).
  * 3. Select base vs. `>200k` long-context rates from GROSS `inputTokens`.
  * 4. Billable input = `inputTokens − (cachedInputTokens ?? 0)`, clamped to 0.
  * 5. Round each component (input, cached, output) independently to the
@@ -156,14 +177,19 @@ export function computeXaiCost(model: string, usage: Usage, tier?: string): Cost
     }
   }
 
-  if (tier !== undefined) {
-    return {
-      microUsd: null,
-      usd: null,
-      pricingVersion: xaiPricingVersion,
-      confidence: 'estimated',
-      details: { input: 0, cached: 0, output: 0 },
-      unpricedReason: `Unknown service tier "${tier}"; xai has no service tiers, refusing to guess a pricing multiplier.`,
+  let factor = 1
+  if (tier !== undefined && tier !== 'default') {
+    if (tier === 'priority' && rates.priorityFactor !== undefined) {
+      factor = rates.priorityFactor
+    } else {
+      return {
+        microUsd: null,
+        usd: null,
+        pricingVersion: xaiPricingVersion,
+        confidence: 'estimated',
+        details: { input: 0, cached: 0, output: 0 },
+        unpricedReason: `Unknown service tier "${tier}"; xai model "${model}" has no such tier, refusing to guess a pricing multiplier.`,
+      }
     }
   }
 
@@ -172,9 +198,11 @@ export function computeXaiCost(model: string, usage: Usage, tier?: string): Cost
   const cached = usage.cachedInputTokens ?? 0
   const billableInput = Math.max(0, usage.inputTokens - cached)
 
-  const inputCost = Math.round((billableInput * base.inputPerM) / 1_000_000)
-  const cachedCost = Math.round((cached * base.cachedPerM) / 1_000_000)
-  const outputCost = Math.round((usage.outputTokens * base.outputPerM) / 1_000_000)
+  const inputCost = Math.round((billableInput * base.inputPerM * factor) / 1_000_000)
+  const cachedCost = Math.round((cached * base.cachedPerM * factor) / 1_000_000)
+  const outputCost = Math.round(
+    (usage.outputTokens * base.outputPerM * factor) / 1_000_000,
+  )
 
   const microUsd = inputCost + cachedCost + outputCost
 
@@ -200,7 +228,7 @@ export function computeXaiCost(model: string, usage: Usage, tier?: string): Cost
  * import { xaiPricingSource } from '@gullabs/xai'
  *
  * const pricing = xaiPricingSource()
- * const cost = pricing.price('grok-4.5', usage)
+ * const cost = pricing.price('grok-4.6', usage)
  * ```
  */
 export function xaiPricingSource(): PricingSource {

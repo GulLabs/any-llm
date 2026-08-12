@@ -7,6 +7,8 @@
  * @module
  */
 
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, it, expect } from 'vitest'
 import type { Usage } from '@gullabs/core'
 import {
@@ -15,6 +17,48 @@ import {
   xaiPricingVersion,
   XAI_PRICING,
 } from './pricing.js'
+
+/** xAI `/v1/models` raw price → µUSD/M (raw / 10_000 = USD/M; × 1e6 = µUSD/M). */
+function rawToMicroPerM(raw: number): number {
+  return (raw / 10_000) * 1_000_000
+}
+
+const v1Models = JSON.parse(
+  readFileSync(
+    fileURLToPath(new URL('./__fixtures__/14-v1-models-pricing.json', import.meta.url)),
+    'utf8',
+  ),
+) as {
+  models: Record<
+    string,
+    {
+      prompt_text_token_price: number
+      cached_prompt_text_token_price: number
+      completion_text_token_price: number
+      prompt_text_token_price_long_context: number
+      cached_prompt_text_token_price_long_context: number
+      completion_text_token_price_long_context: number
+    }
+  >
+}
+
+const grok46PriorityFixture = JSON.parse(
+  readFileSync(
+    fileURLToPath(
+      new URL('./__fixtures__/12-grok-4-6-xhigh-priority.json', import.meta.url),
+    ),
+    'utf8',
+  ),
+) as {
+  body: {
+    usage: {
+      input_tokens: number
+      input_tokens_details?: { cached_tokens?: number }
+      output_tokens: number
+      cost_in_usd_ticks: number
+    }
+  }
+}
 
 function makeUsage(fields: {
   inputTokens: number
@@ -40,13 +84,13 @@ describe('computeXaiCost — standard tier', () => {
 
     // billableInput = 1000 - 200 = 800
     // inputCost = round(800 * 2_000_000 / 1_000_000) = 1600
-    // cachedCost = round(200 * 500_000 / 1_000_000) = 100
+    // cachedCost = round(200 * 300_000 / 1_000_000) = 60
     // outputCost = round(500 * 6_000_000 / 1_000_000) = 3000
     expect(cost.confidence).toBe('exact')
     expect(cost.pricingVersion).toBe(xaiPricingVersion)
-    expect(cost.details).toEqual({ input: 1600, cached: 100, output: 3000 })
-    expect(cost.microUsd).toBe(1600 + 100 + 3000)
-    expect(cost.usd).toBe((1600 + 100 + 3000) / 1_000_000)
+    expect(cost.details).toEqual({ input: 1600, cached: 60, output: 3000 })
+    expect(cost.microUsd).toBe(1600 + 60 + 3000)
+    expect(cost.usd).toBe((1600 + 60 + 3000) / 1_000_000)
   })
 
   it('sum invariant: details.input + details.cached + details.output === microUsd', () => {
@@ -95,7 +139,20 @@ describe('computeXaiCost — cached-token math', () => {
       cachedInputTokens: 150_000,
     })
     const cost = computeXaiCost('grok-4.5', usage)
-    // billableInput = 0, cachedCost = round(150_000 * 500_000 / 1e6) = 75_000
+    // billableInput = 0, cachedCost = round(150_000 * 300_000 / 1e6) = 45_000
+    expect(cost.details.input).toBe(0)
+    expect(cost.details.cached).toBe(45_000)
+    expect(cost.details.output).toBe(0)
+  })
+
+  it('prices grok-4.6 cached tokens at the 4.6 cachedPerM ($0.50)', () => {
+    const usage = makeUsage({
+      inputTokens: 150_000,
+      outputTokens: 0,
+      cachedInputTokens: 150_000,
+    })
+    const cost = computeXaiCost('grok-4.6', usage)
+    // cachedCost = round(150_000 * 500_000 / 1e6) = 75_000
     expect(cost.details.input).toBe(0)
     expect(cost.details.cached).toBe(75_000)
     expect(cost.details.output).toBe(0)
@@ -112,11 +169,59 @@ describe('computeXaiCost — unpriced paths', () => {
     expect(cost.unpricedReason).toMatch(/grok-99/)
   })
 
-  it('returns microUsd: null when a tier is supplied (xai has no tiers)', () => {
+  it('returns microUsd: null when an unrecognized tier is supplied', () => {
     const usage = makeUsage({ inputTokens: 100, outputTokens: 50 })
     const cost = computeXaiCost('grok-4.5', usage, 'flex')
     expect(cost.microUsd).toBeNull()
     expect(cost.unpricedReason).toMatch(/flex/)
+  })
+
+  it('returns microUsd: null when priority is supplied for grok-4.5', () => {
+    const usage = makeUsage({ inputTokens: 100, outputTokens: 50 })
+    const cost = computeXaiCost('grok-4.5', usage, 'priority')
+    expect(cost.microUsd).toBeNull()
+    expect(cost.unpricedReason).toMatch(/priority/)
+  })
+
+  it('prices grok-4.6 priority at 2× the standard list', () => {
+    const usage = makeUsage({
+      inputTokens: 1000,
+      outputTokens: 500,
+      cachedInputTokens: 200,
+    })
+    const standard = computeXaiCost('grok-4.6', usage)
+    const priority = computeXaiCost('grok-4.6', usage, 'priority')
+    expect(standard.microUsd).not.toBeNull()
+    expect(standard.confidence).toBe('exact')
+    expect(priority.microUsd).toBe((standard.microUsd as number) * 2)
+    expect(priority.confidence).toBe('exact')
+    expect(priority.details.input).toBe(standard.details.input * 2)
+    expect(priority.details.cached).toBe(standard.details.cached * 2)
+    expect(priority.details.output).toBe(standard.details.output * 2)
+  })
+
+  it('prices grok-4.6 served tier default at the standard list (exact)', () => {
+    const usage = makeUsage({
+      inputTokens: 1000,
+      outputTokens: 500,
+      cachedInputTokens: 200,
+    })
+    const standard = computeXaiCost('grok-4.6', usage)
+    const servedDefault = computeXaiCost('grok-4.6', usage, 'default')
+    expect(servedDefault).toEqual(standard)
+    expect(servedDefault.confidence).toBe('exact')
+  })
+
+  it('prices grok-4.5 served tier default at the standard list (exact)', () => {
+    const usage = makeUsage({
+      inputTokens: 1000,
+      outputTokens: 500,
+      cachedInputTokens: 200,
+    })
+    const standard = computeXaiCost('grok-4.5', usage)
+    const servedDefault = computeXaiCost('grok-4.5', usage, 'default')
+    expect(servedDefault).toEqual(standard)
+    expect(servedDefault.confidence).toBe('exact')
   })
 
   it('does NOT prefix-match aliases — grok-4.5-latest is unpriced', () => {
@@ -139,10 +244,54 @@ describe('computeXaiCost — unpriced paths', () => {
   })
 })
 
+describe('XAI_PRICING vs live /v1/models fixture', () => {
+  it.each(['grok-4.5', 'grok-4.6'] as const)(
+    'pins %s rates to captured /v1/models raw fields',
+    (model) => {
+      const raw = v1Models.models[model]
+      const rates = XAI_PRICING[model]
+      if (raw === undefined || rates === undefined) {
+        throw new Error(`missing pricing fixture or rates for ${model}`)
+      }
+      expect(rates.inputPerM).toBe(rawToMicroPerM(raw.prompt_text_token_price))
+      expect(rates.cachedPerM).toBe(rawToMicroPerM(raw.cached_prompt_text_token_price))
+      expect(rates.outputPerM).toBe(rawToMicroPerM(raw.completion_text_token_price))
+      expect(rates.gt200k?.inputPerM).toBe(
+        rawToMicroPerM(raw.prompt_text_token_price_long_context),
+      )
+      expect(rates.gt200k?.cachedPerM).toBe(
+        rawToMicroPerM(raw.cached_prompt_text_token_price_long_context),
+      )
+      expect(rates.gt200k?.outputPerM).toBe(
+        rawToMicroPerM(raw.completion_text_token_price_long_context),
+      )
+    },
+  )
+})
+
+describe('computeXaiCost vs live cost_in_usd_ticks', () => {
+  it('reconciles grok-4.6 priority fixture ticks at 2× the standard list', () => {
+    const usage = grok46PriorityFixture.body.usage
+    const cost = computeXaiCost(
+      'grok-4.6',
+      makeUsage({
+        inputTokens: usage.input_tokens,
+        outputTokens: usage.output_tokens,
+        cachedInputTokens: usage.input_tokens_details?.cached_tokens ?? 0,
+      }),
+      'priority',
+    )
+    // 1 tick = 1e-10 USD; Cost.usd is USD. Fixture 12: 82_960_000 ticks.
+    expect(cost.usd).toBe(usage.cost_in_usd_ticks * 1e-10)
+    expect(cost.confidence).toBe('exact')
+  })
+})
+
 describe('xaiPricingSource', () => {
-  it('hasModel is true for grok-4.5 and false for an unknown model', () => {
+  it('hasModel is true for grok-4.5 / grok-4.6 and false for an unknown model', () => {
     const source = xaiPricingSource()
     expect(source.hasModel('grok-4.5')).toBe(true)
+    expect(source.hasModel('grok-4.6')).toBe(true)
     expect(source.hasModel('grok-99')).toBe(false)
   })
 

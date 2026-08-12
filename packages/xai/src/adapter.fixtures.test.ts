@@ -6,9 +6,9 @@
  * adapter maps each recorded real-world shape correctly end-to-end.
  *
  * Fixtures live in `./__fixtures__/` and were captured against the live
- * xAI Responses API on 2026-07-09, then grepped clean of any
- * Authorization/Bearer/API-key-shaped strings before being copied into this
- * package.
+ * xAI Responses API (grok-4.5 on 2026-07-09; grok-4.6 on 2026-08-12), then
+ * grepped clean of any Authorization/Bearer/API-key-shaped strings before
+ * being copied into this package.
  *
  * @module
  */
@@ -19,6 +19,7 @@ import { describe, it, expect } from 'vitest'
 import type { AdapterCtx, JsonValue, ResolvedRequest } from '@gullabs/core'
 import { makeFakeXai } from '@gullabs/testing'
 import { xaiAdapter, classifyXaiError } from './adapter.js'
+import { makeTestDescriptor } from '../../core/src/test-model-descriptor.js'
 
 /** Read + JSON.parse a fixture file at test time (no resolveJsonModule needed). */
 function loadFixture<T = unknown>(name: string): T {
@@ -79,9 +80,11 @@ const errorTaxonomyFixture = loadFixture<ErrorTaxonomyFixture>('09-error-taxonom
 const nonStrictSchemaFixture = loadFixture<NonStrictSchemaFixture>(
   '10-non-strict-schema-accepted.json',
 )
-const multiMessageOutputFixture = loadFixture<FixtureCall>(
-  '11-multi-message-output.json',
+const multiMessageOutputFixture = loadFixture<FixtureCall>('11-multi-message-output.json')
+const grok46XhighPriorityFixture = loadFixture<FixtureCall>(
+  '12-grok-4-6-xhigh-priority.json',
 )
+const grok46EffortNoneFixture = loadFixture<FixtureCall>('13-grok-4-6-effort-none.json')
 
 const FAKE_CTX: AdapterCtx = {
   auth: { apiKey: 'test-key' },
@@ -112,6 +115,7 @@ describe('fixture: 02-responses-minimal', () => {
     expect(result.usage.outputTokens).toBe(42)
     expect(result.usage.thinkingTokens).toBe(33)
     expect(result.usage.totalTokens).toBe(250)
+    expect(result.servedServiceTier).toBe('default')
   })
 
   it('surfaces numeric xAI usage extras into details and non-numeric extras into providerMetadata', async () => {
@@ -143,12 +147,83 @@ describe('fixture: 02-responses-minimal', () => {
   })
 })
 
+describe('fixture: grok-4.6 contract (positive + negative)', () => {
+  it('maps the live grok-4.6 xhigh / priority response', async () => {
+    const client = makeFakeXai(grok46XhighPriorityFixture.body as never)
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({
+        model: 'grok-4.6',
+        config: { reasoning: { effort: 'xhigh' }, serviceTier: 'priority' },
+        modelDescriptor: makeTestDescriptor({
+          model: 'grok-4.6',
+          provider: 'xai',
+          capabilities: {
+            admittedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+            serviceTiers: ['priority'],
+          },
+        }),
+      }),
+      FAKE_CTX,
+    )
+    expect(result.model).toBe('grok-4.6')
+    expect(result.servedServiceTier).toBe('priority')
+    expect(result.text).toBe('Hi! How can I help you today?')
+    expect(result.usage.thinkingTokens).toBe(173)
+    const call = client.calls[0] as {
+      reasoning?: { effort: string }
+      service_tier?: string
+    }
+    expect(call.reasoning).toEqual({ effort: 'xhigh' })
+    expect(call.service_tier).toBe('priority')
+  })
+
+  it('classifies the live grok-4.6 effort-none 400 as bad_request', () => {
+    expect(
+      classifyXaiError({
+        status: grok46EffortNoneFixture.status,
+        ...grok46EffortNoneFixture.body,
+      }),
+    ).toMatchObject({ kind: 'bad_request' })
+  })
+
+  it('rejects grok-4.6 effort none locally before dispatch', async () => {
+    const client = makeFakeXai(grok46XhighPriorityFixture.body as never)
+    const adapter = xaiAdapter({ client })
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          model: 'grok-4.6',
+          config: { reasoning: { effort: 'none' } },
+          modelDescriptor: makeTestDescriptor({
+            model: 'grok-4.6',
+            provider: 'xai',
+            capabilities: {
+              admittedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+              serviceTiers: ['priority'],
+            },
+          }),
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+    expect(client.calls).toHaveLength(0)
+  })
+})
+
 describe('fixture: 03-reasoning-effort-matrix', () => {
   it('maps the low-effort branch', async () => {
     const client = makeFakeXai(reasoningMatrixFixture.low.body as never)
     const adapter = xaiAdapter({ client })
     const result = await adapter.run(
-      makeResolvedReq({ config: { reasoning: { effort: 'low' } } }),
+      makeResolvedReq({
+        config: { reasoning: { effort: 'low' } },
+        modelDescriptor: makeTestDescriptor({
+          model: 'grok-4.5',
+          provider: 'xai',
+          capabilities: { admittedReasoningEfforts: ['low', 'high'] },
+        }),
+      }),
       FAKE_CTX,
     )
     expect(result.usage.outputTokens).toBe(33)
@@ -159,7 +234,14 @@ describe('fixture: 03-reasoning-effort-matrix', () => {
     const client = makeFakeXai(reasoningMatrixFixture.high.body as never)
     const adapter = xaiAdapter({ client })
     const result = await adapter.run(
-      makeResolvedReq({ config: { reasoning: { effort: 'high' } } }),
+      makeResolvedReq({
+        config: { reasoning: { effort: 'high' } },
+        modelDescriptor: makeTestDescriptor({
+          model: 'grok-4.5',
+          provider: 'xai',
+          capabilities: { admittedReasoningEfforts: ['low', 'high'] },
+        }),
+      }),
       FAKE_CTX,
     )
     expect(result.usage.outputTokens).toBe(81)
@@ -335,7 +417,10 @@ describe('fixture: 11-multi-message-output', () => {
       '{"reportAudit":{"findings":[{"module":"custody","severity":"high"}],"status":"final"}}',
     )
     expect(result.rawStructured).toEqual({
-      reportAudit: { findings: [{ module: 'custody', severity: 'high' }], status: 'final' },
+      reportAudit: {
+        findings: [{ module: 'custody', severity: 'high' }],
+        status: 'final',
+      },
     })
 
     // A warning names the dropped item count.

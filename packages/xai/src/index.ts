@@ -15,7 +15,7 @@
  * })
  *
  * const result = await client.generate(
- *   { provider: 'xai', model: 'grok-4.5', messages: [...] },
+ *   { provider: 'xai', model: 'grok-4.6', messages: [...] },
  *   { auth: { apiKey: process.env.XAI_API_KEY! } },
  * )
  * ```
@@ -61,7 +61,9 @@ export type {
 } from './file-store.js'
 export {
   Grok45ConfigSchema,
+  Grok46ConfigSchema,
   grok45ModelDescriptor,
+  grok46ModelDescriptor,
   xaiModelDescriptors,
   xaiRegistry,
 } from './models.js'

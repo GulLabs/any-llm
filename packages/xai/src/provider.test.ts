@@ -23,19 +23,21 @@ describe('xaiProvider', () => {
     for (const descriptor of plugin.modelDescriptors) {
       expect(descriptor.provider).toBe('xai')
     }
-    expect(plugin.modelDescriptors.map((d) => d.model)).toEqual(['grok-4.5'])
+    expect(plugin.modelDescriptors.map((d) => d.model)).toEqual(['grok-4.5', 'grok-4.6'])
   })
 
-  it('has a pricingSource that knows grok-4.5', () => {
+  it('has a pricingSource that knows grok-4.5 and grok-4.6', () => {
     const plugin = xaiProvider()
 
     expect(plugin.pricingSource).toBeDefined()
     expect(plugin.pricingSource?.hasModel('grok-4.5')).toBe(true)
+    expect(plugin.pricingSource?.hasModel('grok-4.6')).toBe(true)
   })
 
-  it('constructs a working client via composeProviders and resolves grok-4.5', () => {
+  it('constructs a working client via composeProviders and resolves grok-4.5 / grok-4.6', () => {
     const composed = composeProviders([xaiProvider()])
     expect(() => createClient({ ...composed })).not.toThrow()
     expect(composed.modelRegistry?.resolve('xai', 'grok-4.5')).toBeDefined()
+    expect(composed.modelRegistry?.resolve('xai', 'grok-4.6')).toBeDefined()
   })
 })

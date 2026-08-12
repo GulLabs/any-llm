@@ -219,32 +219,46 @@ describe('basic text completion', () => {
 // ---------------------------------------------------------------------------
 
 describe('reasoning effort mapping', () => {
-  it.each(['low', 'high'] as const)(
-    'maps reasoning.effort=%s through',
-    async (effort) => {
-      const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
-      const adapter = xaiAdapter({ client })
-      await adapter.run(makeResolvedReq({ config: { reasoning: { effort } } }), FAKE_CTX)
-      const call = client.calls[0] as { reasoning?: { effort: string } }
-      expect(call.reasoning).toEqual({ effort })
-    },
-  )
-
-  it.each(['none', 'medium', 'xhigh'] as const)(
-    'rejects reasoning.effort=%s with bad_request even without a modelDescriptor',
+  it.each(['low', 'medium', 'high', 'xhigh'] as const)(
+    'rejects reasoning.effort=%s when no descriptor is attached (fail-closed)',
     async (effort) => {
       const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
       const adapter = xaiAdapter({ client })
       await expect(
-        adapter.run(
-          makeResolvedReq({
-            config: { reasoning: { effort: effort as unknown as 'low' } },
-          }),
-          FAKE_CTX,
-        ),
+        adapter.run(makeResolvedReq({ config: { reasoning: { effort } } }), FAKE_CTX),
       ).rejects.toMatchObject({ kind: 'bad_request' })
     },
   )
+
+  it('rejects reasoning.effort=none with bad_request even without a modelDescriptor', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    await expect(
+      adapter.run(
+        makeResolvedReq({ config: { reasoning: { effort: 'none' } } }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+  })
+
+  it('forwards grok-4.6 admitted efforts including xhigh', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    const descriptor = makeXaiDescriptor({
+      model: 'grok-4.6',
+      capabilities: { admittedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'] },
+    })
+    await adapter.run(
+      makeResolvedReq({
+        model: 'grok-4.6',
+        config: { reasoning: { effort: 'xhigh' } },
+        modelDescriptor: descriptor,
+      }),
+      FAKE_CTX,
+    )
+    const call = client.calls[0] as { reasoning?: { effort: string } }
+    expect(call.reasoning).toEqual({ effort: 'xhigh' })
+  })
 
   it('rejects an effort not in modelDescriptor.capabilities.admittedReasoningEfforts', async () => {
     const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
@@ -283,6 +297,10 @@ describe('reasoning effort mapping', () => {
     const result = await adapter.run(
       makeResolvedReq({
         config: { reasoning: { effort: 'low', includeThoughts: false } },
+        modelDescriptor: makeXaiDescriptor({
+          model: 'grok-4.5',
+          capabilities: { admittedReasoningEfforts: ['low', 'high'] },
+        }),
       }),
       FAKE_CTX,
     )
@@ -818,11 +836,68 @@ describe('providerOptions.xai', () => {
 // ---------------------------------------------------------------------------
 
 describe('serviceTier', () => {
-  it('rejects an explicit serviceTier with bad_request', async () => {
+  it('rejects an explicit serviceTier when the descriptor admits none', async () => {
     const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
     const adapter = xaiAdapter({ client })
     await expect(
       adapter.run(makeResolvedReq({ config: { serviceTier: 'flex' } }), FAKE_CTX),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+  })
+
+  it('forwards serviceTier=priority on grok-4.6 and echoes servedServiceTier', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok', serviceTier: 'priority' }))
+    const adapter = xaiAdapter({ client })
+    const descriptor = makeXaiDescriptor({
+      model: 'grok-4.6',
+      capabilities: { serviceTiers: ['priority'] },
+    })
+    const result = await adapter.run(
+      makeResolvedReq({
+        model: 'grok-4.6',
+        config: { serviceTier: 'priority' },
+        modelDescriptor: descriptor,
+      }),
+      FAKE_CTX,
+    )
+    const call = client.calls[0] as { service_tier?: string }
+    expect(call.service_tier).toBe('priority')
+    expect(result.servedServiceTier).toBe('priority')
+  })
+
+  it('surfaces a default-served priority request as servedServiceTier=default', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok', serviceTier: 'default' }))
+    const adapter = xaiAdapter({ client })
+    const descriptor = makeXaiDescriptor({
+      model: 'grok-4.6',
+      capabilities: { serviceTiers: ['priority'] },
+    })
+    const result = await adapter.run(
+      makeResolvedReq({
+        model: 'grok-4.6',
+        config: { serviceTier: 'priority' },
+        modelDescriptor: descriptor,
+      }),
+      FAKE_CTX,
+    )
+    expect(result.servedServiceTier).toBe('default')
+  })
+
+  it('rejects serviceTier=flex on grok-4.6 even though xAI would remap it', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    const descriptor = makeXaiDescriptor({
+      model: 'grok-4.6',
+      capabilities: { serviceTiers: ['priority'] },
+    })
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          model: 'grok-4.6',
+          config: { serviceTier: 'flex' },
+          modelDescriptor: descriptor,
+        }),
+        FAKE_CTX,
+      ),
     ).rejects.toMatchObject({ kind: 'bad_request' })
   })
 })
