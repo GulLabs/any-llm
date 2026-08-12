@@ -5,10 +5,10 @@ xAI Grok provider adapter for any-llm. A thin mapping layer over the `openai` np
 ## Install
 
 ```bash
-pnpm add @gullabs/xai @gullabs/core openai
+pnpm add @gullabs/xai @gullabs/core openai  # peer: openai ^6 || ^7
 ```
 
-**Peer dependency:** `openai ^6`
+**Peer dependency:** `openai ^6 || ^7`
 
 xAI has no first-party TypeScript SDK. xAI's own quickstart recommends using the `openai` npm package with a `baseURL` override pointed at xAI's endpoint — that is the path this adapter takes. `buildXaiClient` is the only place in `packages/xai/src` that imports `openai`, so the rest of the adapter (and its tests) stay decoupled from the real SDK via the structural `XaiClientLike` interface.
 

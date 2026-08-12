@@ -26,7 +26,7 @@ Install each provider package and its peer SDK. Auth stays host-injected on ever
 
 ```bash
 pnpm add @gullabs/core @gullabs/google @gullabs/xai @google/genai openai
-# peers: @google/genai for Gemini; openai ^6 for xAI Responses (baseURL api.x.ai)
+# peers: @google/genai for Gemini; openai ^6 || ^7 for xAI Responses (baseURL api.x.ai)
 ```
 
 ```ts

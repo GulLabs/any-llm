@@ -94,12 +94,12 @@ paths to other repos.
 ## B-006 — Dependency review: pending dependabot PRs, notably `@google/genai` 2.x major
 
 - **Priority:** P3
-- **Status:** parked by owner — explicitly deprioritized.
-- **Origin:** open dependabot PRs. Most are routine dev-dep patches; the one requiring
-  deliberate review is `@google/genai` major bump of the `@gullabs/google` peer SDK.
-- **Scope:** triage routine dev-dep bumps; scoped `@google/genai` 2.x review —
-  changelog, adapter compile/tests, re-check bug mitigations, live smoke.
-- **Next step:** none until the owner reprioritizes.
+- **Status:** largely done on branch `chore/dependabot-upgrades-careful` — routine
+  devDeps + `openai@7` (peer `^6 || ^7`) + `@google/genai@2.16` (peer already `^1 || ^2`)
+  + `actions/setup-node@v7` + pglite 0.5.4. `pnpm quality` green against new majors.
+- **Origin:** open dependabot PRs.
+- **Next step:** merge upgrade PR; close Dependabot PRs as superseded. Skipped
+  `@changesets/cli@3` and TypeScript 7 / Vitest 4 (out of Dependabot scope; separate plan).
 
 ---
 

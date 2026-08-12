@@ -1,7 +1,7 @@
 {
   "name": "@gullabs/xai",
   "version": "0.4.0",
-  "description": "xAI Grok provider adapter for any-llm — Responses API, reasoning, structured output, vision.",
+  "description": "xAI Grok provider adapter for any-llm \u2014 Responses API, reasoning, structured output, vision.",
   "type": "module",
   "license": "Apache-2.0",
   "repository": {
@@ -30,10 +30,10 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "openai": "^6"
+    "openai": "^6 || ^7"
   },
   "devDependencies": {
-    "openai": "^6",
+    "openai": "^7.4.0",
     "@gullabs/testing": "workspace:*"
   },
   "engines": {
