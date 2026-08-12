@@ -1,7 +1,7 @@
 {
   "name": "@gullabs/google",
-  "version": "0.9.0",
-  "description": "Gemini provider adapter for any-llm \u2014 Flex tier, thinking capture, structured output, error classification.",
+  "version": "0.9.1",
+  "description": "Gemini provider adapter for any-llm — Flex tier, thinking capture, structured output, error classification.",
   "type": "module",
   "license": "Apache-2.0",
   "repository": {
