@@ -1,5 +1,13 @@
 # @gullabs/any-llm
 
+## 0.8.5
+
+### Patch Changes
+
+- Updated dependencies [d46fd27]
+  - @gullabs/core@0.11.0
+  - @gullabs/google@0.8.4
+
 ## 0.8.4
 
 ### Patch Changes
