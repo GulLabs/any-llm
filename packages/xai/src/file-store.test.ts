@@ -343,6 +343,48 @@ describe('XaiFileStore.delete', () => {
     expect((onDeleteError.mock.calls[0]?.[1] as LlmError).kind).toBe('server')
   })
 
+  it('DELETE 500 with failClosed throws and does not call onDeleteError', async () => {
+    const { fetch } = makeFetch(() => textResponse('server down', 500))
+    const onDeleteError = vi.fn()
+    const store = new XaiFileStore({ auth: fakeAuth, fetch, onDeleteError })
+    await expect(store.delete('file_1', { failClosed: true })).rejects.toMatchObject({
+      kind: 'server',
+      provider: 'xai',
+    })
+    expect(onDeleteError).not.toHaveBeenCalled()
+  })
+
+  it('DELETE 404 with failClosed still succeeds', async () => {
+    const { fetch } = makeFetch(() => textResponse('not found', 404))
+    const onDeleteError = vi.fn()
+    const store = new XaiFileStore({ auth: fakeAuth, fetch, onDeleteError })
+    await expect(store.delete('gone', { failClosed: true })).resolves.toBeUndefined()
+    expect(onDeleteError).not.toHaveBeenCalled()
+  })
+
+  it('empty fileId always throws bad_request', async () => {
+    const onDeleteError = vi.fn()
+    const { fetch, calls } = makeFetch(() => jsonResponse({ deleted: true }))
+    const store = new XaiFileStore({ auth: fakeAuth, fetch, onDeleteError })
+    await expect(store.delete('   ')).rejects.toMatchObject({ kind: 'bad_request' })
+    await expect(store.delete('   ', { failClosed: true })).rejects.toMatchObject({
+      kind: 'bad_request',
+    })
+    expect(onDeleteError).not.toHaveBeenCalled()
+    expect(calls).toHaveLength(0)
+  })
+
+  it('failClosed deleteAll fails fast on first error', async () => {
+    const { fetch } = makeFetch((call) => {
+      if (call.url.endsWith('/files/ok')) return jsonResponse({ deleted: true })
+      return textResponse('boom', 500)
+    })
+    const store = new XaiFileStore({ auth: fakeAuth, fetch, onDeleteError: vi.fn() })
+    await expect(
+      store.deleteAll(['ok', 'bad'], { failClosed: true }),
+    ).rejects.toMatchObject({ kind: 'server' })
+  })
+
   it('accepts handle objects', async () => {
     const { fetch, calls } = makeFetch(() =>
       jsonResponse({ id: 'file_h', deleted: true }),
@@ -493,9 +535,23 @@ describe('XaiFileStore edge cases', () => {
     })
     const onDeleteError = vi.fn()
     const store = new XaiFileStore({ auth: fakeAuth, fetch, onDeleteError })
-    await expect(store.delete('file_1', ac.signal)).resolves.toBeUndefined()
+    await expect(store.delete('file_1', { signal: ac.signal })).resolves.toBeUndefined()
     expect(onDeleteError).toHaveBeenCalled()
     expect((onDeleteError.mock.calls[0]?.[1] as LlmError).kind).toBe('aborted')
+  })
+
+  it('delete aborted with failClosed throws aborted', async () => {
+    const ac = new AbortController()
+    ac.abort()
+    const { fetch } = makeFetch(() => {
+      throw new Error('network')
+    })
+    const onDeleteError = vi.fn()
+    const store = new XaiFileStore({ auth: fakeAuth, fetch, onDeleteError })
+    await expect(
+      store.delete('file_1', { signal: ac.signal, failClosed: true }),
+    ).rejects.toMatchObject({ kind: 'aborted' })
+    expect(onDeleteError).not.toHaveBeenCalled()
   })
 
   it('getContent non-404 HTTP error is classified', async () => {
@@ -505,6 +561,67 @@ describe('XaiFileStore edge cases', () => {
       kind: 'server',
       provider: 'xai',
     })
+  })
+
+  it('getContent transport error without abort is classified', async () => {
+    const { fetch } = makeFetch(() => {
+      throw new Error('ECONNRESET')
+    })
+    const store = new XaiFileStore({ auth: fakeAuth, fetch })
+    await expect(store.getContent('file_1')).rejects.toBeInstanceOf(LlmError)
+  })
+
+  it('deleteAll with failClosed:false uses settle path', async () => {
+    const { fetch } = makeFetch(() => textResponse('boom', 500))
+    const onDeleteError = vi.fn()
+    const store = new XaiFileStore({ auth: fakeAuth, fetch, onDeleteError })
+    await expect(
+      store.deleteAll(['a', 'b'], { failClosed: false }),
+    ).resolves.toBeUndefined()
+    expect(onDeleteError).toHaveBeenCalled()
+  })
+
+  it('delete failClosed rethrows when fetch throws LlmError-shaped failure', async () => {
+    const { fetch } = makeFetch(() => textResponse('nope', 429))
+    const store = new XaiFileStore({ auth: fakeAuth, fetch, onDeleteError: vi.fn() })
+    await expect(store.delete('x', { failClosed: true })).rejects.toMatchObject({
+      kind: 'rate_limited',
+    })
+  })
+
+  it('delete treats thrown LlmError with httpStatus 404 as success', async () => {
+    const { fetch } = makeFetch(() => {
+      throw new LlmError('gone', {
+        kind: 'bad_request',
+        retryable: false,
+        httpStatus: 404,
+        provider: 'xai',
+      })
+    })
+    const onDeleteError = vi.fn()
+    const store = new XaiFileStore({ auth: fakeAuth, fetch, onDeleteError })
+    await expect(store.delete('x', { failClosed: true })).resolves.toBeUndefined()
+    expect(onDeleteError).not.toHaveBeenCalled()
+  })
+
+  it('deleteAll failClosed succeeds when all deletes ok', async () => {
+    const { fetch } = makeFetch(() => jsonResponse({ deleted: true }))
+    const store = new XaiFileStore({ auth: fakeAuth, fetch })
+    await expect(
+      store.deleteAll(['a', 'b'], { failClosed: true }),
+    ).resolves.toBeUndefined()
+  })
+
+  it('delete aborted when err is already LlmError uses classified path', async () => {
+    const ac = new AbortController()
+    ac.abort()
+    const { fetch } = makeFetch(() => {
+      throw new LlmError('pre', { kind: 'server', retryable: true, provider: 'xai' })
+    })
+    const store = new XaiFileStore({ auth: fakeAuth, fetch, onDeleteError: vi.fn() })
+    await expect(
+      store.delete('x', { signal: ac.signal, failClosed: true }),
+    ).rejects.toMatchObject({ kind: 'server' })
   })
 
   it('get non-404 HTTP error is classified', async () => {
@@ -539,15 +656,6 @@ describe('XaiFileStore edge cases', () => {
     await store.delete('file_1')
     expect(logger.error).toHaveBeenCalled()
     expect(logger.error.mock.calls[0]?.[1]).toBe('xai.file.delete.failed')
-  })
-
-  it('delete empty id fail-opens via onDeleteError', async () => {
-    const onDeleteError = vi.fn()
-    const { fetch, calls } = makeFetch(() => jsonResponse({ deleted: true }))
-    const store = new XaiFileStore({ auth: fakeAuth, fetch, onDeleteError })
-    await store.delete('   ')
-    expect(onDeleteError).toHaveBeenCalled()
-    expect(calls).toHaveLength(0)
   })
 
   it('list HTTP error is classified', async () => {

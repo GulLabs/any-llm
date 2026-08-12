@@ -13,7 +13,7 @@ implementation (repo process).
 ## B-002 — `@gullabs/xai` Files store (`XaiFileStore`) + generate attach
 
 - **Priority:** P0 (RED LINE production Grok corpus path)
-- **Status:** implemented; awaiting release publish of `@gullabs/xai` + `@gullabs/core`.
+- **Status:** shipped (`@gullabs/xai@0.3.0`, `@gullabs/core@0.11.0`).
 - **Plan:** [`docs/PLAN-xai-files-store.md`](./docs/PLAN-xai-files-store.md)
 - **Origin:** RED LINE audit pipeline — stop inline ~200k matter tokens × N modules;
   provider-scoped Files upload/`file_id`/TTL/idempotent delete; parity with
@@ -23,7 +23,22 @@ implementation (repo process).
   in v1; no ambient env auth.
 - **Consumer defaults (RED LINE):** TTL **24h**; storage ~$0.025/GiB/day; permanent
   matter files forbidden; cleanup idempotent + sweep.
-- **Next step:** merge + Release workflow; RED LINE bumps dependency and builds `XaiFilesCorpus`.
+- **Next step:** RED LINE bumps dependency; follow-on **B-005** for fail-closed delete.
+
+---
+
+## B-005 — File-store fail-closed delete (`XaiFileStore` + `GoogleFileStore`)
+
+- **Priority:** P0 (RED LINE Temporal release / orphan sweep must not mark DB released on 5xx)
+- **Status:** implementing (P0 + P1s from plan §6 in same ship).
+- **Plan:** [`docs/PLAN-file-store-fail-closed-delete.md`](./docs/PLAN-file-store-fail-closed-delete.md)
+- **Origin:** RED LINE feedback after xAI Files 0.3.0 — fail-open-only delete cannot gate
+  durable `released_at`; empty `fileId` should throw.
+- **Scope (P0):** per-call `delete(id, { failClosed?: boolean })` on xAI + Google; 404 success
+  both modes; empty id → `bad_request`; tests/README/changeset. Default remains fail-open (P5).
+- **P1 in same ship:** attachment_search counters on `usage.details`; `FakeXaiFileStore`;
+  multi-provider install docs.
+- **Next step:** merge + Release.
 
 ---
 

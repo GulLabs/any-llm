@@ -269,7 +269,102 @@ describe('GoogleFileStore', () => {
 
     // Should not throw
     await expect(store.delete(handle)).resolves.toBeUndefined()
-    expect(onDeleteError).toHaveBeenCalledWith('files/abc123', deleteError)
+    expect(onDeleteError).toHaveBeenCalledTimes(1)
+    expect(onDeleteError.mock.calls[0]?.[0]).toBe('files/abc123')
+    expect(onDeleteError.mock.calls[0]?.[1]).toBeInstanceOf(LlmError)
+  })
+
+  it('failClosed delete throws and does not call onDeleteError', async () => {
+    const client = makeClient({
+      delete: vi.fn().mockRejectedValue({ status: 500, message: 'server' }),
+    })
+    const onDeleteError = vi.fn()
+    const store = new GoogleFileStore({
+      auth: fakeAuth,
+      client,
+      sleep: fastSleep,
+      onDeleteError,
+    })
+    const handle: GoogleFileHandle = {
+      name: 'files/abc123',
+      uri: 'u',
+      mimeType: 'image/png',
+    }
+    await expect(store.delete(handle, { failClosed: true })).rejects.toMatchObject({
+      kind: 'server',
+      provider: 'google',
+    })
+    expect(onDeleteError).not.toHaveBeenCalled()
+  })
+
+  it('failClosed delete treats not-found as success', async () => {
+    const client = makeClient({
+      delete: vi.fn().mockRejectedValue({ status: 404, message: 'file not found' }),
+    })
+    const onDeleteError = vi.fn()
+    const store = new GoogleFileStore({
+      auth: fakeAuth,
+      client,
+      sleep: fastSleep,
+      onDeleteError,
+    })
+    await expect(
+      store.delete(
+        { name: 'files/gone', uri: 'u', mimeType: 'image/png' },
+        { failClosed: true },
+      ),
+    ).resolves.toBeUndefined()
+    expect(onDeleteError).not.toHaveBeenCalled()
+  })
+
+  it('empty handle.name throws bad_request', async () => {
+    const onDeleteError = vi.fn()
+    const store = new GoogleFileStore({
+      auth: fakeAuth,
+      client: makeClient(),
+      sleep: fastSleep,
+      onDeleteError,
+    })
+    await expect(
+      store.delete({ name: '  ', uri: 'u', mimeType: 'image/png' }),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+    expect(onDeleteError).not.toHaveBeenCalled()
+  })
+
+  it('failClosed deleteAll fails fast', async () => {
+    const client = makeClient({
+      delete: vi.fn().mockRejectedValue({ status: 500 }),
+    })
+    const store = new GoogleFileStore({
+      auth: fakeAuth,
+      client,
+      sleep: fastSleep,
+      onDeleteError: vi.fn(),
+    })
+    await expect(
+      store.deleteAll([{ name: 'files/a', uri: 'u', mimeType: 'image/png' }], {
+        failClosed: true,
+      }),
+    ).rejects.toMatchObject({ kind: 'server' })
+  })
+
+  it('failClosed respects pre-aborted signal', async () => {
+    const ac = new AbortController()
+    ac.abort()
+    const client = makeClient({ delete: vi.fn() })
+    const store = new GoogleFileStore({
+      auth: fakeAuth,
+      client,
+      sleep: fastSleep,
+      onDeleteError: vi.fn(),
+    })
+    await expect(
+      store.delete(
+        { name: 'files/a', uri: 'u', mimeType: 'image/png' },
+        { failClosed: true, signal: ac.signal },
+      ),
+    ).rejects.toMatchObject({ kind: 'aborted' })
+    expect(client.delete).not.toHaveBeenCalled()
   })
 
   // NEW: deterministic timeout via injected now (not just timeoutMs:0)
@@ -547,9 +642,14 @@ describe('GoogleFileStore', () => {
 
     await expect(store.deleteAll(handles)).resolves.toBeUndefined()
     expect(onDeleteError).toHaveBeenCalledTimes(3)
-    expect(onDeleteError).toHaveBeenCalledWith('files/a', deleteError)
-    expect(onDeleteError).toHaveBeenCalledWith('files/b', deleteError)
-    expect(onDeleteError).toHaveBeenCalledWith('files/c', deleteError)
+    expect(onDeleteError.mock.calls.map((c) => c[0])).toEqual([
+      'files/a',
+      'files/b',
+      'files/c',
+    ])
+    for (const call of onDeleteError.mock.calls) {
+      expect(call[1]).toBeInstanceOf(LlmError)
+    }
   })
 
   // NEW: upload validation — missing/empty name and uri variants

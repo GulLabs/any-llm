@@ -22,6 +22,8 @@ pnpm add -D @gullabs/testing @gullabs/core @gullabs/google
 | `SignalAwareFakeAdapter`     | Like `FakeAdapter` but observes and honours `AbortSignal` from `AdapterCtx`                    |
 | `scriptedRateLimiter(opts)`  | RateLimiter fake with injectable wait for deterministic `queueDelayMs` assertions              |
 | `inMemoryRateLimiter(opts?)` | Convenience re-export of `@gullabs/core`'s in-process `RateLimiter` implementation             |
+| `makeFakeXai` / `fakeXaiResponse` | Fake xAI Responses client for `@gullabs/xai` adapter tests |
+| `FakeXaiFileStore` | In-memory xAI Files store (upload/TTL/delete/`failClosed`) for host unit tests |
 
 ## Quick example — end-to-end with fake Gemini client
 

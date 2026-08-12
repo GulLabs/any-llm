@@ -211,12 +211,14 @@ const CANONICALLY_MAPPED_USAGE_KEYS = new Set([
  * Unlike Gemini, xAI does not require us to sum sub-fields into the gross
  * total — the top-level fields are already gross.
  *
- * **xAI extras** (captured, not billed): every additional NUMERIC top-level
- * usage field (`num_sources_used`, `num_server_side_tools_used`,
- * `cost_in_usd_ticks`, and anything xAI adds later) is surfaced into
- * `details` under its raw name. Non-numeric extras (e.g. `context_details`)
- * belong to `AdapterResult.providerMetadata` (see the adapter) and the full
- * raw payload always lands in `Usage.raw` verbatim.
+ * **xAI extras** (captured, not billed in `computeXaiCost`): every additional
+ * NUMERIC top-level usage field (`num_sources_used`,
+ * `num_server_side_tools_used` — e.g. after implicit `attachment_search` when
+ * files are attached — `cost_in_usd_ticks`, and anything xAI adds later) is
+ * surfaced into `details` under its raw name for host visibility. Non-numeric
+ * extras (e.g. `context_details`) belong to `AdapterResult.providerMetadata`
+ * (see the adapter) and the full raw payload always lands in `Usage.raw`
+ * verbatim. Tool invocation fees are not yet a separate Cost lane.
  */
 function mapUsage(usage: XaiUsageShape): Usage {
   const inputTokens = usage.input_tokens

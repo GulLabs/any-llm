@@ -32,6 +32,7 @@ xAI has no first-party TypeScript SDK. xAI's own quickstart recommends using the
 | `XaiProviderOptions`    | `{ promptCacheKey? }` — typed `providerOptions.xai` extension shape                             |
 | `XaiFileStore`          | Files API store: upload (TTL), get, list, idempotent delete, content                            |
 | `XaiFileHandle`         | `{ id, filename?, bytes?, expiresAt?, … }` returned by the store                                |
+| `FileDeleteOptions`     | `{ failClosed?, signal? }` — opt-in fail-closed delete for durable release gates                |
 | `XAI_FILE_TTL_*`        | TTL bounds (`3600`…`2592000` seconds) and `XAI_FILE_MAX_BYTES` (48 MiB)                         |
 
 ## Quick example
@@ -88,19 +89,32 @@ const handle = await store.upload({
 // Attach on generate via core FileRefPart:
 // { kind: 'file-ref', fileId: handle.id }
 
-await store.delete(handle.id) // 404 = success (idempotent)
+await store.delete(handle.id) // default fail-open; 404 = success
 await store.delete(handle.id) // safe to call twice
+
+// Durable gate (Temporal release / orphan sweep) — mark DB only after success:
+try {
+  await store.delete(handle.id, { failClosed: true })
+  await db.markReleased(handle.id)
+} catch (err) {
+  // leave released_at null; do not rethrow from workflow finally
+  logger.warn({ err }, 'delete failed')
+}
 ```
 
-| Behavior     | Detail                                                                                                           |
-| ------------ | ---------------------------------------------------------------------------------------------------------------- |
-| TTL          | `expiresAfterSeconds` validated client-side; multipart sends `expires_after` **before** `file` (xAI requirement) |
-| Delete       | Fail-open: non-404 errors call `onDeleteError` and resolve; 404 is silent success                                |
-| Storage cost | ~$0.025/GiB/day — **not** injected into `computeCost` token lanes                                                |
-| ZDR teams    | New uploads and `file_id` attachments are blocked by xAI; errors mention Zero Data Retention when detectable     |
-| Max size     | 48 MiB (conservative vs docs 48–50 MB)                                                                           |
+| Behavior                    | Detail                                                                                                                                                                                                        |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TTL                         | `expiresAfterSeconds` validated client-side; multipart sends `expires_after` **before** `file` (xAI requirement)                                                                                              |
+| Delete (default)            | Fail-open: non-404 errors call `onDeleteError` and resolve; 404 is silent success                                                                                                                             |
+| Delete (`failClosed: true`) | Non-404 failures **throw** `LlmError`; `onDeleteError` is not called. Prefer **per-id** delete + markReleased when writing durable release state — fail-closed `deleteAll` does not cancel in-flight siblings |
+| Empty `fileId`              | Always throws `bad_request` (both modes)                                                                                                                                                                      |
+| Storage cost                | ~$0.025/GiB/day — **not** injected into `computeCost` token lanes                                                                                                                                             |
+| ZDR teams                   | New uploads and `file_id` attachments are blocked by xAI; errors mention Zero Data Retention when detectable                                                                                                  |
+| Max size                    | 48 MiB (conservative vs docs 48–50 MB)                                                                                                                                                                        |
 
-**Billing note:** attaching files on Responses implicitly enables xAI's `attachment_search` agentic tool. Expect tool-invocation fees and reasoning tokens beyond a plain completion. Collections / public URL minting are out of scope for this store.
+**Billing note:** attaching files on Responses implicitly enables xAI's `attachment_search` agentic tool. Expect tool-invocation fees and reasoning tokens beyond a plain completion. When xAI returns numeric counters such as `num_server_side_tools_used` / `num_sources_used`, they appear on `usage.details` under those raw names (and full payload in `usage.raw`) for host visibility — they are **not** folded into `computeXaiCost` token lanes yet (no tool Cost lane). Collections / public URL minting are out of scope for this store.
+
+**Host tests:** `@gullabs/testing` exports `FakeXaiFileStore` (in-memory upload/get/delete with optional TTL clock and `failClosed`).
 
 ## Vision constraints
 
