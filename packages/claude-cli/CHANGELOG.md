@@ -1,5 +1,12 @@
 # @gullabs/claude-cli
 
+## 0.4.3
+
+### Patch Changes
+
+- Updated dependencies [d46fd27]
+  - @gullabs/core@0.11.0
+
 ## 0.4.2
 
 ### Patch Changes
