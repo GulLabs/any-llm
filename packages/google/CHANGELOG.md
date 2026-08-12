@@ -1,5 +1,11 @@
 # @gullabs/google
 
+## 0.9.1
+
+### Patch Changes
+
+- 4458ce7: Dependency upgrades: test against `openai@7` and `@google/genai@2.16`; widen xAI peer to `openai ^6 || ^7`.
+
 ## 0.9.0
 
 ### Minor Changes

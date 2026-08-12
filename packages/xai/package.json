@@ -1,7 +1,7 @@
 {
   "name": "@gullabs/xai",
-  "version": "0.4.0",
-  "description": "xAI Grok provider adapter for any-llm \u2014 Responses API, reasoning, structured output, vision.",
+  "version": "0.4.1",
+  "description": "xAI Grok provider adapter for any-llm — Responses API, reasoning, structured output, vision.",
   "type": "module",
   "license": "Apache-2.0",
   "repository": {
