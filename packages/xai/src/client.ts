@@ -58,8 +58,20 @@ export interface XaiInputImagePart {
   image_url: string
 }
 
+/**
+ * A file attachment content item within an xAI Responses API input message.
+ * Prefer `file_id` for private uploads (via {@link XaiFileStore}); `file_url`
+ * is for publicly reachable documents. Attaching either implicitly enables
+ * xAI's `attachment_search` agentic tool.
+ */
+export interface XaiInputFilePart {
+  type: 'input_file'
+  file_id?: string
+  file_url?: string
+}
+
 /** Union of content-part shapes an input message may carry. */
-export type XaiInputContentPart = XaiInputTextPart | XaiInputImagePart
+export type XaiInputContentPart = XaiInputTextPart | XaiInputImagePart | XaiInputFilePart
 
 /** A single role+content input item constructed by the (future) adapter. */
 export interface XaiInputItem {

@@ -1520,6 +1520,25 @@ describe('multimodal part mapping', () => {
     ])
   })
 
+  it('rejects file-ref parts (Gemini uses FileUriPart, not bare file ids)', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          messages: [
+            {
+              role: 'user',
+              parts: [{ kind: 'file-ref', fileId: 'file_abc123' }],
+            },
+          ],
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request', provider: 'google' })
+  })
+
   it('preserves mixed part order in one message', async () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
     const adapter = geminiAdapter({ client })

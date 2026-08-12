@@ -464,6 +464,7 @@ function mapUsage(meta: GeminiUsageMetadataShape | undefined): Usage {
  * - `text`          → `{ text }`
  * - `inline-media`  → `{ inlineData: { mimeType, data } }` + optional `mediaResolution`
  * - `file-uri`      → `{ fileData: { mimeType, fileUri } }` + optional `mediaResolution`
+ * - `file-ref`      → rejected (`bad_request`) — Gemini Files uses URIs, not bare ids
  *
  * `mediaResolution` IS supported as a per-part field by the Gemini SDK
  * (`Part.mediaResolution`).  The normalised value is mapped to the
@@ -497,6 +498,12 @@ function mapPart(p: Part): GeminiContentPart {
           : {}),
       }
     }
+
+    case 'file-ref':
+      throw new LlmError(
+        'Google Gemini expects FileUriPart with a Files API uri; got file-ref (provider file id). Upload via GoogleFileStore and pass the returned uri.',
+        { kind: 'bad_request', retryable: false, provider: 'google' },
+      )
 
     default:
       return assertNever(p)

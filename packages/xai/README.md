@@ -30,6 +30,9 @@ xAI has no first-party TypeScript SDK. xAI's own quickstart recommends using the
 | `XaiModelRates`         | Per-model rate entry type (`inputPerM`, `cachedPerM`, `outputPerM`, optional `gt200k`)          |
 | `Grok45ConfigSchema`    | Strict Zod config schema for `grok-4.5`                                                         |
 | `XaiProviderOptions`    | `{ promptCacheKey? }` — typed `providerOptions.xai` extension shape                             |
+| `XaiFileStore`          | Files API store: upload (TTL), get, list, idempotent delete, content                            |
+| `XaiFileHandle`         | `{ id, filename?, bytes?, expiresAt?, … }` returned by the store                                |
+| `XAI_FILE_TTL_*`        | TTL bounds (`3600`…`2592000` seconds) and `XAI_FILE_MAX_BYTES` (48 MiB)                         |
 
 ## Quick example
 
@@ -63,12 +66,49 @@ The default registry ships exactly one model: `grok-4.5` (500k token context win
 - **No penalties/stop** — `presence_penalty`, `frequency_penalty`, and `stop` are not in the config schema at all; xAI hard-rejects these on reasoning models, so the schema never admits them (reject-don't-map).
 - **No service tiers** — xAI has no service-tier concept for `grok-4.5`; setting `serviceTier` on the request throws `bad_request`.
 
+## Files store (`XaiFileStore`)
+
+Thin REST wrapper over xAI Files (`POST/GET/DELETE /v1/files`). Auth is injected — the store never reads `process.env`.
+
+```ts
+import { XaiFileStore } from '@gullabs/xai'
+
+const store = new XaiFileStore({
+  auth: { apiKey: 'YOUR_XAI_API_KEY' },
+  // Optional: onDeleteError, logger, fetch, baseUrl
+})
+
+const handle = await store.upload({
+  data: pdfBytes,
+  filename: 'matter.pdf',
+  mimeType: 'application/pdf',
+  expiresAfterSeconds: 86_400, // 24h; range 3600…2592000
+})
+
+// Attach on generate via core FileRefPart:
+// { kind: 'file-ref', fileId: handle.id }
+
+await store.delete(handle.id) // 404 = success (idempotent)
+await store.delete(handle.id) // safe to call twice
+```
+
+| Behavior     | Detail                                                                                                           |
+| ------------ | ---------------------------------------------------------------------------------------------------------------- |
+| TTL          | `expiresAfterSeconds` validated client-side; multipart sends `expires_after` **before** `file` (xAI requirement) |
+| Delete       | Fail-open: non-404 errors call `onDeleteError` and resolve; 404 is silent success                                |
+| Storage cost | ~$0.025/GiB/day — **not** injected into `computeCost` token lanes                                                |
+| ZDR teams    | New uploads and `file_id` attachments are blocked by xAI; errors mention Zero Data Retention when detectable     |
+| Max size     | 48 MiB (conservative vs docs 48–50 MB)                                                                           |
+
+**Billing note:** attaching files on Responses implicitly enables xAI's `attachment_search` agentic tool. Expect tool-invocation fees and reasoning tokens beyond a plain completion. Collections / public URL minting are out of scope for this store.
+
 ## Vision constraints
 
-`grok-4.5` accepts image input as an `inline-media` or `file-uri` `Part`:
+`grok-4.5` accepts image input as an `inline-media` or `file-uri` `Part`, and document attachments as a `file-ref` `Part`:
 
 - **`inline-media`** — only `image/jpeg` and `image/png` are accepted; anything else throws `bad_request`. The decoded payload must be at most 20 MiB (xAI's documented inline-image ceiling); larger images throw `bad_request` before the request is sent.
 - **`file-uri`** — only accepted when the URI is a public `http(s)://` URL **and** the declared `mimeType` is jpg/png. A provider-hosted URI from another provider — for example a Gemini Files API URI (`https://generativelanguage.googleapis.com/...`) — is technically `https://` but is not dereferenceable by xAI and is not portable across providers. The adapter rejects it rather than trying to map or proxy it (reject-don't-map).
+- **`file-ref`** — maps to Responses `{ type: 'input_file', file_id }`. Upload first with `XaiFileStore`, then pass `{ kind: 'file-ref', fileId: handle.id }`. Empty ids throw `bad_request`.
 - **Undocumented minimum size** — xAI enforces an undocumented server-side minimum image size (observed ~8px/side, ~512 total px). This adapter does **not** pre-validate pixel dimensions; a too-small image surfaces as a live `bad_request` error from the xAI API itself, classified normally by `classifyXaiError`, not rejected client-side.
 
 ## Caching
@@ -96,7 +136,7 @@ xAI's own `/v1/models` listing surfaces `grok-4.5-latest` and `grok-build-latest
 
 ## Explicitly deferred (not built in v1)
 
-- Server-side agentic tools (`web_search`, `x_search`, `code_interpreter`, file/collections search, remote MCP) and their per-invocation billing (e.g. `web_search` at $5/1k) — no `Cost` lane exists for these yet.
+- Server-side agentic tools as an explicit API (`web_search`, `x_search`, `code_interpreter`, collections search, remote MCP) and their per-invocation billing lanes in `computeCost`. Note: **file attachments still auto-enable `attachment_search`** on xAI's side — that implicit tool is documented above, not modeled as a first-class library tool surface.
 - `/v1/chat/completions` (documented by xAI as legacy) and `/v1/messages` (the Anthropic-compatible migration shim) — this adapter only targets `/v1/responses`.
 - Batch API (`grok-4.5` is not eligible at launch) and image generation models.
 - Stateful conversations — `store` is always sent as `false`, and `previous_response_id` is not supported.

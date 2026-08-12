@@ -10,6 +10,23 @@ implementation (repo process).
 
 ---
 
+## B-002 — `@gullabs/xai` Files store (`XaiFileStore`) + generate attach
+
+- **Priority:** P0 (RED LINE production Grok corpus path)
+- **Status:** implemented; awaiting release publish of `@gullabs/xai` + `@gullabs/core`.
+- **Plan:** [`docs/PLAN-xai-files-store.md`](./docs/PLAN-xai-files-store.md)
+- **Origin:** RED LINE audit pipeline — stop inline ~200k matter tokens × N modules;
+  provider-scoped Files upload/`file_id`/TTL/idempotent delete; parity with
+  `@gullabs/google` `GoogleFileStore`.
+- **Scope:** `XaiFileStore` (upload with `expires_after`, get, list, idempotent delete);
+  core `FileRefPart` + Responses `input_file.file_id` attach; tests; no Collections
+  in v1; no ambient env auth.
+- **Consumer defaults (RED LINE):** TTL **24h**; storage ~$0.025/GiB/day; permanent
+  matter files forbidden; cleanup idempotent + sweep.
+- **Next step:** merge + Release workflow; RED LINE bumps dependency and builds `XaiFilesCorpus`.
+
+---
+
 ## B-001 — `@gullabs/anthropic` provider package
 
 - **Priority:** P1

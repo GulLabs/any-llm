@@ -28,6 +28,7 @@ export type {
   XaiClientLike,
   XaiInputTextPart,
   XaiInputImagePart,
+  XaiInputFilePart,
   XaiInputContentPart,
   XaiInputItem,
   XaiTextFormat,
@@ -43,6 +44,20 @@ export type {
 export { buildXaiClient, requireApiKey } from './client.js'
 export { xaiAdapter, classifyXaiError } from './adapter.js'
 export type { XaiAdapterOptions } from './adapter.js'
+export {
+  XaiFileStore,
+  XAI_FILE_TTL_MIN_SECONDS,
+  XAI_FILE_TTL_MAX_SECONDS,
+  XAI_FILE_MAX_BYTES,
+  XAI_FILES_DEFAULT_BASE_URL,
+} from './file-store.js'
+export type {
+  XaiFileHandle,
+  XaiFileUploadInput,
+  XaiFileListOptions,
+  XaiFileListResult,
+  XaiFileStoreOptions,
+} from './file-store.js'
 export {
   Grok45ConfigSchema,
   grok45ModelDescriptor,

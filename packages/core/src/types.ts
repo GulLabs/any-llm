@@ -91,10 +91,30 @@ export type FileUriPart = {
 }
 
 /**
+ * A provider-hosted file **id** reference (not a URI).
+ *
+ * Used when a file has been uploaded to a provider that addresses files by
+ * opaque id rather than by URI (e.g. xAI Files `file_…`).  The provider
+ * dereferences `fileId` server-side; no binary payload is sent with the
+ * request.  Distinct from {@link FileUriPart}: ids are not URIs and must not
+ * be stuffed into the `file-uri` lane.
+ *
+ * Adapters that only understand URI-based file hosting reject this part with
+ * `LlmError('bad_request')` (reject-don't-map).
+ */
+export type FileRefPart = {
+  kind: 'file-ref'
+  /** Provider-assigned file id, e.g. xAI `"file_a128090d-…"`. */
+  fileId: string
+  /** Optional IANA type hint for hosts/telemetry; adapters may ignore. */
+  mimeType?: string
+}
+
+/**
  * Discriminated union of all supported message part kinds.
  * Switch on `part.kind` for exhaustive narrowing.
  */
-export type Part = TextPart | InlineMediaPart | FileUriPart
+export type Part = TextPart | InlineMediaPart | FileUriPart | FileRefPart
 
 // ---------------------------------------------------------------------------
 // Part type guards
@@ -131,6 +151,17 @@ export function isInlineMediaPart(part: Part): part is InlineMediaPart {
  */
 export function isFileUriPart(part: Part): part is FileUriPart {
   return part.kind === 'file-uri'
+}
+
+/**
+ * Narrows `part` to {@link FileRefPart}.
+ * @example
+ * ```ts
+ * if (isFileRefPart(p)) attachById(p.fileId)
+ * ```
+ */
+export function isFileRefPart(part: Part): part is FileRefPart {
+  return part.kind === 'file-ref'
 }
 
 /**

@@ -634,6 +634,81 @@ describe('vision / media mapping', () => {
       ),
     ).rejects.toMatchObject({ kind: 'bad_request' })
   })
+
+  it('rejects a Gemini Files host even with https image mimeType', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          messages: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  kind: 'file-uri',
+                  uri: 'https://generativelanguage.googleapis.com/v1beta/files/abc',
+                  mimeType: 'image/png',
+                },
+              ],
+            },
+          ],
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+  })
+
+  it('maps FileRefPart to input_file.file_id', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    await adapter.run(
+      makeResolvedReq({
+        messages: [
+          {
+            role: 'user',
+            parts: [
+              { kind: 'text', text: 'summarize' },
+              {
+                kind: 'file-ref',
+                fileId: 'file_a128090d-f0c9-4873-bd84-e499777e7417',
+                mimeType: 'application/pdf',
+              },
+            ],
+          },
+        ],
+      }),
+      FAKE_CTX,
+    )
+    const call = client.calls[0] as {
+      input: { content: { type?: string; file_id?: string; text?: string }[] }[]
+    }
+    expect(call.input[0]?.content).toEqual([
+      { type: 'input_text', text: 'summarize' },
+      {
+        type: 'input_file',
+        file_id: 'file_a128090d-f0c9-4873-bd84-e499777e7417',
+      },
+    ])
+  })
+
+  it('rejects empty FileRefPart.fileId', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          messages: [
+            {
+              role: 'user',
+              parts: [{ kind: 'file-ref', fileId: '   ' }],
+            },
+          ],
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+  })
 })
 
 // ---------------------------------------------------------------------------
