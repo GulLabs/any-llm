@@ -57,6 +57,7 @@ export type {
   XaiFileListOptions,
   XaiFileListResult,
   XaiFileStoreOptions,
+  FileDeleteOptions,
 } from './file-store.js'
 export {
   Grok45ConfigSchema,

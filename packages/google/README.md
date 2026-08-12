@@ -23,6 +23,19 @@ pnpm add @gullabs/google @gullabs/core @google/genai
 | `geminiModelDescriptors`, `gemmaModelDescriptors`, `defaultGeminiRegistry` | Built-in model descriptors + pre-built registry                                       |
 | `geminiPricingSource()`, `GEMINI_PRICING`, `TIER_FACTOR`                   | Built-in Gemini pricing snapshot and tier-factor map                                  |
 
+
+| `GoogleFileStore` | Files API: upload + poll ACTIVE + delete |
+| `FileDeleteOptions` | `{ failClosed?, signal? }` — opt-in fail-closed delete (parity with `@gullabs/xai`) |
+
+## File store delete modes
+
+`GoogleFileStore.delete` defaults to **fail-open** (errors → `onDeleteError`, resolve). Pass `{ failClosed: true }` when the host gates durable state on known success; HTTP/SDK not-found remains success (idempotent). Empty `handle.name` always throws `bad_request`.
+
+```ts
+await store.delete(handle) // fail-open
+await store.delete(handle, { failClosed: true }) // throw on non-not-found failure
+```
+
 ## Quick example
 
 ```ts

@@ -20,6 +20,37 @@ pnpm add @gullabs/drizzle    # Drizzle ORM sink for Postgres
 pnpm add @gullabs/testing    # test fakes (dev only)
 ```
 
+### Multi-provider (Gemini + xAI Grok)
+
+Install each provider package and its peer SDK. Auth stays host-injected on every call (and on file stores).
+
+```bash
+pnpm add @gullabs/core @gullabs/google @gullabs/xai @google/genai openai
+# peers: @google/genai for Gemini; openai ^6 for xAI Responses (baseURL api.x.ai)
+```
+
+```ts
+import { createClient, composeProviders } from '@gullabs/core'
+import { googleProvider, GoogleFileStore } from '@gullabs/google'
+import { xaiProvider, XaiFileStore } from '@gullabs/xai'
+
+const client = createClient({
+  ...composeProviders([googleProvider(), xaiProvider()]),
+})
+
+// Generate — explicit provider + model; pass auth every call
+await client.generate(
+  { provider: 'xai', model: 'grok-4.5', messages: [...] },
+  { auth: { apiKey: xaiKey } },
+)
+
+// Files are outside generate — construct stores with the same host auth
+const xaiFiles = new XaiFileStore({ auth: { apiKey: xaiKey } })
+const geminiFiles = new GoogleFileStore({ auth: { apiKey: geminiKey } })
+```
+
+See [`packages/xai/README.md`](./packages/xai/README.md) for `XaiFileStore` / `FileRefPart` and fail-closed delete; [`packages/testing`](./packages/testing/README.md) for `FakeXaiFileStore` / `makeFakeXai`.
+
 ## Quickstart
 
 The four v1 goals in ~25 lines:

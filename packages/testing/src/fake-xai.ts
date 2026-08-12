@@ -130,6 +130,11 @@ export interface FakeXaiResponseOpts {
   id?: string
   model?: string
   promptCacheKey?: string
+  /**
+   * Extra top-level numeric usage fields (e.g. `num_server_side_tools_used`
+   * when attachment_search ran). Merged into the usage object for adapter tests.
+   */
+  usageExtras?: Record<string, number>
 }
 
 /**
@@ -176,6 +181,7 @@ export function fakeXaiResponse(opts: FakeXaiResponseOpts = {}): XaiResponseLike
       ? { output_tokens_details: { reasoning_tokens: opts.reasoningTokens } }
       : {}),
     ...(opts.totalTokens !== undefined ? { total_tokens: opts.totalTokens } : {}),
+    ...(opts.usageExtras !== undefined ? opts.usageExtras : {}),
   }
 
   return {

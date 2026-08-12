@@ -52,6 +52,23 @@ export interface GeminiFilesClientLike {
   delete(params: { name: string }): Promise<void>
 }
 
+/**
+ * Options for {@link GoogleFileStore.delete} / {@link GoogleFileStore.deleteAll}.
+ *
+ * Default is fail-open (P5 side-effect style). Pass `failClosed: true` when
+ * the host gates durable state on known delete success. Shape matches
+ * `@gullabs/xai` `FileDeleteOptions` by convention.
+ */
+export interface FileDeleteOptions {
+  signal?: AbortSignal
+  /**
+   * When true, non-not-found failures throw typed `LlmError`.
+   * When false/omitted, failures invoke `onDeleteError` and resolve.
+   * Not-found is success in both modes (idempotent).
+   */
+  failClosed?: boolean
+}
+
 export interface GoogleFileStoreOptions {
   auth: AuthMaterial
   /** Injectable client for tests; skips SDK import when provided. */
@@ -374,23 +391,98 @@ export class GoogleFileStore {
   }
 
   /**
-   * Delete a single uploaded file.
-   * Errors are forwarded to `onDeleteError` and NOT rethrown.
+   * Delete a single uploaded file. Idempotent: not-found → success.
+   *
+   * Default (`failClosed` omitted/false): errors go to `onDeleteError` and
+   * resolve (P5 fail-open). With `failClosed: true`, non-not-found errors
+   * throw typed `LlmError` and `onDeleteError` is not called.
+   *
+   * Empty/blank `handle.name` always throws `bad_request`.
    */
-  async delete(handle: GoogleFileHandle): Promise<void> {
+  async delete(handle: GoogleFileHandle, opts?: FileDeleteOptions): Promise<void> {
+    const name = handle.name
+    if (typeof name !== 'string' || name.trim() === '') {
+      throw new LlmError('GoogleFileHandle.name must be a non-empty string.', {
+        kind: 'bad_request',
+        retryable: false,
+        provider: 'google',
+      })
+    }
+
+    const failClosed = opts?.failClosed === true
+
     try {
+      if (opts?.signal?.aborted === true) {
+        throw new LlmError('Google file delete aborted', {
+          kind: 'aborted',
+          retryable: false,
+          provider: 'google',
+        })
+      }
       const client = await this.getClient()
-      await client.delete({ name: handle.name })
+      await client.delete({ name })
     } catch (err) {
-      this.onDeleteError(handle.name, err)
+      if (isGoogleNotFoundError(err)) {
+        return
+      }
+      const classified = err instanceof LlmError ? err : classifyError(err)
+      const withProvider =
+        classified.provider === undefined
+          ? new LlmError(classified.message, {
+              kind: classified.kind,
+              retryable: classified.retryable,
+              ...(classified.httpStatus !== undefined
+                ? { httpStatus: classified.httpStatus }
+                : {}),
+              ...(classified.retryAfterMs !== undefined
+                ? { retryAfterMs: classified.retryAfterMs }
+                : {}),
+              provider: 'google',
+              cause: classified.cause ?? err,
+            })
+          : classified
+
+      if (failClosed) {
+        throw withProvider
+      }
+      this.onDeleteError(name, withProvider)
     }
   }
 
   /**
    * Delete multiple files.
-   * Each failure is individually forwarded to `onDeleteError`; none are thrown.
+   *
+   * Fail-open (default): `Promise.allSettled` per handle.
+   * Fail-closed: `Promise.all` — first throw rejects; in-flight siblings are
+   * not cancelled. Prefer per-handle delete when gating durable release state.
    */
-  async deleteAll(handles: GoogleFileHandle[]): Promise<void> {
-    await Promise.allSettled(handles.map((h) => this.delete(h)))
+  async deleteAll(handles: GoogleFileHandle[], opts?: FileDeleteOptions): Promise<void> {
+    if (opts?.failClosed === true) {
+      await Promise.all(handles.map((h) => this.delete(h, opts)))
+      return
+    }
+    await Promise.allSettled(handles.map((h) => this.delete(h, opts)))
   }
+}
+
+/** Detect Gemini/SDK not-found shapes so delete stays idempotent. */
+function isGoogleNotFoundError(err: unknown): boolean {
+  if (err instanceof LlmError && err.httpStatus === 404) {
+    return true
+  }
+  if (typeof err !== 'object' || err === null) {
+    return false
+  }
+  const obj = err as Record<string, unknown>
+  if (obj['status'] === 404 || obj['httpStatus'] === 404 || obj['code'] === 404) {
+    return true
+  }
+  if (obj['status'] === 'NOT_FOUND' || obj['code'] === 'NOT_FOUND') {
+    return true
+  }
+  const msg = typeof obj['message'] === 'string' ? obj['message'] : ''
+  if (/not\s*found|404/i.test(msg) && /file/i.test(msg)) {
+    return true
+  }
+  return false
 }

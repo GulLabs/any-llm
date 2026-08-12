@@ -10,9 +10,17 @@
 
 import { describe, it, expect } from 'vitest'
 import { assertRegistryInvariants } from './index.js'
+// FakeXaiFileStore asserted below
 
 describe('@gullabs/testing package surface: assertRegistryInvariants', () => {
   it('is a function reachable from the package root', () => {
     expect(typeof assertRegistryInvariants).toBe('function')
+  })
+})
+
+describe('@gullabs/testing package surface: FakeXaiFileStore', () => {
+  it('FakeXaiFileStore is a constructor reachable from the package root', async () => {
+    const { FakeXaiFileStore } = await import('./index.js')
+    expect(typeof FakeXaiFileStore).toBe('function')
   })
 })

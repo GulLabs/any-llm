@@ -78,6 +78,22 @@ export interface XaiFileListResult {
   paginationToken?: string
 }
 
+/**
+ * Options for {@link XaiFileStore.delete} / {@link XaiFileStore.deleteAll}.
+ *
+ * Default is fail-open (P5 side-effect style). Pass `failClosed: true` when
+ * the host gates durable state (e.g. `released_at`) on known delete success.
+ */
+export interface FileDeleteOptions {
+  signal?: AbortSignal
+  /**
+   * When true, non-404 failures throw typed `LlmError`.
+   * When false/omitted, non-404 failures invoke `onDeleteError` and resolve.
+   * HTTP 404 is success in both modes (idempotent).
+   */
+  failClosed?: boolean
+}
+
 export interface XaiFileStoreOptions {
   auth: AuthMaterial
   /** Default {@link XAI_FILES_DEFAULT_BASE_URL}. */
@@ -578,41 +594,30 @@ export class XaiFileStore {
 
   /**
    * Delete a file. Idempotent: HTTP 404 → success.
-   * Other errors are forwarded to `onDeleteError` and **not** rethrown (P5).
+   *
+   * Default (`failClosed` omitted/false): non-404 errors go to `onDeleteError`
+   * and resolve (P5 fail-open). With `failClosed: true`, non-404 errors throw
+   * typed `LlmError` and `onDeleteError` is not called.
+   *
+   * Empty/blank ids always throw `bad_request` (caller fault).
    */
   async delete(
     fileIdOrHandle: string | Pick<XaiFileHandle, 'id'>,
-    signal?: AbortSignal,
+    opts?: FileDeleteOptions,
   ): Promise<void> {
     const fileId = resolveFileId(fileIdOrHandle)
     if (typeof fileId !== 'string' || fileId.trim() === '') {
-      // Fail-open still applies — surface via callback rather than throw.
-      this.onDeleteError(String(fileId), badRequest('fileId must be a non-empty string.'))
-      return
+      throw badRequest('fileId must be a non-empty string.')
     }
 
+    const failClosed = opts?.failClosed === true
+    const signal = opts?.signal
+
     try {
-      let res: Response
-      try {
-        res = await this.fetchImpl(
-          this.filesUrl(fileId),
-          this.requestInit('DELETE', signal !== undefined ? { signal } : {}),
-        )
-      } catch (e) {
-        if (signal?.aborted === true) {
-          // Aborts are caller intent; still fail-open on delete side-effects.
-          this.onDeleteError(
-            fileId,
-            new LlmError('xAI file delete aborted', {
-              kind: 'aborted',
-              retryable: false,
-              provider: 'xai',
-            }),
-          )
-          return
-        }
-        throw e
-      }
+      const res = await this.fetchImpl(
+        this.filesUrl(fileId),
+        this.requestInit('DELETE', signal !== undefined ? { signal } : {}),
+      )
 
       if (res.status === 404) {
         return
@@ -625,18 +630,42 @@ export class XaiFileStore {
       if (isNotFoundError(err)) {
         return
       }
-      this.onDeleteError(fileId, classifyStoreError(err))
+
+      // Abort during fetch: surface as aborted LlmError through the same path.
+      const classified =
+        signal?.aborted === true && !(err instanceof LlmError)
+          ? new LlmError('xAI file delete aborted', {
+              kind: 'aborted',
+              retryable: false,
+              provider: 'xai',
+              cause: err,
+            })
+          : classifyStoreError(err)
+
+      if (failClosed) {
+        throw classified
+      }
+      this.onDeleteError(fileId, classified)
     }
   }
 
   /**
-   * Delete many files. Each failure is individually fail-open; none are thrown.
+   * Delete many files.
+   *
+   * Fail-open (default): `Promise.allSettled` — each failure → `onDeleteError`.
+   * Fail-closed: `Promise.all` — first throw rejects; in-flight siblings are
+   * not cancelled (partial deletes may already have succeeded at the provider).
+   * Prefer per-id delete + host DB mark when gating durable release state.
    */
   async deleteAll(
     ids: ReadonlyArray<string | Pick<XaiFileHandle, 'id'>>,
-    signal?: AbortSignal,
+    opts?: FileDeleteOptions,
   ): Promise<void> {
-    await Promise.allSettled(ids.map((id) => this.delete(id, signal)))
+    if (opts?.failClosed === true) {
+      await Promise.all(ids.map((id) => this.delete(id, opts)))
+      return
+    }
+    await Promise.allSettled(ids.map((id) => this.delete(id, opts)))
   }
 
   /** Download raw file bytes. */

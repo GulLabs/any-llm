@@ -104,6 +104,42 @@ describe('basic text completion', () => {
     ])
   })
 
+  it('surfaces numeric tool-usage extras (e.g. attachment_search) into usage.details', async () => {
+    const client = makeFakeXai(
+      fakeXaiResponse({
+        text: 'based on the doc',
+        inputTokens: 100,
+        outputTokens: 20,
+        usageExtras: {
+          num_server_side_tools_used: 3,
+          num_sources_used: 2,
+        },
+      }),
+    )
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({
+        messages: [
+          {
+            role: 'user',
+            parts: [
+              { kind: 'text', text: 'summarize' },
+              { kind: 'file-ref', fileId: 'file_abc' },
+            ],
+          },
+        ],
+      }),
+      FAKE_CTX,
+    )
+    expect(result.usage.details.num_server_side_tools_used).toBe(3)
+    expect(result.usage.details.num_sources_used).toBe(2)
+    // Token cost path is unchanged — tool fees are visibility-only until a Cost lane exists.
+    expect(result.usage.raw).toMatchObject({
+      num_server_side_tools_used: 3,
+      num_sources_used: 2,
+    })
+  })
+
   it('forwards temperature and topP to temperature/top_p', async () => {
     const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
     const adapter = xaiAdapter({ client })

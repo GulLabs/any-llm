@@ -51,6 +51,7 @@ export type {
   GoogleFileHandle,
   GoogleFileStoreOptions,
   GeminiFilesClientLike,
+  FileDeleteOptions,
 } from './file-store.js'
 export { GoogleFileStore } from './file-store.js'
 export type {

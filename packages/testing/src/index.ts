@@ -46,6 +46,13 @@ export type {
   XaiScript,
   FakeXaiClient,
 } from './fake-xai.js'
+export { FakeXaiFileStore } from './fake-xai-file-store.js'
+export type {
+  FakeXaiFileHandle,
+  FakeXaiFileUploadInput,
+  FakeXaiFileDeleteOptions,
+  FakeXaiFileStoreOptions,
+} from './fake-xai-file-store.js'
 export { FakeAdapter } from './fake-adapter.js'
 export type { FakeAdapterEntry } from './fake-adapter.js'
 export { SignalAwareFakeAdapter } from './signal-aware-fake-adapter.js'
