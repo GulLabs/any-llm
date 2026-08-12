@@ -25,6 +25,11 @@ import {
   computeXaiCost,
   xaiPricingSource,
   xaiProvider,
+  XaiFileStore,
+  XAI_FILE_TTL_MIN_SECONDS,
+  XAI_FILE_TTL_MAX_SECONDS,
+  XAI_FILE_MAX_BYTES,
+  XAI_FILES_DEFAULT_BASE_URL,
 } from './index.js'
 
 describe('@gullabs/xai package surface: commit 1', () => {
@@ -74,5 +79,15 @@ describe('@gullabs/xai package surface: commit 3', () => {
 
   it('xaiProvider is a function reachable from the package root', () => {
     expect(typeof xaiProvider).toBe('function')
+  })
+})
+
+describe('@gullabs/xai package surface: files store', () => {
+  it('XaiFileStore and TTL/size constants are reachable from the package root', () => {
+    expect(typeof XaiFileStore).toBe('function')
+    expect(XAI_FILE_TTL_MIN_SECONDS).toBe(3_600)
+    expect(XAI_FILE_TTL_MAX_SECONDS).toBe(2_592_000)
+    expect(XAI_FILE_MAX_BYTES).toBe(48 * 1024 * 1024)
+    expect(XAI_FILES_DEFAULT_BASE_URL).toBe('https://api.x.ai/v1')
   })
 })

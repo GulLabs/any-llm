@@ -17,6 +17,7 @@ import type {
   TextPart,
   InlineMediaPart,
   FileUriPart,
+  FileRefPart,
   Part,
   Message,
   GenConfig,
@@ -25,7 +26,7 @@ import type {
   ReasoningIntent,
 } from './types.js'
 import type { ResolvedRequest } from './ports.js'
-import { isTextPart, isInlineMediaPart, isFileUriPart } from './types.js'
+import { isTextPart, isInlineMediaPart, isFileUriPart, isFileRefPart } from './types.js'
 
 describe('LlmResult type shape', () => {
   it('output is unknown | undefined', () => {
@@ -168,9 +169,21 @@ describe('FileUriPart type shape', () => {
   })
 })
 
+describe('FileRefPart type shape', () => {
+  it('has kind, fileId, and optional mimeType', () => {
+    expectTypeOf<FileRefPart>().toEqualTypeOf<{
+      kind: 'file-ref'
+      fileId: string
+      mimeType?: string
+    }>()
+  })
+})
+
 describe('Part type shape', () => {
-  it('is the union of TextPart | InlineMediaPart | FileUriPart', () => {
-    expectTypeOf<Part>().toEqualTypeOf<TextPart | InlineMediaPart | FileUriPart>()
+  it('is the union of TextPart | InlineMediaPart | FileUriPart | FileRefPart', () => {
+    expectTypeOf<Part>().toEqualTypeOf<
+      TextPart | InlineMediaPart | FileUriPart | FileRefPart
+    >()
   })
 })
 
@@ -222,6 +235,23 @@ describe('part type guards', () => {
     expect(isFileUriPart({ kind: 'text', text: 'hi' })).toBe(false)
     expect(
       isFileUriPart({ kind: 'inline-media', mimeType: 'image/png', data: 'abc' }),
+    ).toBe(false)
+  })
+
+  it('isFileRefPart narrows to FileRefPart', () => {
+    const p: Part = {
+      kind: 'file-ref',
+      fileId: 'file_abc123',
+      mimeType: 'application/pdf',
+    }
+    if (isFileRefPart(p)) {
+      expectTypeOf(p).toEqualTypeOf<FileRefPart>()
+      expect(p.fileId).toBe('file_abc123')
+    }
+    expect(isFileRefPart(p)).toBe(true)
+    expect(isFileRefPart({ kind: 'text', text: 'hi' })).toBe(false)
+    expect(
+      isFileRefPart({ kind: 'file-uri', uri: 'gs://b/f', mimeType: 'image/jpeg' }),
     ).toBe(false)
   })
 })

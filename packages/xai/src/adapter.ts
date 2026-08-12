@@ -66,6 +66,9 @@ const MAX_XAI_INLINE_IMAGE_BYTES = 20 * 1024 * 1024
  *   API `https://generativelanguage.googleapis.com/...` — which itself
  *   happens to be `https://`, but is not dereferenceable by xAI) is not
  *   portable and callers should not reuse `FileUriPart` cross-provider.
+ * - `file-ref`     → `{ type: 'input_file', file_id }` for xAI Files uploads.
+ *   Attaching files implicitly enables xAI's `attachment_search` agentic tool
+ *   (extra tool billing may apply). Empty `fileId` → `bad_request`.
  *
  * Note: xAI enforces an undocumented server-side minimum image size
  * (observed ~8px/side, ~512 total px). This adapter does not pre-validate
@@ -100,7 +103,23 @@ function mapPart(p: Part): XaiInputContentPart {
           `xAI only accepts public http(s) image URLs via FileUriPart; got scheme of "${p.uri}" / mimeType "${p.mimeType}".`,
         )
       }
+      // Reject known foreign provider hosts even when scheme+mime look valid.
+      if (
+        p.uri.includes('generativelanguage.googleapis.com') ||
+        p.uri.includes('googleapis.com/v1beta/files')
+      ) {
+        throw badXaiRequest(
+          `xAI cannot dereference Gemini/Google Files URIs via FileUriPart; upload to xAI Files and use FileRefPart (file_id) instead. Got "${p.uri}".`,
+        )
+      }
       return { type: 'input_image', image_url: p.uri }
+    }
+
+    case 'file-ref': {
+      if (typeof p.fileId !== 'string' || p.fileId.trim() === '') {
+        throw badXaiRequest('FileRefPart.fileId must be a non-empty string.')
+      }
+      return { type: 'input_file', file_id: p.fileId }
     }
 
     default:
@@ -348,7 +367,10 @@ function isXaiTransportError(rawErr: unknown): boolean {
   const cause = (rawErr as { cause?: unknown }).cause
   if (cause instanceof Error) {
     const causeCtorName = cause.constructor.name
-    if (causeCtorName === 'APIConnectionError' || causeCtorName === 'APIConnectionTimeoutError') {
+    if (
+      causeCtorName === 'APIConnectionError' ||
+      causeCtorName === 'APIConnectionTimeoutError'
+    ) {
       return true
     }
     if (matchesXaiTransportSignature(cause)) return true

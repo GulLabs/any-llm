@@ -17,6 +17,7 @@ export type {
   TextPart,
   InlineMediaPart,
   FileUriPart,
+  FileRefPart,
   Part,
   Message,
   ReasoningEffort,
@@ -31,7 +32,7 @@ export type {
   Cost,
   LlmResult,
 } from './types.js'
-export { isTextPart, isInlineMediaPart, isFileUriPart } from './types.js'
+export { isTextPart, isInlineMediaPart, isFileUriPart, isFileRefPart } from './types.js'
 
 // Errors
 export type {
