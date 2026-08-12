@@ -12,7 +12,7 @@
 ## Summary
 
 This document captures three targeted changes to `@gullabs/any-llm` that surfaced during the
-first real integration: wiring AI Studio's Temporal-driven dossier pipeline to the library. AI
+first real integration: wiring the host's Temporal-driven dossier pipeline to the library. AI
 Studio stores response schemas as hot-editable JSON in its database (no code deploy cycle), passes
 `attemptId` as a correlation FK into its own context table, and runs Gemini Flex calls that need
 an automatic fallback to standard-tier on capacity pressure. None of these three patterns fit the
@@ -456,7 +456,7 @@ export interface LlmRequest {
    * Optional call-site identifier for observability grouping.
    * When set, persisted as callSiteId on the record so ledger queries
    * can group calls by their logical origin even when going through generate().
-   * AI Studio assembles its own prompts and uses generate() — this field lets
+   * the host assembles its own prompts and uses generate() — this field lets
    * it get callSiteId observability without going through runStructured.
    */
   callSiteId?: string
@@ -585,7 +585,7 @@ if (structuredOutputRequested) {
 ```
 
 No `zodToGeminiSchema` call. No vendor check. Gemini accepts JSON Schema/OpenAPI-subset objects
-verbatim as `responseSchema`; AI Studio already does this in its current production pipeline.
+verbatim as `responseSchema`; the host already does this in its current production pipeline.
 
 Use `structuredOutputRequested` for:
 
@@ -781,12 +781,12 @@ index('llm_calls_external_id_idx').on(table.externalId),
 
 Keep `metadata` jsonb — unchanged.
 
-### AI Studio integration pattern (for documentation)
+### the host integration pattern (for documentation)
 
-AI Studio's custom `UsageSink` writes in a single Postgres transaction:
+the host's custom `UsageSink` writes in a single Postgres transaction:
 
 1. The lib's `LlmCallRecord` via `drizzleUsageSink` into `llm_calls`.
-2. AI Studio's own `llm_call_context` row (FK: `attempt_id → llm_calls.attempt_id`).
+2. the host's own `llm_call_context` row (FK: `attempt_id → llm_calls.attempt_id`).
 
 The transaction is fail-open at the outer sink boundary (engine wraps sink in try/catch at
 `engine.ts:1158-1159`).

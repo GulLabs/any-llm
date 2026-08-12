@@ -1264,7 +1264,7 @@ countTokens` (`packages/google/src/client.ts`) is a REQUIRED addition to the str
 `any-llm` enforces OUTPUT contracts thoroughly (`outputJsonSchema`, structured-output retry,
 strict per-model config schemas per ADR-009/ADR-010) but enforced zero INPUT contracts — nothing
 in `packages/core` checked whether the business content of a request was complete or sane before
-dispatch. A live incident (ai-studio, 2026-07-09/10, `docs/input-validation-middleware-proposal.md`)
+dispatch. A live incident (a host application, 2026-07-09/10, `docs/input-validation-middleware-proposal.md`)
 dispatched a prompt template filled from a request object carrying only 2 of ~9 expected context
 fields; the rendered prompt reached the provider with literal blank template labels and null-filled
 JSON, and two different providers returned schema-valid-but-degenerate responses. Three LLM calls
@@ -1277,8 +1277,8 @@ incident, one layer downstream.
 
 The original proposal shaped this as a pre-dispatch `Middleware`. Triage (recorded in the proposal
 doc's "Consumer response" and "Maintainer ruling" sections) found the seam wrong on all three counts
-the ai-studio review raised: middleware sees the post-render `ResolvedRequest`, never the raw
-pre-template fields that were actually malformed; ai-studio calls `generate()` with already-rendered
+the a host application review raised: middleware sees the post-render `ResolvedRequest`, never the raw
+pre-template fields that were actually malformed; a host application calls `generate()` with already-rendered
 strings, so the library never sees the pre-template value bag middleware would need; and ledger rows
 for refusals require new engine wiring regardless of seam, since sink writes live inside `runAttempt`
 and quota refusals produced no row at all.
@@ -1375,7 +1375,7 @@ Implementing surfaces:
 
 Rationale for the asymmetry: callsite prologue failures are deterministic call-site code defects
 caught on first execution in dev/tests, in the same layer as unregistered-model; the
-ledger-visibility requirement in the proposal came from the `generate()` consumer (ai-studio), whose
+ledger-visibility requirement in the proposal came from the `generate()` consumer (a host application), whose
 path is fully covered. The rule "callId ⇒ row" stays simple and exceptionless.
 
 **References:** ADR-021 (leveled fail-open logging, per-attempt records — this ADR's synthetic

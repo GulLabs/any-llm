@@ -5,8 +5,8 @@
 | **Status**                | DESIGN LOCKED — ready for Claude plan signoff, then implementation                                      |
 | **Date**                  | 2026-08-12                                                                                              |
 | **Packages**              | Primary: `packages/xai`. Core seam: `packages/core` (`FileRefPart`). Optional fake: `packages/testing`. |
-| **Consumer**              | RED LINE (`/Volumes/SSD/code/work/redline`) — Grok-default audit pipeline                               |
-| **Related RED LINE plan** | `redline/docs/ops/AUDIT_RUN_RESILIENCE_AND_PROGRESS_PLAN.md`                                            |
+| **Consumer** | Host applications using provider Files for multi-call document attach |
+| **Related hosts plan** | `host-app/docs/ops/AUDIT_RUN_RESILIENCE_AND_PROGRESS_PLAN.md`                                            |
 | **Parity reference**      | `@gullabs/google` `GoogleFileStore` + adapter `file-uri` mapping                                        |
 | **Design principles**     | DESIGN.md P1–P7 (see §4)                                                                                |
 | **Docs verified**         | 2026-08-12 against docs.x.ai Files managing / chat-with-files / upload REST / security FAQ              |
@@ -15,28 +15,28 @@
 
 ## 1. Why this is needed (consumer problem)
 
-RED LINE runs private-fund compliance audits:
+hosts runs document-heavy multi-module LLM pipelines:
 
 1. Pin a **regulation snapshot** (law/control text) in its own R2 store.
-2. Load **matter documents** (PPM, LPA, pitch deck, Form D, …) as evidence.
+2. Load **matter documents** (matter documents, matter documents, pitch deck, matter documents, …) as evidence.
 3. Fan out **one structured-output LLM call per audit module** (marketing-rule, custody, …).
 
 ### Pain today
 
 - Default provider is **xAI Grok** via `@gullabs/xai`.
-- Matter evidence is still sent as **inline extracted text** on every module call (~**150–200k input tokens per module** on a real Understory pack).
+- Matter evidence is still sent as **inline extracted text** on every module call (~**150–200k input tokens per module** on a real real document pack).
 - Dominant cost is **re-sending the same matter corpus** N times (ledger: ~$9.93 for one failed run on `grok-4.5`, mostly input tokens).
 - Gemini has first-class **Files + Context Cache** in `@gullabs/google` (`GoogleFileStore`, `GoogleCacheStore`).
-- xAI path has **no** Files store in any-llm. RED LINE’s cleanup path still accidentally constructed Gemini stores on Grok runs → production posture failures.
+- xAI path has **no** Files store in any-llm. hosts' cleanup path still accidentally constructed Gemini stores on Grok runs → production posture failures.
 
-### Decision (RED LINE product)
+### Decision (hosts product)
 
 - **No inline corpus for production Grok audits.**
 - Matter docs are **uploaded to xAI Files** once per audit run, referenced by **`file_id`**, then **deleted**.
-- Regulation snapshot stays in RED LINE control prompts (not customer Collections by default).
+- Regulation snapshot stays in hosts control prompts (not customer Collections by default).
 - Cleanup must be **idempotent**; **default TTL** must expire files if workers die mid-run.
 
-any-llm must expose a clean, tested **xAI Files** surface so RED LINE (and other apps) do not hand-roll REST forever.
+any-llm must expose a clean, tested **xAI Files** surface so hosts (and other apps) do not hand-roll REST forever.
 
 ---
 
@@ -46,7 +46,7 @@ any-llm must expose a clean, tested **xAI Files** surface so RED LINE (and other
 
 1. **`XaiFileStore`** (name parallel to `GoogleFileStore`) for upload / get / list / delete / content.
 2. **Generate path** accepts xAI-hosted file references via a **core-neutral** `FileRefPart` (`kind: 'file-ref'`) mapped by the xAI adapter to Responses `{ type: 'input_file', file_id }`.
-3. **TTL / `expires_after`** supported on upload (required by RED LINE defaults).
+3. **TTL / `expires_after`** supported on upload (required by hosts defaults).
 4. **Idempotent delete** (HTTP 404 = success; other delete failures fail-open via `onDeleteError`, matching Google P5 side-effect style).
 5. **Auth via injected material** (no ambient env reads) — same as rest of any-llm (P1).
 6. **Tests + fixtures** + surface exports from `@gullabs/xai` (and core type/guards).
@@ -57,8 +57,8 @@ any-llm must expose a clean, tested **xAI Files** surface so RED LINE (and other
 - **Collections** full RAG product (separate plan if needed).
 - Explicit server tools surface (`web_search`, `x_search`, `code_interpreter`, collections search) and tool-call billing lanes in `computeCost`.
 - Streaming.
-- Public file URL product APIs (`public_url` minting) — RED LINE must not use public URLs for PPMs.
-- Replacing RED LINE’s `CorpusPort` product layer (any-llm provides **vendor primitives**; apps own run lifecycle).
+- Public file URL product APIs (`public_url` minting) — hosts must not use public URLs for matter documentss.
+- Replacing hosts' `host corpus port` product layer (any-llm provides **vendor primitives**; apps own run lifecycle).
 - Changing Gemini `GoogleFileStore` behavior “for compatibility.”
 - Faking file-storage $ into `computeCost` token lanes (P4: cost is freeze-at-write for generate usage only).
 - Chunked upload (`/v1/files:initialize` / `:uploadChunks`) — single-shot multipart covers ≤48–50 MB docs.
@@ -123,7 +123,7 @@ Storage is **cheap vs token re-send**. Still require TTL + delete so failed clea
 | Upload readiness      | Poll until `ACTIVE`                        | **No poll** — metadata returned immediately                                 |
 | TTL                   | Provider ~48h auto (read-only `expiresAt`) | Caller-set `expiresAfterSeconds`; validate 3600..2592000                    |
 | Handle id             | `name` + `uri`                             | `id` (+ optional filename/bytes/…)                                          |
-| Delete API            | `delete(handle)`                           | `delete(fileId \| handle)` — string id primary for RED LINE Postgres maps   |
+| Delete API            | `delete(handle)`                           | `delete(fileId \| handle)` — string id primary for hosts Postgres maps   |
 | Delete 404            | Swallowed via fail-open                    | **Explicit success** (idempotent) before fail-open path                     |
 | Delete other errors   | `onDeleteError` + void                     | Same + optional `logger.error` default                                      |
 | Logger                | Optional `Logger`                          | Same                                                                        |
@@ -354,17 +354,17 @@ Optional live smoke (credentials present only): upload tiny text → generate st
 
 ---
 
-## 7. TTL defaults (library docs + RED LINE contract)
+## 7. TTL defaults (library docs + hosts contract)
 
 xAI allows **1 hour … 30 days**, or permanent if omitted.
 
-| Parameter         | Library                           | RED LINE production                  |
+| Parameter         | Library                           | hosts production                  |
 | ----------------- | --------------------------------- | ------------------------------------ |
 | Default on upload | **None** (explicit caller choice) | **86400** (24h) always passed        |
 | Min / max         | Validate 3600..2592000            | Same                                 |
 | Permanent         | Allowed by library                | **Disallowed** on matter corpus path |
 
-### Cleanup contract (RED LINE; library enables)
+### Cleanup contract (hosts; library enables)
 
 ```
 prepare: upload each doc with expiresAfterSeconds=86400; persist file_id
@@ -384,7 +384,7 @@ sweep: re-delete unreleased / past expires
 5. Exports, README, surface tests, no-ambient still green.
 6. Changeset(s); `pnpm quality`.
 7. Claude signoff per commit; PR → main → Release workflow → `npm view` verify.
-8. RED LINE (separate repo): `XaiFilesCorpus` consumes store — **out of this PR**.
+8. hosts (separate repo): `host corpus adapter` consumes store — **out of this PR**.
 
 ### File layout
 
@@ -404,7 +404,7 @@ packages/xai/README.md
 
 ---
 
-## 9. Consumer sketch (RED LINE)
+## 9. Consumer sketch (hosts)
 
 ```ts
 import { XaiFileStore } from '@gullabs/xai'
@@ -458,17 +458,17 @@ await store.delete(handle.id) // idempotent
 - [ ] `pnpm quality` green
 - [ ] Claude APPROVE on plan + each implementation commit
 - [ ] Published `@gullabs/xai` (and core) on npm newer than pre-goal `0.2.5` / current core
-- [ ] RED LINE can drop hand-rolled REST and depend on the release
+- [ ] hosts can drop hand-rolled REST and depend on the release
 
 ---
 
-## 11. Priority relative to RED LINE resilience plan
+## 11. Priority relative to hosts resilience plan
 
 | Order                 | Work                                                     |
 | --------------------- | -------------------------------------------------------- |
-| RED LINE P0           | Findings-per-module + Grok must not call Gemini release  |
+| hosts P0           | Findings-per-module + Grok must not call Gemini release  |
 | **This any-llm plan** | XaiFileStore + FileRefPart + generate attach             |
-| RED LINE P1           | `XaiFilesCorpus` only; **no production inline** for Grok |
+| hosts P1           | `host corpus adapter` only; **no production inline** for Grok |
 | Later                 | Collections (global reg library only, if ever)           |
 
 ---
@@ -483,4 +483,4 @@ await store.delete(handle.id) // idempotent
 
 ---
 
-_Consumer contact: RED LINE engineering. Implement in `/Volumes/SSD/code/work/any-llm`._
+_Implement in this repository.
