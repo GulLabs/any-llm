@@ -8,13 +8,13 @@ assignees: ''
 
 ## Package affected
 
-<!-- e.g. @gullabs/any-llm, @gullabs/core, @gullabs/google, @gullabs/drizzle, @gullabs/quota, @gullabs/testing -->
+<!-- e.g. @gullabs/any-llm, @gullabs/core, @gullabs/google, @gullabs/xai, @gullabs/drizzle, @gullabs/quota, @gullabs/testing -->
 
 ## Version
 
 ## Reproduction steps
 
-<!-- Minimal steps or a code snippet that reproduces the issue -->
+<!-- Minimal steps or a code snippet. Do not paste API keys or customer payloads. -->
 
 ## Expected behavior
 
@@ -23,4 +23,4 @@ assignees: ''
 ## Environment
 
 - Node version:
-- Runtime/OS:
+- Package manager / OS:
