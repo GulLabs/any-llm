@@ -13,3 +13,5 @@ assignees: ''
 ## Proposed solution
 
 ## Alternatives considered
+
+<!-- Check ROADMAP.md first. Designed seams (streaming, tools, Vertex) are already listed. -->

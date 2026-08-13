@@ -14,9 +14,12 @@ its own changelog:
 - [packages/any-llm/CHANGELOG.md](packages/any-llm/CHANGELOG.md)
 - [packages/core/CHANGELOG.md](packages/core/CHANGELOG.md)
 - [packages/google/CHANGELOG.md](packages/google/CHANGELOG.md)
+- [packages/xai/CHANGELOG.md](packages/xai/CHANGELOG.md)
 - [packages/drizzle/CHANGELOG.md](packages/drizzle/CHANGELOG.md)
 - [packages/quota/CHANGELOG.md](packages/quota/CHANGELOG.md)
 - [packages/testing/CHANGELOG.md](packages/testing/CHANGELOG.md)
+- [packages/claude-cli/CHANGELOG.md](packages/claude-cli/CHANGELOG.md)
+- [packages/codex-cli/CHANGELOG.md](packages/codex-cli/CHANGELOG.md)
 
 All packages follow [semantic versioning](https://semver.org/). They are currently
 pre-1.0 (`0.x`), so per semver's pre-1.0 convention, breaking changes may land in minor
@@ -89,3 +92,16 @@ so cost accounting and retries stay consistent.
 A new companion package, `@gullabs/quota`, was introduced for provider-level quota
 control (RPM/RPD enforcement) outside of core, with a `QuotaDecision` model that
 distinguishes temporary `defer` outcomes from permanent `deny` outcomes.
+
+### Provider plugins, xAI Grok, and grok-4.6
+
+The engine stopped knowing about Gemini. Each provider is a self-contained plugin
+(`composeProviders`) that owns its adapter, model descriptors, strict config schemas,
+and pricing snapshot. `@gullabs/xai` shipped over the `openai` SDK Responses API with
+canonical IDs only (`grok-4.5`, then `grok-4.6`). 4.6 admits `reasoning.effort` of
+`low|medium|high|xhigh` and `serviceTier: 'priority'`; served tier is echoed verbatim
+and cost uses the snapshot `priorityFactor`. Gemini and xAI pricing snapshots were
+re-frozen from live official sources (`gemini-2026-08-12`, `xai-2026-08-12`).
+
+Dev-only CLI providers (`@gullabs/claude-cli`, `@gullabs/codex-cli`) exist for local
+iteration and are not production adapters.

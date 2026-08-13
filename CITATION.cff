@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+title: any-llm
+message: If you use this software, please cite it as below.
+type: software
+authors:
+  - name: Gul Labs
+    website: https://github.com/GulLabs
+  - family-names: Gul
+    given-names: Atif
+    website: https://github.com/atifgul99
+repository-code: https://github.com/GulLabs/any-llm
+url: https://www.npmjs.com/package/@gullabs/any-llm
+license: Apache-2.0
+abstract: >-
+  In-process TypeScript client for provider-hosted models.
+  Typed calls, frozen micro-USD cost, no ambient secrets.
+keywords:
+  - typescript
+  - llm
+  - gemini
+  - grok
+  - observability
+  - cost-tracking

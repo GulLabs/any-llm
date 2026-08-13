@@ -6,6 +6,10 @@ coverage/
 .turbo/
 *.tsbuildinfo
 .craftsman/
-.env.infra.local
-.env.local
+.idea/
+.vscode/
+*.swp
 .env
+.env.*
+!.env.example
+

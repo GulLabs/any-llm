@@ -1,28 +1,63 @@
 # Contributing
 
-Thanks for your interest. This is a small, opinionated library; see `SPEC.md` for the v1 contract
-and `DESIGN.md` for the north-star.
+Thanks for looking. This is a small, opinionated library. [`SPEC.md`](./SPEC.md) is the v1 contract. [`DESIGN.md`](./DESIGN.md) is the north star. When they disagree, SPEC wins.
+
+Only [@atifgul99](https://github.com/atifgul99) can push or merge to `main`. Everyone else works on a fork or a feature branch and opens a pull request.
 
 ## Dev setup
 
+Node `>=20.9.0`. Package manager is **pnpm 9.12.0** (see `packageManager` in the root `package.json`).
+
 ```bash
 pnpm install
-pnpm lint           # minimal ESLint flat config across source, tests, examples, and configs
-pnpm typecheck      # tsc across the workspace
-pnpm test           # vitest (no network — the Gemini SDK is mocked)
+pnpm lint           # ESLint flat config
+pnpm typecheck      # tsc --noEmit across the workspace
+pnpm test           # vitest, no network
 pnpm -r build       # tsup: ESM + CJS + d.ts
 pnpm quality        # build + lint + typecheck + test (same gate CI runs)
-pnpm example        # runnable, network-free end-to-end demo
+pnpm example        # network-free end-to-end demo
 ```
 
 ## Principles
 
-- **Tests never hit a real provider** — use the fakes in `@gullabs/testing`.
-- **Adapters stay thin**: map request⇄raw SDK only. The engine validates output, computes cost, persists.
-- **Cost is frozen at write time** (integer micro-USD + `pricingVersion`); the GROSS/subset token
-  convention must hold (`cached ⊆ input`, `thinking ⊆ output`).
-- Keep the public surface small and additive; breaking changes follow SemVer.
+- **Tests never hit a real provider.** Use the fakes in `@gullabs/testing`.
+- **Adapters stay thin.** Map request ⇄ raw SDK only. The engine validates config, computes cost, persists.
+- **Cost is frozen at write time** (integer micro-USD + `pricingVersion`). GROSS tokens: `cached ⊆ input`, `thinking ⊆ output`.
+- **Reject, do not map.** No aliases, shims, or compatibility fallbacks. See `Agents.md`.
+- **No ambient auth.** Do not read `process.env` for credentials inside the library.
+- Keep the public surface small. Breaking changes follow SemVer. Pre-1.0 minors may break; say so in the changeset.
 
-## PRs
+## Pull requests
 
-Keep them focused. Include tests. `pnpm quality` must pass.
+1. Branch from `main`.
+2. Keep the diff focused. One concern per PR.
+3. Add or update tests with the change.
+4. Run `pnpm quality` locally.
+5. Add a [changeset](https://github.com/changesets/changesets) for any user-facing or published-package change:
+
+   ```bash
+   pnpm changeset
+   ```
+
+   Docs-only, CI-only, and internal-chore PRs do not need a changeset.
+
+6. Fill in the PR template. Do not paste secrets, live API keys, or provider payloads that contain customer data.
+
+CI must be green. A maintainer reviews and squash-merges.
+
+## What to read first
+
+| File                                             | Why                     |
+| ------------------------------------------------ | ----------------------- |
+| [`SPEC.md`](./SPEC.md)                           | Build contract          |
+| [`docs/architecture.md`](./docs/architecture.md) | How the engine is wired |
+| [`DECISIONS.md`](./DECISIONS.md)                 | ADRs                    |
+| [`RELEASING.md`](./RELEASING.md)                 | How versions reach npm  |
+
+## Security reports
+
+Do not open a public issue. See [`SECURITY.md`](./SECURITY.md).
+
+## Conduct
+
+Participation is governed by [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md).
