@@ -1,5 +1,12 @@
 # @gullabs/codex-cli
 
+## 0.5.5
+
+### Patch Changes
+
+- Updated dependencies [90a47a1]
+  - @gullabs/core@0.12.1
+
 ## 0.5.4
 
 ### Patch Changes

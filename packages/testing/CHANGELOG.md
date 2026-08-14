@@ -1,5 +1,12 @@
 # @gullabs/testing
 
+## 0.6.1
+
+### Patch Changes
+
+- Updated dependencies [90a47a1]
+  - @gullabs/core@0.12.1
+
 ## 0.6.0
 
 ### Minor Changes
