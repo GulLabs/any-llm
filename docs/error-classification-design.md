@@ -18,7 +18,7 @@
 
 ## 2. Assumptions (labeled)
 
-- **Issue-supplied, not repo-verified:** the 2026-08-14 live xAI 403 body is `Content violates usage guidelines. Failed check: SAFETY_CHECK_TYPE_CYBER`, hoisted by the openai SDK onto `err.error` as a **plain string**, `err.status = 403`, `err.code` undefined. Other `SAFETY_CHECK_TYPE_*` suffixes are assumed to share that prefix.
+- **Issue-supplied, not an in-repo live capture:** #65 reports the 2026-08-14 xAI 403 body as `Content violates usage guidelines. Failed check: SAFETY_CHECK_TYPE_CYBER`, hoisted by the openai SDK onto `err.error` as a **plain string**, `err.status = 403`, `err.code` undefined. Fixture 15 records that report. Other `SAFETY_CHECK_TYPE_*` suffixes are assumed to share that prefix.
 - **Issue-supplied, not repo-verified:** a consumer (cited in #65) maps `invalid_auth` vs `content_filter` onto distinct Temporal non-retryable types.
 - A bare 403 with no safety-check structured body remains a genuine permission/auth problem (key lacks model access, team blocked, etc.).
 - Gemini safety blocks already arrive as HTTP 200 + `promptFeedback.blockReason` / empty candidates, not as HTTP 403. Google's 403 default stays `invalid_auth` unless a live Google 403 safety body is later recorded.

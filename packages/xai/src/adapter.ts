@@ -432,18 +432,17 @@ export function classifyXaiError(rawErr: unknown): LlmError {
       kind: 'invalid_auth',
       retryable: false,
       httpStatus: base.httpStatus,
-      ...(base.retryAfterMs !== undefined ? { retryAfterMs: base.retryAfterMs } : {}),
       provider: 'xai',
       cause: base.cause ?? rawErr,
     })
   }
 
   if (base.httpStatus === 403 && isXaiSafetyCheckBody(rawErr)) {
-    return new LlmError(base.message, {
+    const bodyText = extractXaiErrorBodyText(rawErr)
+    return new LlmError(bodyText ?? base.message, {
       kind: 'content_filter',
       retryable: false,
       httpStatus: base.httpStatus,
-      ...(base.retryAfterMs !== undefined ? { retryAfterMs: base.retryAfterMs } : {}),
       provider: 'xai',
       cause: base.cause ?? rawErr,
     })
@@ -453,8 +452,6 @@ export function classifyXaiError(rawErr: unknown): LlmError {
     return new LlmError(base.message, {
       kind: 'server',
       retryable: true,
-      ...(base.httpStatus !== undefined ? { httpStatus: base.httpStatus } : {}),
-      ...(base.retryAfterMs !== undefined ? { retryAfterMs: base.retryAfterMs } : {}),
       provider: 'xai',
       cause: base.cause ?? rawErr,
     })

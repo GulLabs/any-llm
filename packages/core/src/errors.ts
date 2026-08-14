@@ -25,7 +25,9 @@ import type { StandardSchemaV1 } from './standard-schema.js'
  * - `'aborted'`         — caller cancelled via `AbortSignal`.
  * - `'bad_request'`     — 400/422; the request itself is malformed.
  * - `'content_filter'`  — provider refused the call for safety / acceptable-use
- *   / moderation (input block or output block).
+ *   / moderation. Google output blocks are a 200-path throw; xAI input
+ *   blocks are the 403 overlay. Unrecorded 200 incomplete reasons are not
+ *   classified here.
  * - `'unknown'`         — uncategorised; inspect `cause` for details.
  */
 export type LlmErrorKind =

@@ -22,9 +22,8 @@ pnpm add @gullabs/google @gullabs/core @google/genai
 | `isGeminiCapacityError(err)`                                               | Detects Gemini Flex shared-capacity errors for built-in fallback                      |
 | `geminiModelDescriptors`, `gemmaModelDescriptors`, `defaultGeminiRegistry` | Built-in model descriptors + pre-built registry                                       |
 | `geminiPricingSource()`, `GEMINI_PRICING`, `TIER_FACTOR`                   | Built-in Gemini pricing snapshot and tier-factor map                                  |
-
-| `GoogleFileStore` | Files API: upload + poll ACTIVE + delete |
-| `FileDeleteOptions` | `{ failClosed?, signal? }` — opt-in fail-closed delete (parity with `@gullabs/xai`) |
+| `GoogleFileStore`                                                          | Files API: upload + poll ACTIVE + delete                                              |
+| `FileDeleteOptions`                                                        | `{ failClosed?, signal? }` — opt-in fail-closed delete (parity with `@gullabs/xai`)   |
 
 ## File store delete modes
 

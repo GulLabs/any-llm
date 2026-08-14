@@ -491,7 +491,7 @@ discriminant (from `packages/core/src/errors.ts`):
 | `timeout`        | exceeded `config.timeoutMs` or a network timeout                     | Yes       |
 | `aborted`        | caller's `AbortSignal` fired                                         | No        |
 | `bad_request`    | 400/422, or a request the library rejected before I/O                | No        |
-| `content_filter` | provider refused the call for safety / AUP (input or output)         | No        |
+| `content_filter` | provider refused the call for safety / AUP (Gemini 200-path blocks; xAI 403 input-safety overlay) | No        |
 | `unknown`        | uncategorized — inspect `.cause`                                     | No        |
 
 ```ts

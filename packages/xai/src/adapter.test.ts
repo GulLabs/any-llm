@@ -1066,6 +1066,30 @@ describe('error classification', () => {
     expect(result.retryable).toBe(false)
     expect(result.httpStatus).toBe(403)
     expect(result.provider).toBe('xai')
+    expect(result.message).toBe(
+      'Content violates usage guidelines. Failed check: SAFETY_CHECK_TYPE_CYBER',
+    )
+  })
+
+  it('classifies an Error subclass with .status and structured .error (SDK shape) as content_filter', () => {
+    class PermissionDeniedError extends Error {
+      status = 403
+      error = 'Content violates usage guidelines. Failed check: SAFETY_CHECK_TYPE_CYBER'
+      constructor() {
+        super(
+          '403 "Content violates usage guidelines. Failed check: SAFETY_CHECK_TYPE_CYBER"',
+        )
+        this.name = 'PermissionDeniedError'
+      }
+    }
+    const result = classifyXaiError(new PermissionDeniedError())
+    expect(result.kind).toBe('content_filter')
+    expect(result.retryable).toBe(false)
+    expect(result.httpStatus).toBe(403)
+    expect(result.provider).toBe('xai')
+    expect(result.message).toBe(
+      'Content violates usage guidelines. Failed check: SAFETY_CHECK_TYPE_CYBER',
+    )
   })
 
   it('a bare 403 with no structured body stays invalid_auth', () => {
