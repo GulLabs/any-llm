@@ -313,7 +313,7 @@ export type XaiInputContentPart = XaiInputTextPart | XaiInputImagePart | XaiInpu
 | Missing/invalid `auth.apiKey`                                      | `invalid_auth`                                                                      |
 | TTL out of range / empty id / oversize / bad multipart client-side | `bad_request`                                                                       |
 | HTTP 400 (incl. ZDR block when detectable)                         | `bad_request` (+ ZDR hint in message when matched)                                  |
-| HTTP 401/403                                                       | `invalid_auth`                                                                      |
+| HTTP 401/403                                                       | `invalid_auth` (a structured safety body overlays to `content_filter`; see ADR-028) |
 | HTTP 404 on get/content                                            | **`bad_request`** + `httpStatus: 404` (store special-case; core bare 404→`unknown`) |
 | HTTP 404 on delete                                                 | **success** (no throw)                                                              |
 | HTTP 429                                                           | `rate_limited`                                                                      |

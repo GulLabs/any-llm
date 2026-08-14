@@ -255,16 +255,16 @@ narrow by `kind` or read `retryable` without parsing message strings.
 
 ### Error Kinds
 
-| `kind`           | HTTP     | `retryable` | Description                                               |
-| ---------------- | -------- | ----------- | --------------------------------------------------------- |
-| `invalid_auth`   | 401, 403 | No          | Wrong or missing credentials.                             |
-| `rate_limited`   | 429      | Yes         | Provider quota exceeded; `retryAfterMs` may be set.       |
-| `server`         | 5xx      | Yes         | Transient provider error.                                 |
-| `timeout`        | 408      | Yes         | Request exceeded `timeoutMs` or network timeout.          |
-| `aborted`        | —        | No          | Caller cancelled via `AbortSignal`. Never retried.        |
-| `bad_request`    | 400, 422 | No          | Malformed request; retrying without change will not help. |
-| `content_filter` | —        | No          | Provider refused output for safety reasons.               |
-| `unknown`        | other    | No          | Uncategorised; inspect `cause` for details.               |
+| `kind`           | HTTP             | `retryable` | Description                                                                                                                                                                              |
+| ---------------- | ---------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invalid_auth`   | 401; 403 default | No          | Wrong or missing credentials, or a 403 the adapter did not reclassify.                                                                                                                   |
+| `rate_limited`   | 429              | Yes         | Provider quota exceeded; `retryAfterMs` may be set.                                                                                                                                      |
+| `server`         | 5xx              | Yes         | Transient provider error.                                                                                                                                                                |
+| `timeout`        | 408              | Yes         | Request exceeded `timeoutMs` or network timeout.                                                                                                                                         |
+| `aborted`        | —                | No          | Caller cancelled via `AbortSignal`. Never retried.                                                                                                                                       |
+| `bad_request`    | 400, 422         | No          | Malformed request; retrying without change will not help.                                                                                                                                |
+| `content_filter` | overlay / 200    | No          | Provider refused the call for safety / AUP. Google output blocks are 200-path; xAI input blocks are the 403 overlay. Unrecorded xAI 200 incomplete reasons stay `finishReason: 'other'`. |
+| `unknown`        | other            | No          | Uncategorised; inspect `cause` for details.                                                                                                                                              |
 
 ### Classification
 
@@ -278,7 +278,10 @@ narrow by `kind` or read `retryable` without parsing message strings.
    `x-ratelimit-reset` headers.
 5. Anything else → `unknown`.
 
-Adapters call `classifyError` in their catch block and re-throw the result tagged with `provider`.
+`classifyHttpStatus` maps an HTTP code to a _default_ kind. HTTP status is a hint,
+not a kind: providers overload codes (xAI invalid keys arrive as 400; xAI input
+safety arrives as 403). Adapters overlay when a **structured body** (never
+free-form `Error.message`) proves a different kind, then tag `provider`.
 
 ---
 

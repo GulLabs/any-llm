@@ -483,16 +483,16 @@ source repo (see "For more detail" below — this file may not ship in `node_mod
 Every rejection from `generate()` / `runStructured()` is an `LlmError` with a `.kind`
 discriminant (from `packages/core/src/errors.ts`):
 
-| `kind`           | Meaning                                               | Retryable |
-| ---------------- | ----------------------------------------------------- | --------- |
-| `invalid_auth`   | 401/403, or missing/empty `apiKey`                    | No        |
-| `rate_limited`   | 429 — provider quota exceeded                         | Yes       |
-| `server`         | 5xx — transient provider error                        | Yes       |
-| `timeout`        | exceeded `config.timeoutMs` or a network timeout      | Yes       |
-| `aborted`        | caller's `AbortSignal` fired                          | No        |
-| `bad_request`    | 400/422, or a request the library rejected before I/O | No        |
-| `content_filter` | provider refused output for safety reasons            | No        |
-| `unknown`        | uncategorized — inspect `.cause`                      | No        |
+| `kind`           | Meaning                                                                                           | Retryable |
+| ---------------- | ------------------------------------------------------------------------------------------------- | --------- |
+| `invalid_auth`   | 401, missing/empty `apiKey`, or a 403 the adapter did not reclassify                              | No        |
+| `rate_limited`   | 429 — provider quota exceeded                                                                     | Yes       |
+| `server`         | 5xx — transient provider error                                                                    | Yes       |
+| `timeout`        | exceeded `config.timeoutMs` or a network timeout                                                  | Yes       |
+| `aborted`        | caller's `AbortSignal` fired                                                                      | No        |
+| `bad_request`    | 400/422, or a request the library rejected before I/O                                             | No        |
+| `content_filter` | provider refused the call for safety / AUP (Gemini 200-path blocks; xAI 403 input-safety overlay) | No        |
+| `unknown`        | uncategorized — inspect `.cause`                                                                  | No        |
 
 ```ts
 import { LlmError } from '@gullabs/core'

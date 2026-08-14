@@ -463,3 +463,24 @@ describe('fixture: 09-error-taxonomy', () => {
     expect(result.kind).toBe('invalid_auth')
   })
 })
+
+describe('fixture: 15-safety-check-403', () => {
+  const safetyFixture = loadFixture<{
+    safety_check_cyber: {
+      status: number
+      error: string
+    }
+  }>('15-safety-check-403.json')
+
+  it('classifies the recorded string-body 403 as content_filter', () => {
+    const captured = safetyFixture.safety_check_cyber
+    const result = classifyXaiError({
+      status: captured.status,
+      error: captured.error,
+    })
+    expect(result.kind).toBe('content_filter')
+    expect(result.retryable).toBe(false)
+    expect(result.httpStatus).toBe(403)
+    expect(result.provider).toBe('xai')
+  })
+})

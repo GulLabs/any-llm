@@ -390,7 +390,7 @@ Reuse existing store classification (`classifyXaiError` / Google `classifyError`
 | Situation       | `LlmError.kind`                         |
 | --------------- | --------------------------------------- |
 | empty id        | `bad_request`                           |
-| 401/403         | `invalid_auth`                          |
+| 401/403         | `invalid_auth` (structured safety body → `content_filter`; ADR-028) |
 | 429             | `rate_limited`                          |
 | 5xx / transport | `server` (retryable per existing rules) |
 | abort           | `aborted`                               |

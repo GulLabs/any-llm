@@ -633,6 +633,21 @@ describe('XaiFileStore edge cases', () => {
     })
   })
 
+  it('get 403 with the recorded safety-check body is content_filter', async () => {
+    const { fetch } = makeFetch(() =>
+      textResponse(
+        'Content violates usage guidelines. Failed check: SAFETY_CHECK_TYPE_CYBER',
+        403,
+      ),
+    )
+    const store = new XaiFileStore({ auth: fakeAuth, fetch })
+    await expect(store.get('file_1')).rejects.toMatchObject({
+      kind: 'content_filter',
+      provider: 'xai',
+      retryable: false,
+    })
+  })
+
   it('upload missing id → server error', async () => {
     const { fetch } = makeFetch(() => jsonResponse({ filename: 'x' }))
     const store = new XaiFileStore({ auth: fakeAuth, fetch })

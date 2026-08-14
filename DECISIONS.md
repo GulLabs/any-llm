@@ -1554,3 +1554,60 @@ required consumer migration: `ALTER TABLE llm_calls ALTER COLUMN raw_usage DROP 
 than loud); ADR-025 (the `attemptNumber: 0` synthetic pre-attempt record, one of the two paths that
 produces `rawUsage: null`); ADR-026 (precedent for `schema.ts`-as-source-of-truth with no migration
 framework in this package).
+
+---
+
+## ADR-028: HTTP Status Is a Hint; Adapters Overlay Structured Bodies
+
+**Status:** Accepted (Codex-signed 2026-08-14; design in `docs/error-classification-design.md`)
+
+**Context:**
+`classifyHttpStatus` maps 403 → `invalid_auth` unconditionally. That is a reasonable
+_default_ for a bare permission failure, but providers overload 403. xAI's Responses
+API returns HTTP 403 with a structured body prefix
+`"Content violates usage guidelines"` (live-captured 2026-08-14 as
+`SAFETY_CHECK_TYPE_CYBER` on `grok-4.5`) for input safety / AUP blocks. Without an
+overlay, `classifyXaiError` left that as `invalid_auth`. Ledger `status` collapsed to
+`api_error`; hosts that branch on `kind` (Sentry, Temporal `nonRetryableErrorTypes`)
+routed a content-policy refusal down the auth path.
+
+The same class of defect already had a precedent: xAI invalid API keys arrive as
+HTTP **400**, and `classifyXaiError` overlays the structured prefix
+`"Incorrect API key provided"` to `invalid_auth`. Gemini safety blocks arrive as
+HTTP **200** + `promptFeedback.blockReason` and already throw `content_filter`.
+
+**Decision:**
+
+1. **HTTP status is a hint, not a kind.** `classifyHttpStatus(403)` stays
+   `invalid_auth`. Core stays provider-agnostic and does not grow xAI string prefixes.
+2. **Adapters overlay from a structured parsed body only** — never free-form
+   `Error.message` (anti-echo). xAI 403 + body prefix
+   `"Content violates usage guidelines"` → `content_filter`, `retryable: false`.
+   A bare 403 without that body stays `invalid_auth`.
+3. **`content_filter` covers input and output** safety / AUP refusals. Comments that
+   said "refused output" are wrong.
+4. **No new `LlmErrorKind`.** `content_filter` is the cross-provider kind Google
+   already uses.
+5. **Do not rewrite Google file/cache store classifiers** in this change. ADR-024
+   keeps non-idempotent `upload()` / `create()` non-retryable; `classifyGoogleError`'s
+   transport overlay would flip those to `retryable: true`. Construction
+   (`getClient()`) on upload/create is outside the classified catch and stays raw.
+6. **Do not invent unrecorded shapes.** Positive tests use the recorded openai
+   `PermissionDeniedError` string hoist only. Unknown xAI 200 `incomplete` reasons
+   stay `finishReason: 'other'` until a live 200 safety fixture exists.
+7. **Classification repairs onto an existing kind are patches**, matching the
+   transport `unknown` → `server` precedent (xAI 0.2.4 / Google 0.8.2).
+
+**Consequences:**
+
+- Hosts that mapped this 403 to an auth error type will now see `content_filter`.
+  That is the intended repair, not a compatibility break. No shim, no alias.
+- Prefix drift (xAI rewords the 403 body) falls back to `invalid_auth`. Fail-closed
+  on unrecognized bodies; recapture, do not guess.
+- Docs (SPEC, architecture, skill, READMEs, classifier JSDoc) state the
+  default-vs-overlay rule. Historical Files plans get a one-line clarification only.
+
+**References:** ADR-003 (closed `LlmErrorKind` union); ADR-024 (non-idempotent store
+mutations stay non-retryable); issue
+[#65](https://github.com/GulLabs/any-llm/issues/65);
+`docs/error-classification-design.md`.
