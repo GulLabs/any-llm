@@ -4,7 +4,7 @@
 source of truth for LLM facts that are universal across hosts: provider, model, usage, cost,
 warnings, error classification, provider metadata, and the IDs the library owns.
 
-If your application needs domain-specific anchors such as `reportId`, `workflowId`, `matterId`, or
+If your application needs domain-specific anchors such as `reportId`, `workflowId`, `jobId`, or
 artifact keys, keep those in a host-owned sidecar table keyed by `attemptId`. Do not fork the base
 ledger shape unless you have a concrete reason to stop consuming the shared sink.
 
@@ -121,17 +121,17 @@ export const llmCallContext = pgTable(
     attemptId: text('attempt_id')
       .primaryKey()
       .references(() => llmCalls.attemptId, { onDelete: 'cascade' }),
-    matterId: text('matter_id').notNull(),
-    auditRunId: text('audit_run_id'),
+    jobId: text('job_id').notNull(),
+    workflowRunId: text('workflow_run_id'),
     documentId: text('document_id'),
-    moduleId: text('module_id'),
-    inputR2Key: text('input_r2_key'),
+    stepId: text('step_id'),
+    inputObjectKey: text('input_object_key'),
     debugPayload: jsonb('debug_payload'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    index('llm_call_context_matter_id_idx').on(table.matterId),
-    index('llm_call_context_audit_run_id_idx').on(table.auditRunId),
+    index('llm_call_context_job_id_idx').on(table.jobId),
+    index('llm_call_context_workflow_run_id_idx').on(table.workflowRunId),
     index('llm_call_context_document_id_idx').on(table.documentId),
   ],
 )
@@ -206,7 +206,7 @@ Host-domain join (index-backed):
 
 ```sql
 select
-  c.matter_id,
+  c.job_id,
   l.attempt_id,
   l.model,
   l.status,
@@ -214,7 +214,7 @@ select
   l.queue_delay_ms
 from llm_call_context c
 join llm_calls l on l.attempt_id = c.attempt_id
-where c.matter_id = $1
+where c.job_id = $1
 order by l.created_at asc;
 ```
 

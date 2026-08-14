@@ -354,7 +354,7 @@ function matchesXaiTransportSignature(err: unknown): boolean {
 
 /**
  * True iff `rawErr` is (or wraps) a transport-level connection failure —
- * observed live killing Temporal-orchestrated audit runs when the `openai`
+ * observed live killing Temporal-orchestrated host runs when the `openai`
  * SDK's `APIConnectionError` ("Connection error.") fell through
  * `classifyError`'s generic HTTP-status classification to `kind: 'unknown',
  * retryable: false`.

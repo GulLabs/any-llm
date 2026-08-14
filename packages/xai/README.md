@@ -85,7 +85,7 @@ const store = new XaiFileStore({
 
 const handle = await store.upload({
   data: pdfBytes,
-  filename: 'matter.pdf',
+  filename: 'document.pdf',
   mimeType: 'application/pdf',
   expiresAfterSeconds: 86_400, // 24h; range 3600…2592000
 })

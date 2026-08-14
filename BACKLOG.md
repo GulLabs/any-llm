@@ -24,7 +24,7 @@ paths to other repos.
 - **Scope:** `XaiFileStore` (upload with `expires_after`, get, list, idempotent delete);
   core `FileRefPart` + Responses `input_file.file_id` attach; tests; no Collections in v1;
   no ambient env auth.
-- **Host guidance:** prefer explicit TTL on ephemeral uploads; permanent matter files
+- **Host guidance:** prefer explicit TTL on ephemeral uploads; permanent files
   discouraged; cleanup idempotent (404 = success).
 - **Next step:** none for library — hosts consume published packages. Follow-on **B-005**
   for fail-closed delete (shipped).

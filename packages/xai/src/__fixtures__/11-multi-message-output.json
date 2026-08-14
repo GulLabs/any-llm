@@ -1,5 +1,5 @@
 {
-  "_note": "Modeled on a live defect observed 2026-07-10 (a consumer Grok e2e run): xAI's Responses API returned TWO `type: 'message'` output items in one response under strict json_schema mode (grok-4.5, reasoning effort high). Each item was a complete, independently-valid JSON document. Naively concatenating output_text across all message items produced `...}\\n}{\\n\"reportAudit\": ...` — invalid JSON. The adapter must take only the LAST message item's output_text as the result text.",
+  "_note": "Modeled on a live defect observed 2026-07-10: xAI's Responses API returned TWO `type: 'message'` output items in one response under strict json_schema mode (grok-4.5, reasoning effort high). Each item was a complete, independently-valid JSON document. Naively concatenating output_text across all message items produced `...}\\n}{\\n\"report\": ...` — invalid JSON. Schema field names in this fixture were renamed for publication; the multi-message shape is preserved. The adapter must take only the LAST message item's output_text as the result text.",
   "status": 200,
   "body": {
     "created_at": 1783745403,
@@ -13,7 +13,7 @@
         "id": "rs_3d856199-d477-9156-8243-multi0001",
         "summary": [
           {
-            "text": "Reviewing the documents for the requested audit output.\n",
+            "text": "Reviewing the documents for the requested structured output.\n",
             "type": "summary_text"
           }
         ],
@@ -24,7 +24,7 @@
         "content": [
           {
             "type": "output_text",
-            "text": "{\"reportAudit\":{\"findings\":[],\"status\":\"superseded-draft\"}}",
+            "text": "{\"report\":{\"items\":[],\"status\":\"draft\"}}",
             "logprobs": [],
             "annotations": []
           }
@@ -38,7 +38,7 @@
         "content": [
           {
             "type": "output_text",
-            "text": "{\"reportAudit\":{\"findings\":[{\"module\":\"custody\",\"severity\":\"high\"}],\"status\":\"final\"}}",
+            "text": "{\"report\":{\"items\":[{\"id\":\"item-1\",\"severity\":\"high\"}],\"status\":\"final\"}}",
             "logprobs": [],
             "annotations": []
           }
@@ -62,11 +62,11 @@
         "schema": {
           "type": "object",
           "properties": {
-            "reportAudit": {
+            "report": {
               "type": "object"
             }
           },
-          "required": ["reportAudit"]
+          "required": ["report"]
         }
       }
     },
@@ -109,6 +109,6 @@
     "safety_identifier": null,
     "error": null,
     "instructions": null,
-    "output_text": "{\"reportAudit\":{\"findings\":[],\"status\":\"superseded-draft\"}}{\"reportAudit\":{\"findings\":[{\"module\":\"custody\",\"severity\":\"high\"}],\"status\":\"final\"}}"
+    "output_text": "{\"report\":{\"items\":[],\"status\":\"draft\"}}{\"report\":{\"items\":[{\"id\":\"item-1\",\"severity\":\"high\"}],\"status\":\"final\"}}"
   }
 }
