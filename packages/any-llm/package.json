@@ -27,7 +27,7 @@
     "build": "tsup"
   },
   "dependencies": {
-    "@google/genai": "^1.45.0 || ^2",
+    "@google/genai": "^2.16.0",
     "@gullabs/core": "workspace:*",
     "@gullabs/google": "workspace:*"
   },
