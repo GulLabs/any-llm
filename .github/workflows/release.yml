@@ -26,6 +26,45 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.workflow_run.head_sha }}
 
+      - name: Check repository.url matches GITHUB_REPOSITORY
+        run: |
+          node --input-type=module <<'EOF'
+          import { readdirSync, readFileSync } from 'node:fs'
+          import { join } from 'node:path'
+
+          const expected = process.env.GITHUB_REPOSITORY
+          if (!expected) {
+            throw new Error('GITHUB_REPOSITORY is unset')
+          }
+
+          const failures = []
+          for (const entry of readdirSync('packages', { withFileTypes: true })) {
+            if (!entry.isDirectory()) continue
+            let pkg
+            try {
+              pkg = JSON.parse(readFileSync(join('packages', entry.name, 'package.json'), 'utf8'))
+            } catch (error) {
+              if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') continue
+              throw error
+            }
+            if (pkg.private === true || typeof pkg.name !== 'string') continue
+            const url = String(pkg.repository?.url ?? '')
+            const match = url.match(/^(?:git\+)?https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?$/)
+            const path = match?.[1]
+            if (path === undefined) {
+              failures.push(`${entry.name}: unparseable repository.url=${JSON.stringify(url)}`)
+            } else if (path !== expected) {
+              failures.push(`${entry.name}: repository.url path ${path} !== ${expected}`)
+            }
+          }
+          if (failures.length > 0) {
+            console.error(failures.join('\n'))
+            process.exitCode = 1
+          } else {
+            console.log(`repository.url path matches ${expected}`)
+          }
+          EOF
+
       - name: Setup pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
