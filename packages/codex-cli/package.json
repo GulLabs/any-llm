@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/gullabs/any-llm.git",
+    "url": "git+https://github.com/GulLabs/any-llm.git",
     "directory": "packages/codex-cli"
   },
   "main": "./dist/index.cjs",
@@ -48,6 +48,6 @@
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/gullabs/any-llm/tree/main/packages/codex-cli#readme",
-  "bugs": "https://github.com/gullabs/any-llm/issues"
+  "homepage": "https://github.com/GulLabs/any-llm/tree/main/packages/codex-cli#readme",
+  "bugs": "https://github.com/GulLabs/any-llm/issues"
 }

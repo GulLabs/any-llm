@@ -8,6 +8,22 @@ This repository is public. The Release workflow requests `id-token: write` and s
 
 If the repository is ever made private again, npm will reject those provenance bundles (`E422 Unsupported GitHub Actions source repository visibility: "private"`). Disable both `id-token: write` and `NPM_CONFIG_PROVENANCE` in that case.
 
+When `NPM_CONFIG_PROVENANCE=true`, npm compares the manifest `repository.url` against the provenance attestation's `sourceRepositoryURI` (derived from the Actions OIDC claims, which include `GITHUB_REPOSITORY`). The org/repo path must be `GulLabs/any-llm` with that casing. A `git+https://….git` form is valid npm metadata; change casing only. The emergency laptop path does not attach this provenance bundle, so the casing check is a CI-publish constraint.
+
+Verbatim registry error from Release [31787709259](https://github.com/GulLabs/any-llm/actions/runs/31787709259):
+
+```
+E422 422 Unprocessable Entity - PUT https://registry.npmjs.org/@gullabs%2fxai
+Error verifying sigstore provenance bundle: Failed to validate repository
+information: package.json: "repository.url" is
+"git+https://github.com/gullabs/any-llm.git", expected to match
+"https://github.com/GulLabs/any-llm" from provenance
+```
+
+The Release workflow fails fast if any public package's `repository.url` path does not equal `GITHUB_REPOSITORY`, before `changeset publish` starts. `packages/core/src/package-metadata.test.ts` asserts the same path on every public package and that this file lists each one. After an org/repo rename, update that test's `repoPath` first.
+
+Registry provenance validation is not exercised by `npm publish --dry-run`. A rejected publish does not consume that package's version, so retry by rolling the casing fix forward — do not revert to the lowercase path. `changeset publish` is sequential: if a later package fails after an earlier one succeeded, the published versions are immutable. Before merging a metadata-only fix, verify with `npm view @gullabs/<pkg> version` and `git ls-remote --tags origin` and add a patch changeset for any version already on the registry. If a later Release still returns E422 after the path matches, check that `NPM_CONFIG_PROVENANCE` actually attached a bundle rather than mutating the URL shape.
+
 ## How it works
 
 1. **Add a changeset** while you work — which packages, which semver bump, what changed.
