@@ -91,7 +91,7 @@ export interface LlmCallRecord {
    * | `'api_error'`    | Auth/rate-limit/server/bad-request/unknown     |
    * | `'timeout'`      | Request exceeded timeout                       |
    * | `'aborted'`      | Caller cancelled via AbortSignal               |
-   * | `'content_filter'` | Provider refused output for safety reasons   |
+   * | `'content_filter'` | Provider refused the call for safety / AUP  |
    *
    * Pre-attempt refusals (`attemptNumber: 0` — see above) land in these same
    * buckets via the error's `LlmErrorKind`; they are distinguished from a

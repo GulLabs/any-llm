@@ -374,8 +374,9 @@ Core imports no ORM; a host with a different store implements `UsageSink` direct
 - Usage: read `usageMetadata` → `promptTokenCount`→inputTokens, `candidatesTokenCount`→outputTokens,
   `cachedContentTokenCount`→cachedInputTokens, `thoughtsTokenCount`→thinkingTokens; copy whole object
   to `usage.raw`; populate `details`. Enforce GROSS convention.
-- Errors: classify 401/403→invalid_auth, 429→rate_limited(+retryAfter), 5xx→server, timeout→timeout,
-  400→bad_request, safety→content_filter.
+- Errors: classify 401→invalid_auth; 403→invalid_auth unless a provider overlay reclassifies;
+  429→rate_limited(+retryAfter), 5xx→server, timeout→timeout, 400→bad_request;
+  safety (HTTP or 200-path)→content_filter.
 - **Never executes tools, never loops, never persists.** Pure request⇄response mapping.
 
 ---

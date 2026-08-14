@@ -1,0 +1,10 @@
+{
+  "safety_check_cyber": {
+    "status": 403,
+    "error": "Content violates usage guidelines. Failed check: SAFETY_CHECK_TYPE_CYBER",
+    "xRequestId": "cc8fa455-cfde-9a5e-a4c3-58f5afca4f14",
+    "captured": "2026-08-14",
+    "model": "grok-4.5",
+    "note": "openai PermissionDeniedError: err.status=403, err.code=undefined, err.error=plain string. Prompt was the 17-char phrase recorded in issue #65."
+  }
+}

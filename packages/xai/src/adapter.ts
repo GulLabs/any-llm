@@ -317,6 +317,23 @@ function isXaiAuthFailureBody(rawErr: unknown): boolean {
 }
 
 /**
+ * Structured-body safety-check signature, taken from the live 2026-08-14
+ * capture (`__fixtures__/15-safety-check-403.json`): HTTP 403 with
+ * `err.error` as the plain string
+ * `"Content violates usage guidelines. Failed check: SAFETY_CHECK_TYPE_CYBER"`.
+ *
+ * Match the PREFIX only — `SAFETY_CHECK_TYPE_*` suffixes vary. Free-form
+ * `Error.message` is never scanned (same anti-echo rule as the auth overlay).
+ */
+const XAI_SAFETY_CHECK_MESSAGE_PREFIX = 'Content violates usage guidelines'
+
+/** True iff the structured body matches xAI's recorded safety-check signature. */
+function isXaiSafetyCheckBody(rawErr: unknown): boolean {
+  const text = extractXaiErrorBodyText(rawErr)
+  return text !== undefined && text.startsWith(XAI_SAFETY_CHECK_MESSAGE_PREFIX)
+}
+
+/**
  * Message/errno signatures of a transport-level failure: the request never
  * reached xAI's servers (or the connection was severed mid-flight), so there
  * is no HTTP response for {@link classifyHttpStatus} to route by status.
@@ -385,28 +402,23 @@ function isXaiTransportError(rawErr: unknown): boolean {
  * Classify a raw error thrown from the xAI Responses API call into a typed
  * {@link LlmError}.
  *
- * xAI's Responses API returns HTTP 400 (NOT 401) for an invalid API key, so
- * generic {@link classifyHttpStatus}-based classification (which maps 400 →
- * `bad_request`) is wrong for this one case. This function special-cases it:
- * a 400 response whose STRUCTURED parsed body matches the exact recorded
- * xAI auth-failure signature (`code: 'invalid-argument'` AND message prefix
- * `"Incorrect API key provided"` — see fixture 09) is reclassified as
- * `invalid_auth`. Free-form `Error.message` text is never scanned, so a 400
- * whose message merely *mentions* an API key (e.g. schema validation echoing
- * user content) stays `bad_request`. When the structured body is unavailable
- * or unparseable, classification falls through to the status-based
- * `classifyError` from `@gullabs/core`.
+ * HTTP status is a hint, not a kind. Overlays inspect the STRUCTURED parsed
+ * body only — never free-form `Error.message` — so echoed user content cannot
+ * change classification.
  *
- * A second special case widens `classifyError`'s generic fallback: when the
- * base classification lands on `kind: 'unknown'` (no HTTP status to route
- * by) AND the raw error matches a known transport-failure signature (see
- * {@link isXaiTransportError}), it is reclassified `kind: 'server',
- * retryable: true` — the same "provider fault, not caller fault, safe to
- * retry" bucket this adapter's `countTokens` path already uses for
- * provider-side failures with no HTTP status. A connection that never
- * reached xAI is not the caller's fault and is safe to retry; it must never
- * be surfaced as the non-retryable `unknown` kind, which Temporal treats as
- * fatal and uses to kill the run outright.
+ * 1. Already an {@link LlmError} → returned unchanged (including an untagged
+ *    one).
+ * 2. HTTP 400 whose structured body starts with
+ *    `"Incorrect API key provided"` (fixture 09; prefix only — the SDK may
+ *    drop `code`) → `invalid_auth`.
+ * 3. HTTP 403 whose structured body starts with
+ *    `"Content violates usage guidelines"` (fixture 15; `SAFETY_CHECK_TYPE_*`
+ *    suffixes vary) → `content_filter`. A bare 403 without that body stays
+ *    the core default, `invalid_auth`.
+ * 4. `kind: 'unknown'` with a known transport-failure signature (see
+ *    {@link isXaiTransportError}) → `server`, retryable. A connection that
+ *    never reached xAI is not the caller's fault.
+ * 5. Else rebuild the core classification tagged `provider: 'xai'`.
  */
 export function classifyXaiError(rawErr: unknown): LlmError {
   if (rawErr instanceof LlmError) {
@@ -420,6 +432,18 @@ export function classifyXaiError(rawErr: unknown): LlmError {
       kind: 'invalid_auth',
       retryable: false,
       httpStatus: base.httpStatus,
+      ...(base.retryAfterMs !== undefined ? { retryAfterMs: base.retryAfterMs } : {}),
+      provider: 'xai',
+      cause: base.cause ?? rawErr,
+    })
+  }
+
+  if (base.httpStatus === 403 && isXaiSafetyCheckBody(rawErr)) {
+    return new LlmError(base.message, {
+      kind: 'content_filter',
+      retryable: false,
+      httpStatus: base.httpStatus,
+      ...(base.retryAfterMs !== undefined ? { retryAfterMs: base.retryAfterMs } : {}),
       provider: 'xai',
       cause: base.cause ?? rawErr,
     })
@@ -429,6 +453,8 @@ export function classifyXaiError(rawErr: unknown): LlmError {
     return new LlmError(base.message, {
       kind: 'server',
       retryable: true,
+      ...(base.httpStatus !== undefined ? { httpStatus: base.httpStatus } : {}),
+      ...(base.retryAfterMs !== undefined ? { retryAfterMs: base.retryAfterMs } : {}),
       provider: 'xai',
       cause: base.cause ?? rawErr,
     })

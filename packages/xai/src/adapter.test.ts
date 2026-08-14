@@ -8,10 +8,11 @@
  */
 
 import { describe, it, expect, vi } from 'vitest'
-import { LlmError } from '@gullabs/core'
+import { LlmError, createClient } from '@gullabs/core'
 import type { ResolvedRequest, AdapterCtx, ModelDescriptor } from '@gullabs/core'
-import { fakeXaiResponse, makeFakeXai } from '@gullabs/testing'
+import { fakeXaiResponse, makeFakeXai, RecordingSink } from '@gullabs/testing'
 import { xaiAdapter, classifyXaiError } from './adapter.js'
+import { xaiRegistry } from './models.js'
 import { makeTestDescriptor } from '../../core/src/test-model-descriptor.js'
 
 // ---------------------------------------------------------------------------
@@ -977,6 +978,24 @@ describe('error classification', () => {
     })
   })
 
+  it('classifies a recorded safety-check 403 string body as content_filter', async () => {
+    const client = makeFakeXai(() => {
+      throw {
+        status: 403,
+        error: 'Content violates usage guidelines. Failed check: SAFETY_CHECK_TYPE_CYBER',
+      }
+    })
+    const adapter = xaiAdapter({ client })
+    const err = await adapter.run(makeResolvedReq(), FAKE_CTX).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(LlmError)
+    expect(err).toMatchObject({
+      kind: 'content_filter',
+      retryable: false,
+      httpStatus: 403,
+      provider: 'xai',
+    })
+  })
+
   it('classifyXaiError passes an already-classified LlmError through unchanged', () => {
     const original = new LlmError('boom', { kind: 'timeout', retryable: true })
     expect(classifyXaiError(original)).toBe(original)
@@ -1036,6 +1055,41 @@ describe('error classification', () => {
       error: { message: 'invalid api key' },
     })
     expect(result.kind).toBe('bad_request')
+  })
+
+  it('classifies a 403 whose structured .error starts with the safety prefix as content_filter', () => {
+    const result = classifyXaiError({
+      status: 403,
+      error: 'Content violates usage guidelines. Failed check: SAFETY_CHECK_TYPE_CYBER',
+    })
+    expect(result.kind).toBe('content_filter')
+    expect(result.retryable).toBe(false)
+    expect(result.httpStatus).toBe(403)
+    expect(result.provider).toBe('xai')
+  })
+
+  it('a bare 403 with no structured body stays invalid_auth', () => {
+    const result = classifyXaiError({ status: 403 })
+    expect(result.kind).toBe('invalid_auth')
+    expect(result.retryable).toBe(false)
+    expect(result.httpStatus).toBe(403)
+    expect(result.provider).toBe('xai')
+  })
+
+  it('a 403 whose structured body is a non-safety permission text stays invalid_auth', () => {
+    const result = classifyXaiError({ status: 403, error: 'Permission denied' })
+    expect(result.kind).toBe('invalid_auth')
+    expect(result.httpStatus).toBe(403)
+  })
+
+  it('never scans free-form Error.message for the safety prefix — stays invalid_auth', () => {
+    const err = new Error(
+      'Content violates usage guidelines. Failed check: SAFETY_CHECK_TYPE_CYBER',
+    ) as Error & { status: number }
+    err.status = 403
+    const result = classifyXaiError(err)
+    expect(result.kind).toBe('invalid_auth')
+    expect(result.httpStatus).toBe(403)
   })
 })
 
@@ -1154,5 +1208,37 @@ describe('transport-failure classification', () => {
       retryable: true,
       provider: 'xai',
     })
+  })
+})
+
+describe('engine e2e: safety-check 403 ledger', () => {
+  it('persists content_filter on the sink record', async () => {
+    const client = makeFakeXai(() => {
+      throw {
+        status: 403,
+        error: 'Content violates usage guidelines. Failed check: SAFETY_CHECK_TYPE_CYBER',
+      }
+    })
+    const sink = new RecordingSink()
+    const llm = createClient({
+      adapters: [xaiAdapter({ client })],
+      modelRegistry: xaiRegistry,
+      sink,
+    })
+
+    await expect(
+      llm.generate(
+        {
+          provider: 'xai',
+          model: 'grok-4.5',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hello' }] }],
+        },
+        { auth: { apiKey: 'test-key' } },
+      ),
+    ).rejects.toMatchObject({ kind: 'content_filter' })
+
+    expect(sink.records).toHaveLength(1)
+    expect(sink.last()?.status).toBe('content_filter')
+    expect(sink.last()?.errorKind).toBe('content_filter')
   })
 })

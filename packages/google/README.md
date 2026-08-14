@@ -23,7 +23,6 @@ pnpm add @gullabs/google @gullabs/core @google/genai
 | `geminiModelDescriptors`, `gemmaModelDescriptors`, `defaultGeminiRegistry` | Built-in model descriptors + pre-built registry                                       |
 | `geminiPricingSource()`, `GEMINI_PRICING`, `TIER_FACTOR`                   | Built-in Gemini pricing snapshot and tier-factor map                                  |
 
-
 | `GoogleFileStore` | Files API: upload + poll ACTIVE + delete |
 | `FileDeleteOptions` | `{ failClosed?, signal? }` — opt-in fail-closed delete (parity with `@gullabs/xai`) |
 
@@ -67,7 +66,7 @@ const result = await client.generate(
 - `output.jsonSchema` → `responseMimeType: 'application/json'` + verbatim `responseSchema` when native structured output is enabled; the engine returns parsed output and `outputParsed` without validating shape
 - `providerOptions.google.*` → typed provider-extension lane for admitted keys such as `cachedContent`, `safetySettings`, and exact tool declarations
 - Usage: `promptTokenCount`→`inputTokens`, `candidatesTokenCount`+`thoughtsTokenCount`→`outputTokens` (GROSS)
-- Errors: `401/403`→`invalid_auth`, `429`→`rate_limited`, `5xx`→`server`, timeouts, safety blocks
+- Errors: `401` and a bare `403` default to `invalid_auth`; `429`→`rate_limited`; `5xx`→`server`; timeouts; Gemini safety blocks are a 200-path `content_filter` (`promptFeedback.blockReason` / no candidates), not an HTTP 403
 
 ## Strict model-config expectations
 

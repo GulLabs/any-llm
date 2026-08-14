@@ -17,13 +17,15 @@ import type { StandardSchemaV1 } from './standard-schema.js'
 /**
  * Discriminant for every failure mode the library can surface.
  *
- * - `'invalid_auth'`    — 401/403; credentials wrong or missing.
+ * - `'invalid_auth'`    — 401, or 403 when no provider overlay reclassified;
+ *   credentials wrong, missing, or the key lacks permission.
  * - `'rate_limited'`    — 429; back-off and retry.
  * - `'server'`          — 5xx; transient provider error, retry.
  * - `'timeout'`         — request exceeded `timeoutMs` or network timeout.
  * - `'aborted'`         — caller cancelled via `AbortSignal`.
  * - `'bad_request'`     — 400/422; the request itself is malformed.
- * - `'content_filter'`  — provider refused output for safety reasons.
+ * - `'content_filter'`  — provider refused the call for safety / acceptable-use
+ *   / moderation (input block or output block).
  * - `'unknown'`         — uncategorised; inspect `cause` for details.
  */
 export type LlmErrorKind =
@@ -191,12 +193,17 @@ export interface HttpClassification {
  *
  * | Status      | Kind            | Retryable |
  * |-------------|-----------------|-----------|
- * | 401, 403    | `invalid_auth`  | No        |
+ * | 401         | `invalid_auth`  | No        |
+ * | 403         | `invalid_auth`  | No        |
  * | 408         | `timeout`       | Yes       |
  * | 429         | `rate_limited`  | Yes       |
  * | 400, 422    | `bad_request`   | No        |
  * | 5xx         | `server`        | Yes       |
  * | other       | `unknown`       | No        |
+ *
+ * 403 is the *default* when no adapter overlay has spoken. Providers overload
+ * 403 (permission vs content policy); adapters reclassify from a structured
+ * body, never from free-form `Error.message`.
  *
  * @param status - The HTTP response status code.
  * @param retryAfterMs - When available (from a `Retry-After` header parsed by
