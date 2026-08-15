@@ -7,7 +7,7 @@ This note is for `@gullabs/xai` maintainers. It records what changed in the
 provider surface so a later model-descriptor / pricing / config-schema change
 can be live-verified instead of guessed. **Whether any host application
 should flip production traffic is out of scope here** — that is a host
-decision (for RED LINE, see that repo).
+decision.
 
 ## Current library fact (landed 2026-08-12)
 

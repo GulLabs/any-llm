@@ -3,7 +3,7 @@
 ## Purpose
 
 This document is a handoff for fixing a concrete `any-llm` design gap found while
-testing the host pipeline pipeline, and for auditing the library for similar gaps.
+testing a host pipeline, and for auditing the library for similar gaps.
 
 The immediate bug class:
 

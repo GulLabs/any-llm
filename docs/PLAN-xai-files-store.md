@@ -1,39 +1,39 @@
 # Plan: xAI Files store for `@gullabs/xai` (+ core `file-ref` part)
 
-| Field                     | Value                                                                                                   |
-| ------------------------- | ------------------------------------------------------------------------------------------------------- |
-| **Status**                | DESIGN LOCKED — ready for Claude plan signoff, then implementation                                      |
-| **Date**                  | 2026-08-12                                                                                              |
-| **Packages**              | Primary: `packages/xai`. Core seam: `packages/core` (`FileRefPart`). Optional fake: `packages/testing`. |
-| **Consumer** | Host applications using provider Files for multi-call document attach |
-| **Related hosts plan** | `host-app/docs/ops/AUDIT_RUN_RESILIENCE_AND_PROGRESS_PLAN.md`                                            |
-| **Parity reference**      | `@gullabs/google` `GoogleFileStore` + adapter `file-uri` mapping                                        |
-| **Design principles**     | DESIGN.md P1–P7 (see §4)                                                                                |
-| **Docs verified**         | 2026-08-12 against docs.x.ai Files managing / chat-with-files / upload REST / security FAQ              |
+| Field                  | Value                                                                                                                                                              |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Status**             | SHIPPED — `@gullabs/xai@0.3.0` (`XaiFileStore` + `FileRefPart`); follow-on fail-closed in 0.4.0                                                                    |
+| **Date**               | 2026-08-12                                                                                                                                                         |
+| **Packages**           | Primary: `packages/xai`. Core seam: `packages/core` (`FileRefPart`). Optional fake: `packages/testing`.                                                            |
+| **Consumer**           | Host applications using provider Files for multi-call document attach                                                                                              |
+| **Related hosts plan** | Host-owned run-lifecycle / cleanup docs (out of this repo). Fail-closed delete: [`PLAN-file-store-fail-closed-delete.md`](./PLAN-file-store-fail-closed-delete.md) |
+| **Parity reference**   | `@gullabs/google` `GoogleFileStore` + adapter `file-uri` mapping                                                                                                   |
+| **Design principles**  | DESIGN.md P1–P7 (see §4)                                                                                                                                           |
+| **Docs verified**      | 2026-08-12 against docs.x.ai Files managing / chat-with-files / upload REST / security FAQ                                                                         |
 
 ---
 
 ## 1. Why this is needed (consumer problem)
 
-hosts runs document-heavy multi-module LLM pipelines:
+Hosts run document-heavy multi-call LLM pipelines:
 
-1. Pin a **regulation snapshot** (law/control text) in its own R2 store.
-2. Load **matter documents** (matter documents, matter documents, pitch deck, matter documents, …) as evidence.
-3. Fan out **one structured-output LLM call per audit module** (marketing-rule, custody, …).
+1. Pin shared reference text in their own object store.
+2. Load large source documents as evidence.
+3. Fan out **one structured-output LLM call per unit of work**.
 
 ### Pain today
 
 - Default provider is **xAI Grok** via `@gullabs/xai`.
-- Matter evidence is still sent as **inline extracted text** on every module call (~**150–200k input tokens per module** on a real real document pack).
-- Dominant cost is **re-sending the same matter corpus** N times (ledger: ~$9.93 for one failed run on `grok-4.5`, mostly input tokens).
+- Evidence is still sent as **inline extracted text** on every call (~**150–200k input tokens** on a real document pack).
+- Dominant cost is **re-sending the same corpus** N times (mostly input tokens on a failed `grok-4.5` run).
 - Gemini has first-class **Files + Context Cache** in `@gullabs/google` (`GoogleFileStore`, `GoogleCacheStore`).
-- xAI path has **no** Files store in any-llm. hosts' cleanup path still accidentally constructed Gemini stores on Grok runs → production posture failures.
+- xAI path has **no** Files store in any-llm. Host cleanup paths that accidentally construct Gemini stores on Grok runs fail at runtime.
 
-### Decision (hosts product)
+### Decision (host production)
 
-- **No inline corpus for production Grok audits.**
-- Matter docs are **uploaded to xAI Files** once per audit run, referenced by **`file_id`**, then **deleted**.
-- Regulation snapshot stays in hosts control prompts (not customer Collections by default).
+- **No inline corpus for production Grok multi-call runs.**
+- Source documents are **uploaded to xAI Files** once per run, referenced by **`file_id`**, then **deleted**.
+- Shared reference text stays in host prompts (not xAI Collections by default).
 - Cleanup must be **idempotent**; **default TTL** must expire files if workers die mid-run.
 
 any-llm must expose a clean, tested **xAI Files** surface so hosts (and other apps) do not hand-roll REST forever.
@@ -57,8 +57,8 @@ any-llm must expose a clean, tested **xAI Files** surface so hosts (and other ap
 - **Collections** full RAG product (separate plan if needed).
 - Explicit server tools surface (`web_search`, `x_search`, `code_interpreter`, collections search) and tool-call billing lanes in `computeCost`.
 - Streaming.
-- Public file URL product APIs (`public_url` minting) — hosts must not use public URLs for matter documentss.
-- Replacing hosts' `host corpus port` product layer (any-llm provides **vendor primitives**; apps own run lifecycle).
+- Public file URL product APIs (`public_url` minting) — hosts must not use public URLs for private source documents.
+- Replacing a host's own corpus / lifecycle layer (any-llm provides **vendor primitives**; apps own run lifecycle).
 - Changing Gemini `GoogleFileStore` behavior “for compatibility.”
 - Faking file-storage $ into `computeCost` token lanes (P4: cost is freeze-at-write for generate usage only).
 - Chunked upload (`/v1/files:initialize` / `:uploadChunks`) — single-shot multipart covers ≤48–50 MB docs.
@@ -123,7 +123,7 @@ Storage is **cheap vs token re-send**. Still require TTL + delete so failed clea
 | Upload readiness      | Poll until `ACTIVE`                        | **No poll** — metadata returned immediately                                 |
 | TTL                   | Provider ~48h auto (read-only `expiresAt`) | Caller-set `expiresAfterSeconds`; validate 3600..2592000                    |
 | Handle id             | `name` + `uri`                             | `id` (+ optional filename/bytes/…)                                          |
-| Delete API            | `delete(handle)`                           | `delete(fileId \| handle)` — string id primary for hosts Postgres maps   |
+| Delete API            | `delete(handle)`                           | `delete(fileId \| handle)` — string id primary for hosts Postgres maps      |
 | Delete 404            | Swallowed via fail-open                    | **Explicit success** (idempotent) before fail-open path                     |
 | Delete other errors   | `onDeleteError` + void                     | Same + optional `logger.error` default                                      |
 | Logger                | Optional `Logger`                          | Same                                                                        |
@@ -207,7 +207,7 @@ export interface XaiFileUploadInput {
   mimeType?: string
   /**
    * TTL seconds. Must be in [3600, 2592000] when set.
-   * Omit only for permanent storage (discouraged for matter corpus).
+   * Omit only for permanent storage (discouraged for long-lived host files).
    */
   expiresAfterSeconds?: number
   /** Default `"assistants"`. */
@@ -358,11 +358,11 @@ Optional live smoke (credentials present only): upload tiny text → generate st
 
 xAI allows **1 hour … 30 days**, or permanent if omitted.
 
-| Parameter         | Library                           | hosts production                  |
-| ----------------- | --------------------------------- | ------------------------------------ |
-| Default on upload | **None** (explicit caller choice) | **86400** (24h) always passed        |
-| Min / max         | Validate 3600..2592000            | Same                                 |
-| Permanent         | Allowed by library                | **Disallowed** on matter corpus path |
+| Parameter         | Library                           | Host production                            |
+| ----------------- | --------------------------------- | ------------------------------------------ |
+| Default on upload | **None** (explicit caller choice) | **86400** (24h) always passed              |
+| Min / max         | Validate 3600..2592000            | Same                                       |
+| Permanent         | Allowed by library                | **Disallowed** on the host production path |
 
 ### Cleanup contract (hosts; library enables)
 
@@ -384,7 +384,7 @@ sweep: re-delete unreleased / past expires
 5. Exports, README, surface tests, no-ambient still green.
 6. Changeset(s); `pnpm quality`.
 7. Claude signoff per commit; PR → main → Release workflow → `npm view` verify.
-8. hosts (separate repo): `host corpus adapter` consumes store — **out of this PR**.
+8. Hosts (separate repo): their own corpus / lifecycle adapter consumes the store — **out of this PR**.
 
 ### File layout
 
@@ -462,14 +462,14 @@ await store.delete(handle.id) // idempotent
 
 ---
 
-## 11. Priority relative to hosts resilience plan
+## 11. Priority relative to host resilience work
 
-| Order                 | Work                                                     |
-| --------------------- | -------------------------------------------------------- |
-| hosts P0           | Findings-per-module + Grok must not call Gemini release  |
-| **This any-llm plan** | XaiFileStore + FileRefPart + generate attach             |
-| hosts P1           | `host corpus adapter` only; **no production inline** for Grok |
-| Later                 | Collections (global reg library only, if ever)           |
+| Order                 | Work                                                        |
+| --------------------- | ----------------------------------------------------------- |
+| Host P0               | Per-unit results + Grok must not call Gemini release        |
+| **This any-llm plan** | XaiFileStore + FileRefPart + generate attach                |
+| Host P1               | Host corpus adapter only; **no production inline** for Grok |
+| Later                 | Collections (shared reference library only, if ever)        |
 
 ---
 

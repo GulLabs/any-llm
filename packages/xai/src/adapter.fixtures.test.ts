@@ -403,8 +403,8 @@ describe('fixture: 11-multi-message-output', () => {
       makeResolvedReq({
         outputJsonSchema: {
           type: 'object',
-          properties: { reportAudit: { type: 'object' } },
-          required: ['reportAudit'],
+          properties: { report: { type: 'object' } },
+          required: ['report'],
         },
       }),
       FAKE_CTX,
@@ -414,11 +414,11 @@ describe('fixture: 11-multi-message-output', () => {
     // the two documents concatenated (which would be invalid JSON, and is
     // exactly the shape of the live defect this fixture is modeled on).
     expect(result.text).toBe(
-      '{"reportAudit":{"findings":[{"module":"custody","severity":"high"}],"status":"final"}}',
+      '{"report":{"items":[{"id":"item-1","severity":"high"}],"status":"final"}}',
     )
     expect(result.rawStructured).toEqual({
-      reportAudit: {
-        findings: [{ module: 'custody', severity: 'high' }],
+      report: {
+        items: [{ id: 'item-1', severity: 'high' }],
         status: 'final',
       },
     })

@@ -12,8 +12,8 @@
 ## Summary
 
 This document captures three targeted changes to `@gullabs/any-llm` that surfaced during the
-first real integration: wiring the host's Temporal-driven dossier pipeline to the library. AI
-Studio stores response schemas as hot-editable JSON in its database (no code deploy cycle), passes
+first real integration: wiring a host Temporal-driven pipeline to the library. That host
+stores response schemas as hot-editable JSON in its database (no code deploy cycle), passes
 `attemptId` as a correlation FK into its own context table, and runs Gemini Flex calls that need
 an automatic fallback to standard-tier on capacity pressure. None of these three patterns fit the
 library's current surface cleanly.
@@ -755,7 +755,7 @@ export interface LlmRequest {
   // ... existing fields ...
   /**
    * Caller-supplied text handle for this call.
-   * Examples: a dossier UUID, a composite like "stage-03:dossier:abc123:run:xyz".
+   * Examples: a job UUID, a composite like "stage-03:job:abc123:run:xyz".
    * Not interpreted by the library; persisted as a first-class indexed column
    * so ledger queries filter without JSONB expression indexes.
    * Optional — null when absent.
@@ -766,7 +766,7 @@ export interface LlmRequest {
 
 `externalId` is threaded through the engine into `BuildRecordInput`, `LlmCallRecord`, and
 the drizzle schema as a new indexed text column `external_id text` (nullable, non-unique —
-a single dossier produces multiple calls).
+a single job produces multiple calls).
 
 ### Drizzle schema additions
 

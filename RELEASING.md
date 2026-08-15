@@ -117,6 +117,8 @@ changeset publish   # requires npm login on this machine
 
 Prefer CI. A laptop publish will not attach the same provenance as the Actions OIDC identity.
 
+Some pre-open-source CHANGELOG entries were later anonymized in-repo. The repo CHANGELOG is canonical; older GitHub Releases and already-published npm tarballs are historical snapshots.
+
 ## Snapshot / pre-releases
 
 ```bash

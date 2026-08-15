@@ -2,23 +2,25 @@
 
 | Field                    | Value                                                                                         |
 | ------------------------ | --------------------------------------------------------------------------------------------- |
-| **Status**               | DESIGN LOCKED — Claude **APPROVE_WITH_NITS** (`8dcad035`); ready for implementation           |
+| **Status**               | SHIPPED — `@gullabs/xai@0.4.0` / `@gullabs/google@0.9.0` / `@gullabs/testing@0.5.0`           |
 | **Date**                 | 2026-08-12                                                                                    |
-| **Origin** | Host feedback after Files v1 publish |
+| **Origin**               | Host feedback after Files v1 publish                                                          |
 | **Packages (P0)**        | `packages/xai` (`XaiFileStore`), `packages/google` (`GoogleFileStore`)                        |
 | **Packages (P1, later)** | `packages/xai` (usage/cost), `packages/testing` (fake), docs / meta-package                   |
 | **Related**              | [`docs/PLAN-xai-files-store.md`](./PLAN-xai-files-store.md) (B-002 shipped), DESIGN.md **P5** |
-| **Consumer** | Host applications using provider Files for multi-call document attach |
+| **Consumer**             | Host applications using provider Files for multi-call document attach                         |
+
+P0 (`failClosed`) shipped in the versions above. §1–§2 keep the original problem statement as context. Host finally-catch vs sweep-retry patterns in §3.4 / §8 remain the documented host contract.
 
 ---
 
 ## 1. Problem statement (consumer)
 
-hosts' production Grok path:
+A host production Grok path:
 
-1. Upload matter docs once via `XaiFileStore` (TTL 24h).
+1. Upload source documents once via `XaiFileStore` (TTL 24h).
 2. Attach with core `FileRefPart` → Responses `file_id`.
-3. On run end / orphan sweep: `delete(file_id)`, then mark Postgres rows `host release marker`.
+3. On run end / orphan sweep: `delete(file_id)`, then mark Postgres rows `released_at`.
 
 **Bug class today:** delete is **fail-open only** (DESIGN P5 side-effect style):
 
@@ -26,9 +28,9 @@ hosts' production Grok path:
 - Sweep can mark DB “released” while the file still exists at the provider.
 - Empty / blank `fileId` on xAI also fail-opens via callback (unlike `get` / `getContent`, which throw `bad_request`).
 
-hosts need a **durable-state gate**: only mark released when delete is known-success or known-already-gone (404).
+Hosts need a **durable-state gate**: only mark released when delete is known-success or known-already-gone (404).
 
-They will bump off `0.2.5` → `0.3.0` once this story is agreed (or temporarily rethrow from `onDeleteError` as a bridge).
+`delete(id, { failClosed })` shipped in `@gullabs/xai@0.4.0`. Upload / attach shipped earlier in `0.3.0`.
 
 ---
 
@@ -36,13 +38,13 @@ They will bump off `0.2.5` → `0.3.0` once this story is agreed (or temporarily
 
 ### 2.1 P0 — Fail-closed delete — **VALID**
 
-| Claim                                               | Assessment                                                                                                                                                                             |
-| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claim                                                 | Assessment                                                                                                                                                                             |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Fail-open delete is wrong for background orphan sweep | **Correct.** Cleanup is a control-plane operation that gates durable DB state.                                                                                                         |
-| P5 forbids any throwing delete                      | **Incorrect reading of P5.** P5 protects the **LLM call** from sink/telemetry/cost side effects. Explicit `delete` is not “a broken sink during generate”; it is the operation itself. |
-| 404 must remain success                             | **Correct.** Idempotent cleanup (double release, sweep after release).                                                                                                                 |
-| Empty `fileId` should throw                         | **Correct.** Caller fault; already the contract for get/content.                                                                                                                       |
-| Need both xAI and Google stores                     | **Correct.** Same lifecycle pattern on Gemini corpus paths; avoid provider skew.                                                                                                       |
+| P5 forbids any throwing delete                        | **Incorrect reading of P5.** P5 protects the **LLM call** from sink/telemetry/cost side effects. Explicit `delete` is not “a broken sink during generate”; it is the operation itself. |
+| 404 must remain success                               | **Correct.** Idempotent cleanup (double release, sweep after release).                                                                                                                 |
+| Empty `fileId` should throw                           | **Correct.** Caller fault; already the contract for get/content.                                                                                                                       |
+| Need both xAI and Google stores                       | **Correct.** Same lifecycle pattern on Gemini corpus paths; avoid provider skew.                                                                                                       |
 
 **Temporary consumer workaround:** throw inside `onDeleteError` recovers 5xx for fail-closed hosts but:
 
@@ -65,7 +67,7 @@ Library support is the right fix.
 - Collections / RAG product
 - Chunked upload (`:initialize` / `:uploadChunks`)
 - Context-cache store for xAI
-- Public file URL minting for private matter documentss
+- Public file URL minting for private source documents
 
 ---
 
@@ -74,16 +76,16 @@ Library support is the right fix.
 ### 3.1 What “done” looks like for hosts
 
 ```ts
-// A) Best-effort only (no DB gate) — default, rare for host corpus
+// A) Best-effort only (no DB gate) — default, rare for long-lived host files
 await store.delete(fileId)
 
-// B) host release in workflow finally — truthful delete, audit run still succeeds
+// B) host release in workflow finally — truthful delete, host run still succeeds
 try {
   await store.delete(fileId, { failClosed: true })
   await db.markReleased(fileId)
 } catch (err) {
-  logger.warn({ err, fileId }, 'corpus.release.delete_failed')
-  // host release marker stays null → sweep + TTL
+  logger.warn({ err, fileId }, 'file.release.delete_failed')
+  // released_at stays null → sweep + TTL
 }
 
 // C) host orphan sweep activity — fail closed so workflow runtime retries
@@ -93,7 +95,7 @@ await db.markReleased(fileId)
 
 Same options shape on **Google** and **xAI** so multi-provider corpus code does not branch on semantics.
 
-**Prefer per-id delete + markReleased in a loop** over fail-closed `deleteAll` when writing `host release marker` (partial provider deletes are possible if `deleteAll` fail-fasts mid-batch).
+**Prefer per-id delete + markReleased in a loop** over fail-closed `deleteAll` when writing `released_at` (partial provider deletes are possible if `deleteAll` fail-fasts mid-batch).
 
 ### 3.2 Principles
 
@@ -132,33 +134,33 @@ Delete is **not** part of `generate()`’s side-effect envelope. Hosts that trea
 
 ### 3.4 Product alignment — what hosts actually need
 
-Source of truth on the consumer side: `host-app/docs/ops/AUDIT_RUN_RESILIENCE_AND_PROGRESS_PLAN.md` §3.3 / §11.3.
+Assumptions about host run-lifecycle (the library does not implement these):
 
-| host rule (locked)                               | What it means for any-llm                                                                                                                                       |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Upload + `FileRefPart` + 24h TTL                     | **Already shipped** in `@gullabs/xai@0.3.0`                                                                                                                     |
-| DELETE idempotent; **404 = success**                 | Keep in **both** fail-open and fail-closed modes                                                                                                                |
-| **Never fail the audit run** because cleanup errored | Library must **not** force fail-closed as default; host `finally` must **catch** if using fail-closed                                                           |
-| **`host release marker` only when delete succeeded**         | Host must not treat “promise resolved” as success under fail-open; need **observable failure** → `failClosed: true` then mark DB only on resolve                |
-| Orphan sweep re-DELETE unreleased rows               | Sweep activity should use **`failClosed: true`** so workflow runtime can **retry** the activity; do not tombstone on throw                                              |
-| TTL safety net if delete never succeeds              | Vendor `expires_at` still deletes the file; DB stays `host release marker IS NULL` until a successful DELETE or expiry hygiene — **correct custody**, not a library bug |
-| Never construct Gemini on Grok path                  | Out of scope for this plan (host factory); Google parity is for Gemini corpus hosts only                                                                    |
-| No Collections / public URLs / production inline     | Still non-goals                                                                                                                                                 |
+| host rule (locked)                                  | What it means for any-llm                                                                                                                                       |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Upload + `FileRefPart` + 24h TTL                    | **Already shipped** in `@gullabs/xai@0.3.0`                                                                                                                     |
+| DELETE idempotent; **404 = success**                | Keep in **both** fail-open and fail-closed modes                                                                                                                |
+| **Never fail the host run** because cleanup errored | Library must **not** force fail-closed as default; host `finally` must **catch** if using fail-closed                                                           |
+| **`released_at` only when delete succeeded**        | Host must not treat “promise resolved” as success under fail-open; need **observable failure** → `failClosed: true` then mark DB only on resolve                |
+| Orphan sweep re-DELETE unreleased rows              | Sweep activity should use **`failClosed: true`** so workflow runtime can **retry** the activity; do not tombstone on throw                                      |
+| TTL safety net if delete never succeeds             | Vendor `expires_at` still deletes the file; DB stays `released_at IS NULL` until a successful DELETE or expiry hygiene — **correct custody**, not a library bug |
+| Never construct Gemini on Grok path                 | Out of scope for this plan (host factory); Google parity is for Gemini corpus hosts only                                                                        |
+| No Collections / public URLs / production inline    | Still non-goals                                                                                                                                                 |
 
 **The bug is not “delete is fail-open.”**  
-The bug is **“host marks `host release marker` after a delete API that cannot fail.”**
+The bug is **“host marks `released_at` after a delete API that cannot fail.”**
 
 ```text
 WRONG (today with fail-open-only delete):
   await store.delete(id)      // always resolves (except we still want 404=ok)
   await db.markReleased(id) // LIED if provider 5xx
 
-RIGHT — release in workflow finally (audit must not fail):
+RIGHT — release in workflow finally (host run must not fail):
   try {
     await store.delete(id, { failClosed: true })
     await db.markReleased(id)   // only on known success / 404
   } catch (err) {
-    log.warn(err)               // leave host release marker null; TTL + sweep recover
+    log.warn(err)               // leave released_at null; TTL + sweep recover
     // do NOT rethrow out of finally
   }
 
@@ -169,16 +171,16 @@ RIGHT — orphan sweep activity (may fail and retry):
 ```
 
 **What we ship (library):** a truthful delete outcome (`void` success vs `LlmError`).  
-**What we do not ship:** DB semantics, workflow runtime policies, or “fail the audit run.” Those stay host-owned (P1).
+**What we do not ship:** DB semantics, workflow runtime policies, or “fail the host run.” Those stay host-owned (P1).
 
 **Customer need check**
 
 | Need                                                          | Covered by P0 plan?                                                                       |
 | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Know delete failed (5xx/network) before writing `host release marker` | **Yes** — `failClosed: true`                                                              |
+| Know delete failed (5xx/network) before writing `released_at` | **Yes** — `failClosed: true`                                                              |
 | 404 / double-delete still OK                                  | **Yes**                                                                                   |
 | Empty `fileId` is caller fault, not silent success            | **Yes** — always throw                                                                    |
-| Release path must not kill the audit run                      | **Yes** — default stays fail-open; docs prescribe catch-in-finally when using fail-closed |
+| Release path must not kill the host run                       | **Yes** — default stays fail-open; docs prescribe catch-in-finally when using fail-closed |
 | Sweep can retry failed deletes                                | **Yes** — fail-closed + activity retry                                                    |
 | Gemini corpus same contract                                   | **Yes** — Google store parity                                                             |
 | attachment_search $ in ledger                                 | **No** — P1 (billing), not custody                                                        |
@@ -186,15 +188,15 @@ RIGHT — orphan sweep activity (may fail and retry):
 
 **Vision alignment (any-llm)**
 
-| Principle                             | Alignment                                                                                                                                |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| P1 host owns world                    | Host chooses mode per call site; owns DB + workflow runtime                                                                                      |
-| P3 thin stores                        | HTTP → void / `LlmError` only                                                                                                            |
-| P5 fail-open side effects             | Default delete remains fail-open (cleanup-as-side-effect). Opt-in fail-closed is **the call** when the host says so — same as upload/get |
-| Greenfield                            | One options bag; no `deleteStrict` dual API; bare-`signal` 2nd arg break OK                                                              |
-| Vendor primitives, not product corpus | We do not implement `host corpus port` / `host release marker`                                                                                         |
+| Principle                              | Alignment                                                                                                                                |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| P1 host owns world                     | Host chooses mode per call site; owns DB + workflow runtime                                                                              |
+| P3 thin stores                         | HTTP → void / `LlmError` only                                                                                                            |
+| P5 fail-open side effects              | Default delete remains fail-open (cleanup-as-side-effect). Opt-in fail-closed is **the call** when the host says so — same as upload/get |
+| Greenfield                             | One options bag; no `deleteStrict` dual API; bare-`signal` 2nd arg break OK                                                              |
+| Vendor primitives, not product storage | We do not implement a host file-lifecycle port / `released_at` column                                                                    |
 
-**Do not ship as P0:** flipping default to fail-closed (would push throws into every `finally` and fight hosts' “never fail the audit run” unless every host catches). Opt-in is the product-correct default.
+**Do not ship as P0:** flipping default to fail-closed (would push throws into every `finally` and fight hosts' “never fail the host run” unless every host catches). Opt-in is the product-correct default.
 
 ---
 
@@ -249,10 +251,10 @@ deleteStrict(id): Promise<void>     // fail-closed
 new XaiFileStore({ auth, failClosed: true })
 ```
 
-| Pros                             | Cons                                                                                            |
-| -------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Pros                          | Cons                                                                                            |
+| ----------------------------- | ----------------------------------------------------------------------------------------------- |
 | Zero per-call noise for hosts | Wrong granularity: same store instance often used for both best-effort finally and strict sweep |
-| —                                | Forces two store instances or surprising global behavior                                        |
+| —                             | Forces two store instances or surprising global behavior                                        |
 
 **Reject as sole mechanism.** Optional **construction default** that per-call `failClosed` overrides is a possible **v1.1** nicety — **not** required for P0.
 
@@ -387,14 +389,14 @@ deleteAll(ids, opts?: FileDeleteOptions): Promise<void>
 
 Reuse existing store classification (`classifyXaiError` / Google `classifyError`):
 
-| Situation       | `LlmError.kind`                         |
-| --------------- | --------------------------------------- |
-| empty id        | `bad_request`                           |
+| Situation       | `LlmError.kind`                                                     |
+| --------------- | ------------------------------------------------------------------- |
+| empty id        | `bad_request`                                                       |
 | 401/403         | `invalid_auth` (structured safety body → `content_filter`; ADR-028) |
-| 429             | `rate_limited`                          |
-| 5xx / transport | `server` (retryable per existing rules) |
-| abort           | `aborted`                               |
-| 404             | **no throw**                            |
+| 429             | `rate_limited`                                                      |
+| 5xx / transport | `server` (retryable per existing rules)                             |
+| abort           | `aborted`                                                           |
+| 404             | **no throw**                                                        |
 
 ### 5.6 Types placement (**LOCKED**)
 
@@ -405,11 +407,11 @@ Reuse existing store classification (`classifyXaiError` / Google `classifyError`
 
 ### 5.7 Docs / versioning
 
-- README sections for both stores: truth table + **§3.4 host patterns** (finally catch vs sweep retry). Explicitly: _failClosed does not mean “fail the audit run” — the host decides propagation._
+- README sections for both stores: truth table + **§3.4 host patterns** (finally catch vs sweep retry). Explicitly: _failClosed does not mean “fail the host run” — the host decides propagation._
 - Changesets: **minor** `@gullabs/xai`, **minor** `@gullabs/google` (new option + empty-id throw is a small behavior change on invalid input).
 - Backlog **B-005** tracks this work.
 - Amend `PLAN-xai-files-store.md` with a pointer to this plan (no rewrite of shipped history).
-- Optional one-liner reply to hosts: safe to bump `0.3.0` now for upload/attach; adopt fail-closed minors for honest `host release marker`; update their §11.3 line from “library fail-open” to “library failClosed + host catch in finally.”
+- Optional one-liner for hosts: `0.3.0` is enough for upload/attach; adopt `0.4.0+` for an honest `released_at`; catch in `finally` rather than treating library fail-open as success.
 
 ### 5.8 Tests (must drive shipped code)
 
@@ -471,23 +473,23 @@ Compose example: `composeProviders([xaiProvider(), googleProvider()])` + separat
 5. README truth tables + consumer snippet.
 6. Changesets (minor xai + google).
 7. `pnpm quality`; Claude signoff per commit; PR → main → Release.
-8. Notify hosts: bump to published minors; wire §3.4 patterns (failClosed + catch in finally; failClosed on sweep); revise their §11.3 delete wording.
+8. Notify hosts: bump to published minors; wire §3.4 patterns (failClosed + catch in finally; failClosed on sweep); revise host delete wording to match.
 
 ---
 
 ## 8. Consumer migration (hosts)
 
-Align `host corpus port.release` / sweep with §3.4 — **do not** mark `host release marker` after fail-open delete.
+Align host file-lifecycle release / sweep with §3.4 — **do not** mark `released_at` after fail-open delete.
 
 ```ts
-// release inside workflow finally — audit run must still succeed
+// release inside workflow finally — host run must still succeed
 for (const id of fileIds) {
   try {
     await store.delete(id, { failClosed: true })
     await db.markReleased(id)
   } catch (err) {
-    logger.warn({ err, id }, 'corpus.release.delete_failed')
-    // leave host release marker null; TTL + sweep
+    logger.warn({ err, id }, 'file.release.delete_failed')
+    // leave released_at null; TTL + sweep
   }
 }
 
@@ -498,11 +500,9 @@ for (const id of unreleasedIds) {
 }
 ```
 
-Update host docs §11.3 wording from “delete errors: log + fail-open library” to “delete with `failClosed: true`; catch in finally so the audit run never fails; only mark `host release marker` on success.”
+Update host docs from “delete errors: log + fail-open library” to “delete with `failClosed: true`; catch in finally so the host run never fails; only mark `released_at` on success.”
 
-**Bridge until library ships:** `onDeleteError: (_id, err) => { throw err }` — only covers callback path, not empty id.
-
-**Bump:** safe to adopt `@gullabs/xai@0.3.0` now for upload/attach; adopt fail-closed minors when published.
+**Shipped:** `@gullabs/xai@0.4.0` / matching Google store — no `onDeleteError` rethrow bridge.
 
 ---
 
@@ -510,21 +510,21 @@ Update host docs §11.3 wording from “delete errors: log + fail-open library�
 
 ### P0
 
-- [ ] `failClosed: true` throws on 5xx/network; default does not
-- [ ] 404 success both modes
-- [ ] Empty id throws `bad_request` always
-- [ ] Google parity
-- [ ] README documents §3.4 (finally catch vs sweep retry); warns against `markReleased` after fail-open delete
-- [ ] Tests + changeset
-- [ ] Product check: host can implement “never fail audit run” **and** “never lie about `host release marker`” without `onDeleteError` rethrow hack
-- [ ] Claude plan APPROVE before implementation; Claude commit signoff on landing commits
-- [ ] Published versions on npm newer than pre-change
+- [x] `failClosed: true` throws on 5xx/network; default does not
+- [x] 404 success both modes
+- [x] Empty id throws `bad_request` always
+- [x] Google parity
+- [x] README documents §3.4 (finally catch vs sweep retry); warns against `markReleased` after fail-open delete
+- [x] Tests + changeset
+- [x] Product check: host can implement “never fail host run” **and** “never lie about `released_at`” without `onDeleteError` rethrow hack
+- [x] Claude plan APPROVE before implementation; Claude commit signoff on landing commits
+- [x] Published versions on npm newer than pre-change
 
 ### P1 (tracked, not this PR’s gate)
 
 - [ ] Tool usage/cost plan written
-- [ ] Fake store (optional)
-- [ ] Multi-provider install docs
+- [x] Fake store (optional)
+- [x] Multi-provider install docs
 
 ---
 
@@ -541,27 +541,24 @@ Update host docs §11.3 wording from “delete errors: log + fail-open library�
 
 ## 11. Decision log
 
-| #   | Decision                                       | Choice                                                              |
-| --- | ---------------------------------------------- | ------------------------------------------------------------------- |
-| D1  | Is fail-closed delete a valid library feature? | **Yes**                                                             |
-| D2  | API shape                                      | **Option A** — `opts.failClosed`                                    |
-| D3  | Default mode                                   | **Fail-open** (unchanged)                                           |
-| D4  | 404                                            | **Success both modes**                                              |
-| D5  | Empty id                                       | **Always throw** (small break)                                      |
-| D6  | `deleteStrict` method                          | **No**                                                              |
-| D7  | Construction-time only flag                    | **No** (optional later default)                                     |
-| D8  | Google included in P0?                         | **Yes**                                                             |
-| D9  | P1 tool cost / fake / docs in same PR?         | **No** — separate                                                   |
-| D10 | Core `FileStore` port?                         | **No** for P0                                                       |
-| D11 | `FileDeleteOptions` placement                  | **Package-local** (xai + google)                                    |
-| D12 | xAI abort + failClosed                         | **Single catch path** (§5.2.1)                                      |
-| D13 | fail-closed `deleteAll` partial deletes        | **Document** — not all-or-nothing                                   |
-| D14 | Product goal                                   | **Truthful delete outcome**, not “fail audit runs”                  |
-| D15 | host finally vs sweep                      | **Same `failClosed` API**; host catch vs workflow runtime retry             |
-| D16 | Default remains fail-open                      | **Yes** — “never fail audit” without mandatory try/catch everywhere |
-| D14 | Product goal                                   | **Truthful delete outcome**, not “fail audit runs”                  |
-| D15 | host finally vs sweep                      | **Same failClosed API**; host catch vs workflow runtime retry               |
-| D16 | Default remains fail-open                      | **Yes** — preserves “never fail audit” without mandatory try/catch  |
+| #   | Decision                                       | Choice                                                          |
+| --- | ---------------------------------------------- | --------------------------------------------------------------- |
+| D1  | Is fail-closed delete a valid library feature? | **Yes**                                                         |
+| D2  | API shape                                      | **Option A** — `opts.failClosed`                                |
+| D3  | Default mode                                   | **Fail-open** (unchanged)                                       |
+| D4  | 404                                            | **Success both modes**                                          |
+| D5  | Empty id                                       | **Always throw** (small break)                                  |
+| D6  | `deleteStrict` method                          | **No**                                                          |
+| D7  | Construction-time only flag                    | **No** (optional later default)                                 |
+| D8  | Google included in P0?                         | **Yes**                                                         |
+| D9  | P1 tool cost / fake / docs in same PR?         | **No** — separate                                               |
+| D10 | Core `FileStore` port?                         | **No** for P0                                                   |
+| D11 | `FileDeleteOptions` placement                  | **Package-local** (xai + google)                                |
+| D12 | xAI abort + failClosed                         | **Single catch path** (§5.2.1)                                  |
+| D13 | fail-closed `deleteAll` partial deletes        | **Document** — not all-or-nothing                               |
+| D14 | Product goal                                   | **Truthful delete outcome**, not “fail host runs”               |
+| D15 | host finally vs sweep                          | **Same `failClosed` API**; host catch vs workflow runtime retry |
+| D16 | Default remains fail-open                      | **Yes** — “never fail the host run” without mandatory try/catch |
 
 ---
 

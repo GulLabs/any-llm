@@ -37,7 +37,7 @@ middleware — the same middleware seam `@gullabs/quota`
 (`packages/quota/src/index.ts`) already proves out for a different cross-cutting
 concern (rate/quota enforcement via `Middleware` from `packages/core/src/ports.ts`).
 
-## Concrete Incident (2026-07-10, a host application host pipeline pipeline)
+## Concrete Incident (2026-07-10, a host pipeline)
 
 A concept-generation call was dispatched with a prompt template filled from a
 request object that carried only 2 of the ~9 context fields the template
@@ -291,7 +291,7 @@ Responding to the reshaped four-piece design and the specific rulings:
 
 5. **`bad_request` + structured `issues` field: agreed.** This matches how we
    already classify caller faults into non-retryable `ApplicationFailure` in
-   Temporal activities. A structured issues array also lets our postmortems
+   Temporal activities. A structured issues array also lets host postmortems
    record exact field paths instead of parsing message strings out of a free
    text error.
 
