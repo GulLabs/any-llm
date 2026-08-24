@@ -255,6 +255,41 @@ describe('engine — success path', () => {
     expect(sink.last()!.finishReason).toBe('stop')
   })
 
+  it('passes citations through to result and record, and omits empty arrays', async () => {
+    const citations = [
+      { url: 'https://example.com/a', title: 'Example A', sourceName: 'example.com' },
+    ]
+    const populated = makeClient({
+      adapters: [new FakeAdapter('google', makeSuccessResult({ citations }))],
+    })
+
+    const result = await populated.client.generate(
+      {
+        provider: 'google',
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
+
+    expect(result.citations).toEqual(citations)
+    expect(populated.sink.last()!.citations).toEqual(citations)
+
+    const empty = makeClient({
+      adapters: [new FakeAdapter('google', makeSuccessResult({ citations: [] }))],
+    })
+    const omitted = await empty.client.generate(
+      {
+        provider: 'google',
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Hi' }] }],
+      },
+      { auth: TEST_AUTH },
+    )
+    expect(omitted.citations).toBeUndefined()
+    expect(empty.sink.last()!.citations).toBeUndefined()
+  })
+
   it('forwards metadata from request to record', async () => {
     const { client, sink } = makeClient()
 
@@ -348,12 +383,16 @@ describe('engine — double-count integration', () => {
       expect(cost.details.input).toBe(375_000)
       expect(cost.details.cached).toBe(25_000)
       expect(cost.details.output).toBe(75_000)
+      expect(cost.details.tools).toBe(0)
       expect(cost.microUsd).toBe(475_000)
 
       // sum(details) === microUsd (guaranteed by construction)
-      expect(cost.details.input + cost.details.cached + cost.details.output).toBe(
-        cost.microUsd,
-      )
+      expect(
+        cost.details.input +
+          cost.details.cached +
+          cost.details.output +
+          cost.details.tools,
+      ).toBe(cost.microUsd)
 
       // Thinking tokens persist but add ZERO extra cost
       // (thinkingTokens is inside outputTokens, already billed at output rate)
@@ -380,6 +419,7 @@ describe('engine — double-count integration', () => {
         input: 187_500,
         cached: 12_500,
         output: 37_500,
+        tools: 0,
       })
     },
   )
@@ -1552,7 +1592,7 @@ describe('engine — per-provider pricing sources', () => {
         usd: 0.000777,
         pricingVersion: 'anthropic-test-1',
         confidence: 'exact' as const,
-        details: { input: 777, cached: 0, output: 0 },
+        details: { input: 777, cached: 0, output: 0, tools: 0 },
       }),
       hasModel: () => true,
       listModels: () => ['claude-sonnet-5'],

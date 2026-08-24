@@ -19,6 +19,7 @@ import { describe, it, expect } from 'vitest'
 import type { AdapterCtx, JsonValue, ResolvedRequest } from '@gullabs/core'
 import { makeFakeXai } from '@gullabs/testing'
 import { xaiAdapter, classifyXaiError } from './adapter.js'
+import { grok46ModelDescriptor } from './models.js'
 import { makeTestDescriptor } from '../../core/src/test-model-descriptor.js'
 
 /** Read + JSON.parse a fixture file at test time (no resolveJsonModule needed). */
@@ -482,5 +483,60 @@ describe('fixture: 15-safety-check-403', () => {
     expect(result.retryable).toBe(false)
     expect(result.httpStatus).toBe(403)
     expect(result.provider).toBe('xai')
+  })
+})
+
+describe('fixture: 17-web-search', () => {
+  it('maps live search annotations to citations and flattens tool counters', async () => {
+    const fixture = loadFixture<FixtureCall>('17-web-search.json')
+    const adapter = xaiAdapter({
+      client: makeFakeXai(fixture.body as never),
+    })
+    const result = await adapter.run(
+      {
+        provider: 'xai',
+        model: 'grok-4.6',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'search' }] }],
+        config: { providerOptions: { xai: { tools: [{ type: 'web_search' }] } } },
+        modelDescriptor: grok46ModelDescriptor,
+      },
+      {
+        auth: { apiKey: 'test-key' },
+        logger: { info() {}, warn() {}, error() {}, debug() {} },
+      },
+    )
+    expect(result.citations?.some((c) => c.url.includes('docs.x.ai'))).toBe(true)
+    expect(result.usage.details.web_search_calls).toBe(1)
+    expect(result.usage.details.server_tools_requested).toBe(1)
+  })
+})
+
+describe('fixture: 18-structured-search', () => {
+  it('allows structured output combined with search tools', async () => {
+    const fixture = loadFixture<FixtureCall>('18-structured-search.json')
+    const adapter = xaiAdapter({
+      client: makeFakeXai(fixture.body as never),
+    })
+    const result = await adapter.run(
+      {
+        provider: 'xai',
+        model: 'grok-4.6',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'search' }] }],
+        outputJsonSchema: {
+          type: 'object',
+          properties: { window: { type: 'string' } },
+          required: ['window'],
+        },
+        config: { providerOptions: { xai: { tools: [{ type: 'web_search' }] } } },
+        modelDescriptor: grok46ModelDescriptor,
+      },
+      {
+        auth: { apiKey: 'test-key' },
+        logger: { info() {}, warn() {}, error() {}, debug() {} },
+      },
+    )
+    expect(result.rawStructured).toEqual({ window: '500000' })
+    expect(result.usage.details.web_search_calls).toBe(2)
+    expect(result.citations?.length).toBeGreaterThan(0)
   })
 })

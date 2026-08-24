@@ -71,6 +71,7 @@ export const llmCalls = pgTable(
     // per-lane invariant audit.
     rawUsage: jsonb('raw_usage'),
     providerMetadata: jsonb('provider_metadata'),
+    citations: jsonb('citations'),
     warnings: jsonb('warnings'),
     generationConfig: jsonb('generation_config').notNull(),
     reasoningText: text('reasoning_text'),

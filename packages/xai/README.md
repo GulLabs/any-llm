@@ -63,7 +63,7 @@ const result = await client.generate(
 The default registry ships two canonical models (500k token context window each). They route through this adapter and support:
 
 - **Reasoning** — level-api (`reasoningApi: 'level'`), mapped to the Responses API `reasoning.effort` field. There is no `budgetTokens` field (xAI uses level-style reasoning) — passing it throws `bad_request`. The schema does not set a default effort; if `reasoning` is omitted, no `reasoning` field is sent and xAI's own server-side default (`high`) applies.
-  - `grok-4.5`: `admittedReasoningEfforts: ['low', 'high']`. `'none'`, `'medium'`, and `'xhigh'` are rejected by `Grok45ConfigSchema` (frozen 2026-07-09 live probe; do not silently widen).
+  - `grok-4.5`: `admittedReasoningEfforts: ['low', 'medium', 'high']` (live-verified 2026-08-24; `'medium'` is now accepted). `'none'` and `'xhigh'` are rejected. `'none'` remains rejected ("reasoning cannot be disabled").
   - `grok-4.6`: `admittedReasoningEfforts: ['low', 'medium', 'high', 'xhigh']` (live-verified 2026-08-12). `'none'` is rejected by the live API.
 - **Structured output** — native. `output.jsonSchema` maps to the Responses API's `text.format` field with `{ type: 'json_schema', name, schema, strict: true }`, **not** `response_format` — this differs from OpenAI's own convention for the same underlying concept.
 - **`strict: true` performs no OpenAI-style compile-time schema validation, as of the 2026-07-09 live probes.** 2026-07-09 live verification against the real xAI Responses API — 13 single-variant probes plus 1 combined probe (14 calls total, all accepted HTTP 200; the combined probe is recorded as fixture `10-non-strict-schema-accepted.json`) — verified that `text.format` with `strict: true` accepted every one of the following schema shapes that OpenAI's own strict mode rejects at compile time: schemas (root and nested) missing `additionalProperties: false`; properties omitted from `required` (optional properties); `format`, `minLength`, `pattern`, and `default` keywords; `anyOf`; `$defs`/`$ref`; `enum`/`const`; and nullable unions (`type: [T, 'null']`). `strict: false` on the same surface showed no observed behavioral divergence from `strict: true`. This adapter forwards schemas to xAI verbatim — no rewriting, no preflight validation, and no injection of `additionalProperties: false` or `required` completion — so OpenAI-strict schema rewriting (including `@gullabs/codex-cli`'s `toOpenAiStrictOutputSchema` helper) is unnecessary for xai as of that verification date. (Reject-don't-map still applies to genuinely invalid input the xai schema/types layer itself rejects; this note is only about strict-mode compile-time schema-shape enforcement.) `packages/xai/src/__fixtures__/10-non-strict-schema-accepted.json` records one live example combining three of these — missing root `additionalProperties: false`, an optional property, and a `format` keyword — in a single accepted call.
@@ -116,7 +116,7 @@ try {
 | ZDR teams                   | New uploads and `file_id` attachments are blocked by xAI; errors mention Zero Data Retention when detectable                                                                                                  |
 | Max size                    | 48 MiB (conservative vs docs 48–50 MB)                                                                                                                                                                        |
 
-**Billing note:** attaching files on Responses implicitly enables xAI's `attachment_search` agentic tool. Expect tool-invocation fees and reasoning tokens beyond a plain completion. When xAI returns numeric counters such as `num_server_side_tools_used` / `num_sources_used`, they appear on `usage.details` under those raw names (and full payload in `usage.raw`) for host visibility — they are **not** folded into `computeXaiCost` token lanes yet (no tool Cost lane). Collections / public URL minting are out of scope for this store.
+**Billing note:** attaching files on Responses implicitly enables xAI's `attachment_search` agentic tool. Per-invocation fees land in `Cost.details.tools`. Live 2026-08-24 `/v1/responses` pins counters at `usage.server_side_tool_usage_details` (`web_search_calls`, `x_search_calls`, `document_search_calls`, …); the adapter flattens those names into `usage.details`. File-attach confirmation of the attachment lane is blocked on ZDR keys (uploads return Zero Data Retention); `document_search_calls` is the live-payload key used for the $10/1k attachment lane. When the adapter requested server tools (`providerOptions.xai.tools` or `file-ref`) it also sets synthetic `usage.details.server_tools_requested = 1` (adapter-owned, not a provider field). Missing counters → `tools: 0`, `confidence: 'estimated'`, plus an adapter warning.
 
 **Host tests:** `@gullabs/testing` exports `FakeXaiFileStore` (in-memory upload/get/delete with optional TTL clock and `failClosed`).
 
@@ -135,7 +135,15 @@ xAI caching is automatic — there is no explicit cache-create/cache-store API c
 
 ## Pricing
 
-`XAI_PRICING` is a frozen, versioned snapshot (`xaiPricingVersion: 'xai-2026-08-12'`) — a point-in-time capture from `/v1/models`, not a live lookup (ADR-005). Rates are in µUSD per million tokens:
+`XAI_PRICING` is a frozen, versioned snapshot (`xaiPricingVersion: 'xai-2026-08-24'`) — a point-in-time capture from `/v1/models`, not a live lookup (ADR-005). Rates are in µUSD per million tokens. Tool invocations add `Cost.details.tools` (`microUsd = input + cached + output + tools`):
+
+| Counter (raw `usage.details` key) | Rate        |
+| --------------------------------- | ----------- |
+| `web_search_calls`                | $5 / 1,000  |
+| `x_search_calls`                  | $5 / 1,000  |
+| `document_search_calls`           | $10 / 1,000 |
+
+Enable Live Search with `providerOptions.xai.tools` (`web_search` / `x_search`). Citations land on `result.citations`. `countTokens` uses `POST /v1/tokenize-text` and returns `accuracy: 'lower-bound'` (text parts only; media / file parts are `bad_request`).
 
 | Model      | Tier                         | Input   | Cached input | Output   |
 | ---------- | ---------------------------- | ------- | ------------ | -------- |

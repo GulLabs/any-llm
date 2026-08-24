@@ -12,7 +12,7 @@ import { LlmError, createClient } from '@gullabs/core'
 import type { ResolvedRequest, AdapterCtx, ModelDescriptor } from '@gullabs/core'
 import { fakeXaiResponse, makeFakeXai, RecordingSink } from '@gullabs/testing'
 import { xaiAdapter, classifyXaiError } from './adapter.js'
-import { xaiRegistry } from './models.js'
+import { xaiRegistry, grok45ModelDescriptor } from './models.js'
 import { makeTestDescriptor } from '../../core/src/test-model-descriptor.js'
 
 // ---------------------------------------------------------------------------
@@ -134,7 +134,10 @@ describe('basic text completion', () => {
     )
     expect(result.usage.details.num_server_side_tools_used).toBe(3)
     expect(result.usage.details.num_sources_used).toBe(2)
-    // Token cost path is unchanged — tool fees are visibility-only until a Cost lane exists.
+    expect(result.usage.details.server_tools_requested).toBe(1)
+    expect(result.warnings.some((w) => w.message.includes('document_search_calls'))).toBe(
+      true,
+    )
     expect(result.usage.raw).toMatchObject({
       num_server_side_tools_used: 3,
       num_sources_used: 2,
@@ -1264,5 +1267,115 @@ describe('engine e2e: safety-check 403 ledger', () => {
     expect(sink.records).toHaveLength(1)
     expect(sink.last()?.status).toBe('content_filter')
     expect(sink.last()?.errorKind).toBe('content_filter')
+  })
+})
+
+describe('xai Live Search tools', () => {
+  it('emits snake_case tools wire shape and fails closed without grounding', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          config: {
+            providerOptions: { xai: { tools: [{ type: 'web_search' }] } },
+          },
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({
+      kind: 'bad_request',
+      message: expect.stringContaining('grounding'),
+    })
+
+    const ok = await adapter.run(
+      makeResolvedReq({
+        modelDescriptor: grok45ModelDescriptor,
+        config: {
+          providerOptions: {
+            xai: {
+              tools: [
+                { type: 'web_search', allowedDomains: ['docs.x.ai'] },
+                { type: 'x_search', allowedXHandles: ['xai'], fromDate: '2026-01-01' },
+              ],
+            },
+          },
+        },
+      }),
+      FAKE_CTX,
+    )
+    expect(ok.text).toBe('ok')
+    const call = client.calls[0] as { tools: unknown }
+    expect(call.tools).toEqual([
+      { type: 'web_search', allowed_domains: ['docs.x.ai'] },
+      { type: 'x_search', allowed_x_handles: ['xai'], from_date: '2026-01-01' },
+    ])
+  })
+
+  it('maps url_citation annotations to citations and flattens tool counters', async () => {
+    const response = fakeXaiResponse({
+      text: 'see docs',
+      inputTokens: 10,
+      outputTokens: 4,
+      usageExtras: { num_server_side_tools_used: 1 },
+    })
+    response.usage['server_side_tool_usage_details'] = {
+      web_search_calls: 1,
+      x_search_calls: 0,
+      document_search_calls: 0,
+    }
+    const message = response.output.find((item) => item.type === 'message') as {
+      content: Array<{ annotations?: unknown[] }>
+    }
+    message.content[0]!.annotations = [
+      { type: 'url_citation', url: 'https://docs.x.ai', title: '1' },
+    ]
+    const adapter = xaiAdapter({ client: makeFakeXai(response) })
+    const result = await adapter.run(
+      makeResolvedReq({
+        modelDescriptor: grok45ModelDescriptor,
+        config: { providerOptions: { xai: { tools: [{ type: 'web_search' }] } } },
+      }),
+      FAKE_CTX,
+    )
+    expect(result.citations).toEqual([
+      { url: 'https://docs.x.ai', title: '1', sourceName: 'docs.x.ai' },
+    ])
+    expect(result.usage.details.web_search_calls).toBe(1)
+    expect(result.usage.details.server_tools_requested).toBe(1)
+    expect(result.warnings).toEqual([])
+  })
+
+  it('warns when requested tool counters are missing', async () => {
+    const adapter = xaiAdapter({
+      client: makeFakeXai(
+        fakeXaiResponse({ text: 'ok', inputTokens: 1, outputTokens: 1 }),
+      ),
+    })
+    const result = await adapter.run(
+      makeResolvedReq({
+        modelDescriptor: grok45ModelDescriptor,
+        config: { providerOptions: { xai: { tools: [{ type: 'web_search' }] } } },
+      }),
+      FAKE_CTX,
+    )
+    expect(result.usage.details.server_tools_requested).toBe(1)
+    expect(result.warnings[0]?.message).toContain('web_search_calls')
+  })
+
+  it('rejects unknown providerOptions.xai keys', async () => {
+    const adapter = xaiAdapter({ client: makeFakeXai(fakeXaiResponse({ text: 'ok' })) })
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          config: { providerOptions: { xai: { notAKey: true } as never } },
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({
+      kind: 'bad_request',
+      message: expect.stringContaining('notAKey'),
+    })
   })
 })

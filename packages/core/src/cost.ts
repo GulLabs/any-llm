@@ -26,10 +26,12 @@
  * `outputTokens` and is billed at the standard output rate.
  *
  * **Sum invariant** is guaranteed by construction:
- * Each component (input, cached, output) is rounded independently to an
- * integer micro-USD value.  `microUsd` is then defined as their sum, so
- * `details.input + details.cached + details.output === microUsd` is always
- * true — there is no residual rounding error.
+ * Each component (input, cached, output, tools) is rounded independently to
+ * an integer micro-USD value.  `microUsd` is then defined as their sum, so
+ * `details.input + details.cached + details.output + details.tools === microUsd`
+ * is always true — there is no residual rounding error. Core's
+ * {@link computeCost} prices tokens only and always sets `tools: 0`;
+ * provider sources that price tool invocations add that lane themselves.
  *
  * @module
  */
@@ -107,7 +109,8 @@ function selectRates(
  *    this, but we protect against malformed adapter output).
  * 5. Round each component to the nearest integer micro-USD **independently**.
  * 6. Define `microUsd` as the sum of the three components — this guarantees
- *    `details.input + details.cached + details.output === microUsd` exactly.
+ *    `details.input + details.cached + details.output + details.tools === microUsd`
+ *    exactly. Token-only sources (this function) set `tools: 0`.
  *
  * @param model - Model identifier string used for routing (e.g. `"gemini-2.5-pro"`).
  * @param usage - GROSS token usage for the call.
@@ -141,7 +144,7 @@ export function computeCost(
       usd: null,
       pricingVersion,
       confidence: 'estimated',
-      details: { input: 0, cached: 0, output: 0 },
+      details: { input: 0, cached: 0, output: 0, tools: 0 },
       unpricedReason: `Unknown model "${model}"; no pricing entry found.`,
     }
   }
@@ -158,7 +161,7 @@ export function computeCost(
       usd: null,
       pricingVersion,
       confidence: 'estimated',
-      details: { input: 0, cached: 0, output: 0 },
+      details: { input: 0, cached: 0, output: 0, tools: 0 },
       unpricedReason: `Unknown service tier "${tier}"; refusing to guess a pricing multiplier.`,
     }
   }
@@ -195,6 +198,7 @@ export function computeCost(
       input: inputCost,
       cached: cachedCost,
       output: outputCost,
+      tools: 0,
     },
   }
 }

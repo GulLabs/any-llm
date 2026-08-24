@@ -12,6 +12,8 @@
 
 import { z } from 'zod'
 
+import { XaiProviderOptionsSchema } from './tools.js'
+
 export const Grok46ConfigSchema = z
   .strictObject({
     temperature: z.number().optional().meta({
@@ -70,24 +72,7 @@ export const Grok46ConfigSchema = z
     }),
     providerOptions: z
       .strictObject({
-        xai: z
-          .strictObject({
-            promptCacheKey: z
-              .string()
-              .min(1)
-              .optional()
-              .meta({
-                title: 'Prompt Cache Key',
-                description:
-                  'xAI conversation-routing cache key — maps to Responses API ' +
-                  '`prompt_cache_key`.',
-              }),
-          })
-          .optional()
-          .meta({
-            title: 'xAI Provider Options',
-            description: 'Allowlisted xAI provider options for grok-4.6.',
-          }),
+        xai: XaiProviderOptionsSchema.optional(),
       })
       .optional()
       .meta({

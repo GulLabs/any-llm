@@ -132,6 +132,7 @@ import type { XaiProviderOptions } from '@gullabs/xai'
 
 const xaiOptions: XaiProviderOptions = {
   promptCacheKey: 'foo',
+  tools: [{ type: 'web_search' }],
 }
 
 const opts: ProviderOptions = { xai: xaiOptions }

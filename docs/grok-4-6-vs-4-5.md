@@ -17,12 +17,11 @@ verification, not a rename of 4.5.
 
 - Canonical ids only. Aliases (`grok-4.5-latest`, `grok-build-latest`) are
   rejected (reject-don't-map).
-- `grok-4.5` schema stays frozen at `reasoning.effort` `'low' | 'high'`.
-  Live 2026-08-12 also accepted `medium`/`xhigh` on 4.5; the library does
-  not silently widen.
+- `grok-4.5` schema admits `reasoning.effort` `'low' | 'medium' | 'high'`
+  (live-verified 2026-08-24). `'none'` and `'xhigh'` stay rejected.
 - `grok-4.6` admits `low|medium|high|xhigh` and `serviceTier: 'priority'`
   only. `'none'` and `'flex'` are rejected.
-- Pricing snapshot `xai-2026-08-12`: 4.5 $2 / $0.30 cached / $6 (≤200k)
+- Pricing snapshot `xai-2026-08-24`: 4.5 $2 / $0.30 cached / $6 (≤200k)
   and $4 / $0.60 / $12 (>200k); 4.6 $2 / $0.50 / $6 and $4 / $1 / $12.
   Priority is 2×, confirmed by live `cost_in_usd_ticks` on fixture 12.
   List rates pinned to `__fixtures__/14-v1-models-pricing.json`.

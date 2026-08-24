@@ -1,0 +1,130 @@
+{
+  "status": 200,
+  "ok": true,
+  "ms": 70,
+  "headers": {
+    "access-control-allow-origin": "*",
+    "access-control-expose-headers": "*",
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a3020d639bb0fcac-SEA",
+    "connection": "keep-alive",
+    "content-encoding": "gzip",
+    "content-type": "application/json",
+    "date": "Mon, 24 Aug 2026 11:35:13 GMT",
+    "server": "cloudflare",
+    "set-cookie": "__cf_bm=aaf9aH81XGVGNMkT4VyBsRARzvRbYYM1XnUb00X_rwY-1787571313.214391-1.0.1.1-bzPHGtNK7xxWLeIKcUs..v.i96dn9V1VRYy0suAedGgd1zY7ESPPrBFiJVWkffo0.O3gDmWrbGRzh3PBrNoFuUEUjZYbfKDi7UTrxyVNfNqwbKq6gm1eN_rGXnbFBohn; HttpOnly; SameSite=None; Secure; Path=/; Domain=x.ai; Expires=Mon, 24 Aug 2026 12:05:13 GMT",
+    "strict-transport-security": "max-age=31536000",
+    "traceparent": "00-1533c6c200a7a2da85f63fee4dedeb81-1205458600005c93-01",
+    "transfer-encoding": "chunked",
+    "vary": "origin, access-control-request-method, access-control-request-headers",
+    "x-data-retention": "zdr",
+    "x-metrics-e2e-ms": "5.6",
+    "x-ratelimit-limit-requests": "41000",
+    "x-ratelimit-remaining-requests": "41000",
+    "x-request-id": "23ed8b72-8edb-998f-aa32-432a0a015eda",
+    "x-zero-data-retention": "true"
+  },
+  "body": {
+    "token_ids": [
+      {
+        "token_id": 50728,
+        "string_token": "Hello",
+        "token_bytes": [
+          72,
+          101,
+          108,
+          108,
+          111
+        ]
+      },
+      {
+        "token_id": 19353,
+        "string_token": " from",
+        "token_bytes": [
+          32,
+          102,
+          114,
+          111,
+          109
+        ]
+      },
+      {
+        "token_id": 20092,
+        "string_token": " any",
+        "token_bytes": [
+          32,
+          97,
+          110,
+          121
+        ]
+      },
+      {
+        "token_id": 897,
+        "string_token": "-",
+        "token_bytes": [
+          45
+        ]
+      },
+      {
+        "token_id": 86049,
+        "string_token": "llm",
+        "token_bytes": [
+          108,
+          108,
+          109
+        ]
+      },
+      {
+        "token_id": 172432,
+        "string_token": " tokenize",
+        "token_bytes": [
+          32,
+          116,
+          111,
+          107,
+          101,
+          110,
+          105,
+          122,
+          101
+        ]
+      },
+      {
+        "token_id": 897,
+        "string_token": "-",
+        "token_bytes": [
+          45
+        ]
+      },
+      {
+        "token_id": 19742,
+        "string_token": "text",
+        "token_bytes": [
+          116,
+          101,
+          120,
+          116
+        ]
+      },
+      {
+        "token_id": 45550,
+        "string_token": " probe",
+        "token_bytes": [
+          32,
+          112,
+          114,
+          111,
+          98,
+          101
+        ]
+      },
+      {
+        "token_id": 898,
+        "string_token": ".",
+        "token_bytes": [
+          46
+        ]
+      }
+    ]
+  }
+}

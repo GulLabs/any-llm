@@ -38,6 +38,7 @@ describe('geminiAdapter.countTokens — happy path', () => {
     const result = await adapter.countTokens!(makeCountReq(), FAKE_CTX)
 
     expect(result.totalTokens).toBe(42)
+    expect(result.accuracy).toBe('exact')
     expect(result.details).toEqual({ cached: 10 })
     expect(result.raw).toEqual({ totalTokens: 42, cachedContentTokenCount: 10 })
   })
@@ -49,6 +50,7 @@ describe('geminiAdapter.countTokens — happy path', () => {
     const result = await adapter.countTokens!(makeCountReq(), FAKE_CTX)
 
     expect(result.totalTokens).toBe(5)
+    expect(result.accuracy).toBe('exact')
     expect(result.details).toBeUndefined()
   })
 })

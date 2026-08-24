@@ -1,0 +1,196 @@
+{
+  "status": 200,
+  "ok": true,
+  "ms": 13424,
+  "headers": {
+    "access-control-allow-origin": "*",
+    "access-control-expose-headers": "*",
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a3020d940e91fcac-SEA",
+    "connection": "keep-alive",
+    "content-encoding": "gzip",
+    "content-type": "application/json",
+    "date": "Mon, 24 Aug 2026 11:35:34 GMT",
+    "server": "cloudflare",
+    "set-cookie": "__cf_bm=eFOQHH4YpkTZ4RI1EcyOquUlHiHk0X2p.X0XnJQbEew-1787571320.963094-1.0.1.1-Y1h_mfqmzomQvtLeJCDacAulLwSNKimDruax5qlWu_K2FHYpfUY6iit2kbGg.B.KPXcYehW05IbPxGm5hi_FEXsKzpZrJkINQSADVr.cspNCCEApxqODvStIfhcNUqsN; HttpOnly; SameSite=None; Secure; Path=/; Domain=x.ai; Expires=Mon, 24 Aug 2026 12:05:34 GMT",
+    "strict-transport-security": "max-age=31536000",
+    "traceparent": "00-7fce28011049146ab351826e95de2343-da712b950000a031-01",
+    "transfer-encoding": "chunked",
+    "vary": "origin, access-control-request-method, access-control-request-headers",
+    "x-data-retention": "zdr",
+    "x-metrics-e2e-ms": "13323.7",
+    "x-metrics-ttft-ms": "365.3",
+    "x-ratelimit-limit-requests": "140000",
+    "x-ratelimit-limit-tokens": "490000000",
+    "x-ratelimit-remaining-requests": "140000",
+    "x-ratelimit-remaining-tokens": "490000000",
+    "x-request-id": "3429eacc-f993-97ef-bc8f-b0e4edfb4dd1",
+    "x-zero-data-retention": "true"
+  },
+  "body": {
+    "created_at": 1787571334,
+    "completed_at": 1787571334,
+    "id": "3429eacc-f993-97ef-bc8f-b0e4edfb4dd1",
+    "max_output_tokens": 256,
+    "model": "grok-4.6",
+    "object": "response",
+    "output": [
+      {
+        "id": "rs_3429eacc-f993-97ef-bc8f-b0e4edfb4dd1",
+        "summary": [
+          {
+            "text": "The user wants me to find one recent post from @xai and quote it briefly.\n",
+            "type": "summary_text"
+          }
+        ],
+        "type": "reasoning",
+        "status": "completed"
+      },
+      {
+        "call_id": "xs_call-86c2844e-ece1-4405-a17d-e3eed4fb2696-0",
+        "input": "{\"query\":\"from:xai\",\"limit\":\"1\",\"mode\":\"Latest\"}",
+        "name": "x_keyword_search",
+        "type": "custom_tool_call",
+        "id": "ctc_3429eacc-f993-97ef-bc8f-b0e4edfb4dd1_call-86c2844e-ece1-4405-a17d-e3eed4fb2696-0",
+        "status": "completed"
+      },
+      {
+        "id": "tco_3429eacc-f993-97ef-bc8f-b0e4edfb4dd1_call-86c2844e-ece1-4405-a17d-e3eed4fb2696-0",
+        "summary": [],
+        "type": "reasoning",
+        "status": "completed"
+      },
+      {
+        "content": [
+          {
+            "type": "output_text",
+            "text": "We are now @SpaceXAI. render_inline_citationnittcitation_idPrem0 reln=\"post\"",
+            "logprobs": [],
+            "annotations": []
+          }
+        ],
+        "id": "msg_3429eacc-f993-97ef-bc8f-b0e4edfb4dd1",
+        "role": "assistant",
+        "type": "message",
+        "status": "completed"
+      },
+      {
+        "call_id": "xs_call-86c2844e-ece1-4405-a17d-e3eed4fb2696-1",
+        "input": "{\"query\":\"from:xai\",\"limit\":\"3\",\"mode\":\"Latest\"}",
+        "name": "x_keyword_search",
+        "type": "custom_tool_call",
+        "id": "ctc_3429eacc-f993-97ef-bc8f-b0e4edfb4dd1_call-86c2844e-ece1-4405-a17d-e3eed4fb2696-1",
+        "status": "completed"
+      },
+      {
+        "id": "tco_3429eacc-f993-97ef-bc8f-b0e4edfb4dd1_call-86c2844e-ece1-4405-a17d-e3eed4fb2696-1",
+        "summary": [],
+        "type": "reasoning",
+        "status": "completed"
+      },
+      {
+        "content": [
+          {
+            "type": "output_text",
+            "text": "We are now @SpaceXAI. render_inline_citationnittcitation_idPrem1 reln=\"post\"",
+            "logprobs": [],
+            "annotations": [
+              {
+                "type": "url_citation",
+                "url": "https://x.com/i/status/2074214064746832060",
+                "start_index": 0,
+                "end_index": 0,
+                "title": "https://x.com/i/status/2074214064746832060"
+              },
+              {
+                "type": "url_citation",
+                "url": "https://x.com/i/status/2072738598663946648",
+                "start_index": 0,
+                "end_index": 0,
+                "title": "https://x.com/i/status/2072738598663946648"
+              },
+              {
+                "type": "url_citation",
+                "url": "https://x.com/i/status/2072342809034789088",
+                "start_index": 0,
+                "end_index": 0,
+                "title": "https://x.com/i/status/2072342809034789088"
+              }
+            ]
+          }
+        ],
+        "id": "msg_3429eacc-f993-97ef-bc8f-b0e4edfb4dd1",
+        "role": "assistant",
+        "type": "message",
+        "status": "completed"
+      }
+    ],
+    "parallel_tool_calls": true,
+    "previous_response_id": null,
+    "reasoning": {
+      "effort": "low",
+      "summary": "detailed"
+    },
+    "temperature": 0.7,
+    "text": {
+      "format": {
+        "type": "text"
+      }
+    },
+    "tool_choice": "auto",
+    "tools": [
+      {
+        "type": "x_search",
+        "allowed_x_handles": [
+          "xai"
+        ]
+      }
+    ],
+    "top_p": 0.95,
+    "usage": {
+      "input_tokens": 10926,
+      "input_tokens_details": {
+        "cached_tokens": 4736
+      },
+      "output_tokens": 702,
+      "output_tokens_details": {
+        "reasoning_tokens": 615
+      },
+      "total_tokens": 11628,
+      "num_sources_used": 0,
+      "num_server_side_tools_used": 2,
+      "cost_in_usd_ticks": 289600000,
+      "server_side_tool_usage_details": {
+        "web_search_calls": 0,
+        "x_search_calls": 2,
+        "code_interpreter_calls": 0,
+        "file_search_calls": 0,
+        "mcp_calls": 0,
+        "document_search_calls": 0,
+        "image_generation_calls": 0
+      },
+      "context_details": {
+        "input_tokens": 4614,
+        "output_tokens": 107
+      }
+    },
+    "user": null,
+    "incomplete_details": null,
+    "status": "completed",
+    "store": false,
+    "metadata": {
+      "system_fingerprint": "fp_a7b4933f4a93564d"
+    },
+    "background": false,
+    "service_tier": "default",
+    "truncation": "disabled",
+    "top_logprobs": 0,
+    "presence_penalty": 0,
+    "frequency_penalty": 0,
+    "prompt_cache_key": null,
+    "max_tool_calls": null,
+    "safety_identifier": null,
+    "error": null,
+    "instructions": null
+  }
+}

@@ -10,9 +10,29 @@
  * @module
  */
 
+export type XaiWebSearchTool = {
+  type: 'web_search'
+  allowedDomains?: string[]
+  excludedDomains?: string[]
+  enableImageUnderstanding?: boolean
+  enableImageSearch?: boolean
+}
+
+export type XaiXSearchTool = {
+  type: 'x_search'
+  allowedXHandles?: string[]
+  excludedXHandles?: string[]
+  fromDate?: string
+  toDate?: string
+  enableImageUnderstanding?: boolean
+  enableVideoUnderstanding?: boolean
+}
+
 export type XaiProviderOptions = {
   /** xAI conversation-routing cache key — maps to Responses API `prompt_cache_key`. */
   promptCacheKey?: string
+  /** Server-side Live Search tools (`web_search`, `x_search`). */
+  tools?: Array<XaiWebSearchTool | XaiXSearchTool>
 }
 
 declare module '@gullabs/core' {

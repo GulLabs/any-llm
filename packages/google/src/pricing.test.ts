@@ -238,7 +238,7 @@ describe('computeCost — edge cases', () => {
     const cost = computeCost('gemini-2.5-flash', usage)
 
     expect(cost.microUsd).toBe(0)
-    expect(cost.details).toEqual({ input: 0, cached: 0, output: 0 })
+    expect(cost.details).toEqual({ input: 0, cached: 0, output: 0, tools: 0 })
     expect(cost.details.input + cost.details.cached + cost.details.output).toBe(
       cost.microUsd,
     )
@@ -250,7 +250,7 @@ describe('computeCost — edge cases', () => {
 
     expect(cost.microUsd).toBeNull()
     expect(cost.confidence).toBe('estimated')
-    expect(cost.details).toEqual({ input: 0, cached: 0, output: 0 })
+    expect(cost.details).toEqual({ input: 0, cached: 0, output: 0, tools: 0 })
     expect(cost.pricingVersion).toBe(pricingVersion)
   })
 
@@ -261,7 +261,7 @@ describe('computeCost — edge cases', () => {
     expect(cost.microUsd).toBeNull()
     expect(cost.usd).toBeNull()
     expect(cost.confidence).toBe('estimated')
-    expect(cost.details).toEqual({ input: 0, cached: 0, output: 0 })
+    expect(cost.details).toEqual({ input: 0, cached: 0, output: 0, tools: 0 })
   })
 
   it('flat (non-tiered) model: gemini-2.5-flash-lite', () => {
@@ -299,7 +299,7 @@ describe('computeCost — edge cases', () => {
     expect(cost.microUsd).toBeNull()
     expect(cost.usd).toBeNull()
     expect(cost.confidence).toBe('estimated')
-    expect(cost.details).toEqual({ input: 0, cached: 0, output: 0 })
+    expect(cost.details).toEqual({ input: 0, cached: 0, output: 0, tools: 0 })
     expect(cost.pricingVersion).toBe(pricingVersion)
     // Warning-naming contract: unpricedReason must name the offending tier.
     expect(cost.unpricedReason).toContain('enterprise-super-tier')

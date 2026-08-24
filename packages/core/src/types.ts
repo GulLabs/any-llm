@@ -338,6 +338,19 @@ export interface LlmRequest {
 export type FinishReason = 'stop' | 'length' | 'content_filter' | 'other'
 
 /**
+ * A normalized citation produced by a provider adapter.
+ *
+ * Adapters own shaping (ADR-023). `undefined` on the result means the
+ * provider produced none / the feature was unused — empty arrays are omitted.
+ * Raw provider payloads stay in `providerMetadata`.
+ */
+export interface Citation {
+  url: string
+  title?: string
+  sourceName?: string
+}
+
+/**
  * A warning emitted for advisory information that does not prevent the call
  * from succeeding. Warnings are never silently dropped — they appear on the
  * result and record.
@@ -386,14 +399,16 @@ export interface Usage {
  * When the cost is **priced** (`microUsd` is a `number`), the `details`
  * breakdown **must** satisfy:
  * ```
- * details.input + details.cached + details.output === microUsd
+ * details.input + details.cached + details.output + details.tools === microUsd
  * ```
  * Thinking tokens are billed at the output rate and are folded into
- * `details.output` — there is no separate `thinking` lane.
+ * `details.output` — there is no separate `thinking` lane. Tool-invocation
+ * fees live in `details.tools` (0 when the call had no priced tools).
  *
  * When the cost is **unpriced** (`microUsd: null`), this invariant does not
- * apply: `details` is zero-filled (`{ input: 0, cached: 0, output: 0 }`)
- * rather than meaningful, so it trivially sums to `0`, not to `microUsd`.
+ * apply: `details` is zero-filled
+ * (`{ input: 0, cached: 0, output: 0, tools: 0 }`) rather than meaningful,
+ * so it trivially sums to `0`, not to `microUsd`.
  */
 export interface Cost {
   /**
@@ -426,6 +441,8 @@ export interface Cost {
     cached: number
     /** Cost of output tokens (thinking is billed here, not separately). */
     output: number
+    /** Cost of priced tool invocations (0 when none). */
+    tools: number
   }
   /**
    * Present only when `microUsd` is `null`. Names the specific reason pricing
@@ -486,6 +503,12 @@ export interface LlmResult {
    * Always an array (possibly empty); never `undefined`.
    */
   warnings: Warning[]
+  /**
+   * Normalized citations produced by the adapter.
+   * Absent when the provider produced none / the feature was unused.
+   * Empty arrays are never emitted.
+   */
+  citations?: Citation[]
   /**
    * Raw provider metadata (grounding citations, safety ratings, etc.).
    * Stored as JsonValue to avoid a hard coupling to provider-specific types.

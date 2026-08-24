@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
+import * as surface from './index.js'
 import {
   FLEX_DEFAULT_TIMEOUT_MS,
   TRANSPORT_TIMEOUT_BUFFER_MS,
@@ -29,6 +30,12 @@ describe('@gullabs/google package surface: timeout constants', () => {
 describe('@gullabs/google package surface: googleProvider', () => {
   it('googleProvider is a function reachable from the package root', () => {
     expect(typeof googleProvider).toBe('function')
+  })
+})
+
+describe('@gullabs/google package surface: deleted citation helper', () => {
+  it('does not export normalizeGroundingCitations', () => {
+    expect('normalizeGroundingCitations' in surface).toBe(false)
   })
 })
 

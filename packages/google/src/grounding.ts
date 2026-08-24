@@ -8,10 +8,7 @@
  * @module
  */
 
-export interface Citation {
-  url: string
-  sourceName: string
-}
+import type { Citation } from '@gullabs/core'
 
 /**
  * Derive a human-readable source name for a hostname, stripping a leading
@@ -56,10 +53,14 @@ function toCitation(chunk: unknown): Citation | undefined {
   if (parsed.hostname === '') return undefined
 
   const title = (web as Record<string, unknown>)['title']
-  const sourceName =
-    typeof title === 'string' && title.length > 0 ? title : hostnameFrom(parsed)
+  const hasTitle = typeof title === 'string' && title.length > 0
+  const sourceName = hasTitle ? title : hostnameFrom(parsed)
 
-  return { url: uri, sourceName }
+  return {
+    url: uri,
+    ...(hasTitle ? { title } : {}),
+    sourceName,
+  }
 }
 
 /**

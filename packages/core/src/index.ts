@@ -30,6 +30,7 @@ export type {
   Warning,
   Usage,
   Cost,
+  Citation,
   LlmResult,
 } from './types.js'
 export { isTextPart, isInlineMediaPart, isFileUriPart, isFileRefPart } from './types.js'

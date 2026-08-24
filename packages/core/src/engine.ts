@@ -912,6 +912,9 @@ function buildSuccessRecord(
     ...(adapterResult.reasoningText !== undefined
       ? { reasoningText: adapterResult.reasoningText }
       : {}),
+    ...(adapterResult.citations !== undefined && adapterResult.citations.length > 0
+      ? { citations: adapterResult.citations }
+      : {}),
     ...(adapterResult.providerMetadata !== undefined
       ? { providerMetadata: adapterResult.providerMetadata }
       : {}),
@@ -1574,6 +1577,9 @@ export function createClient(config: ClientConfig): Client {
             : {}),
           ...(adapterResult.servedServiceTier !== undefined
             ? { servedServiceTier: adapterResult.servedServiceTier }
+            : {}),
+          ...(adapterResult.citations !== undefined && adapterResult.citations.length > 0
+            ? { citations: adapterResult.citations }
             : {}),
           ...(adapterResult.providerMetadata !== undefined
             ? { providerMetadata: adapterResult.providerMetadata }

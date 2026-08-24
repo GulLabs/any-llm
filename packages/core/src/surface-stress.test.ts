@@ -700,7 +700,7 @@ describe('surface-stress: non-finite values in usage.details and usage.raw', () 
       const usage: Usage = {
         inputTokens: 50,
         outputTokens: 10,
-        details: { input: 50, output: 10 },
+        details: { input: 50, cached: 0, output: 10, tools: 0 },
         raw,
       }
 

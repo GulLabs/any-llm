@@ -2100,11 +2100,27 @@ describe('grounding — providerMetadata merge', () => {
 
     const resultMeta = result.providerMetadata as Record<string, unknown> | undefined
     expect(resultMeta?.['groundingMetadata']).toEqual(fakeGrounding)
+    expect(result.citations).toEqual([
+      { url: 'https://example.com', title: 'Example', sourceName: 'Example' },
+    ])
 
     expect(sink.records).toHaveLength(1)
     const recordMeta = sink.last()?.providerMetadata as
       Record<string, unknown> | undefined
     expect(recordMeta?.['groundingMetadata']).toEqual(fakeGrounding)
+    expect(sink.last()?.citations).toEqual(result.citations)
+  })
+
+  it('omits result.citations when grounding chunks yield no usable URLs', async () => {
+    const client = makeFakeGemini(
+      fakeGeminiResponse({
+        text: 'plain',
+        groundingMetadata: { groundingChunks: [{ web: { uri: 'javascript:alert(1)' } }] },
+      }),
+    )
+    const adapter = geminiAdapter({ client })
+    const result = await adapter.run(makeResolvedReq(), FAKE_CTX)
+    expect(result.citations).toBeUndefined()
   })
 })
 

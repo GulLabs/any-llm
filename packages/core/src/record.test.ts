@@ -28,7 +28,7 @@ function makeCost(overrides: Partial<Cost> = {}): Cost {
     usd: 1500 / 1_000_000,
     pricingVersion: 'gemini-2026-06-27',
     confidence: 'exact',
-    details: { input: 1000, cached: 0, output: 500 },
+    details: { input: 1000, cached: 0, output: 500, tools: 0 },
     ...overrides,
   }
 }
@@ -66,6 +66,15 @@ describe('buildRecord — success path', () => {
   it('sets recordSchemaVersion to 1', () => {
     const r = buildRecord(makeBaseInput())
     expect(r.recordSchemaVersion).toBe(1)
+  })
+
+  it('persists citations when present and omits empty arrays', () => {
+    const citations = [{ url: 'https://example.com', title: 'Example' }]
+    const withCitations = buildRecord(makeBaseInput({ citations }))
+    expect(withCitations.citations).toEqual(citations)
+
+    const empty = buildRecord(makeBaseInput({ citations: [] }))
+    expect(empty.citations).toBeUndefined()
   })
 
   it('maps identity fields', () => {
@@ -398,7 +407,7 @@ describe('buildRecord — gross/subset usage invariant', () => {
     })
     const cost = makeCost({
       microUsd: 1_750_000, // example: 150k*input + 100k*cached + 5k*output
-      details: { input: 1_500_000, cached: 200_000, output: 50_000 },
+      details: { input: 1_500_000, cached: 200_000, output: 50_000, tools: 0 },
     })
     const r = buildRecord(makeBaseInput({ usage, cost }))
 

@@ -97,15 +97,12 @@ function extractGroundingArtifacts(providerMetadata: unknown): GroundingArtifact
 }
 ```
 
-Once you have `groundingMetadata`, `@gullabs/google` ships `normalizeGroundingCitations()` so you
-don't need a bespoke dedup-by-URI helper: it shapes `groundingMetadata.groundingChunks` into a
-clean, deduplicated `Citation[]` (`{ url, sourceName }`), preferring each chunk's title and falling
-back to the URL's hostname, and never throws on missing/malformed input.
+The adapter also projects those chunks onto first-class `result.citations`
+(`{ url, title?, sourceName? }`). Raw `groundingMetadata` stays on
+`providerMetadata`. Empty / unused grounding omits the field.
 
 ```ts
-import { normalizeGroundingCitations } from '@gullabs/google'
-
-const citations = normalizeGroundingCitations(grounding.groundingMetadata)
+const citations = research.citations
 ```
 
 ## Call 2: structured synthesis

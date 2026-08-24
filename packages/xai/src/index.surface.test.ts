@@ -23,6 +23,7 @@ import {
   xaiModelDescriptors,
   xaiRegistry,
   XAI_PRICING,
+  XAI_TOOL_RATE_MICRO_USD,
   xaiPricingVersion,
   computeXaiCost,
   xaiPricingSource,
@@ -82,6 +83,7 @@ describe('@gullabs/xai package surface: commit 3', () => {
   it('XAI_PRICING, xaiPricingVersion, computeXaiCost, xaiPricingSource are reachable', () => {
     expect(XAI_PRICING['grok-4.5']).toBeDefined()
     expect(XAI_PRICING['grok-4.6']).toBeDefined()
+    expect(XAI_TOOL_RATE_MICRO_USD.web_search_calls).toBe(5_000)
     expect(typeof xaiPricingVersion).toBe('string')
     expect(typeof computeXaiCost).toBe('function')
     expect(typeof xaiPricingSource).toBe('function')

@@ -21,6 +21,7 @@ import type {
   LlmResult,
   CallMetadata,
   Cost,
+  Citation,
 } from './types.js'
 import type { LlmCallRecord } from './record.js'
 import type { LlmError, LlmErrorKind } from './errors.js'
@@ -130,6 +131,11 @@ export interface AdapterResult {
   responseId?: string
   /** Warnings about lossy setting mappings, unsupported options, etc. */
   warnings: Warning[]
+  /**
+   * Normalized citations. Adapters own shaping; the engine passes through
+   * verbatim. Omit when unused; do not emit an empty array.
+   */
+  citations?: Citation[]
   /** Raw provider metadata (grounding, safety ratings, etc.). */
   providerMetadata?: JsonValue
 }
@@ -158,6 +164,14 @@ export interface TokenCountRequest {
 export interface TokenCount {
   /** Total tokens the provider would count for the request. */
   totalTokens: number
+  /**
+   * How representative this count is of the generation call.
+   *
+   * - `'exact'` — the provider counted the real request (e.g. Gemini).
+   * - `'lower-bound'` — the provider counted a text-only projection that
+   *   omits inference-added framing (e.g. xAI `/v1/tokenize-text`).
+   */
+  accuracy: 'exact' | 'lower-bound'
   /**
    * Open per-category breakdown (e.g. `{ cached: 128 }`).
    * Present only when the provider reports a breakdown.

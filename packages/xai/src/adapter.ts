@@ -19,8 +19,11 @@ import type {
   JsonValue,
   AuthMaterial,
   Part,
+  Citation,
+  TokenCountRequest,
+  TokenCount,
 } from '@gullabs/core'
-import { buildXaiClient } from './client.js'
+import { buildXaiClient, requireApiKey } from './client.js'
 import type {
   XaiClientLike,
   XaiResponseCreateParams,
@@ -29,6 +32,7 @@ import type {
   XaiResponseShape,
   XaiUsageShape,
   XaiMessageOutputItem,
+  XaiReasoningOutputItem,
 } from './client.js'
 
 // ---------------------------------------------------------------------------
@@ -37,6 +41,20 @@ import type {
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isXaiMessageItem(
+  item: XaiResponseShape['output'][number],
+): item is XaiMessageOutputItem {
+  return item.type === 'message' && Array.isArray((item as XaiMessageOutputItem).content)
+}
+
+function isXaiReasoningItem(
+  item: XaiResponseShape['output'][number],
+): item is XaiReasoningOutputItem {
+  return (
+    item.type === 'reasoning' && Array.isArray((item as { summary?: unknown }).summary)
+  )
 }
 
 function badXaiRequest(message: string): LlmError {
@@ -131,10 +149,17 @@ function mapPart(p: Part): XaiInputContentPart {
 // providerOptions.xai → explicit allowlisted mapping
 // ---------------------------------------------------------------------------
 
+const XAI_PROVIDER_OPTION_KEYS = new Set(['promptCacheKey', 'tools'])
+
+type MappedXaiProviderOptions = {
+  promptCacheKey?: string
+  tools?: Array<Record<string, unknown>>
+}
+
 function mapXaiProviderOptions(
   xaiOpts: unknown,
   model: string,
-): { promptCacheKey?: string } {
+): MappedXaiProviderOptions {
   if (xaiOpts === undefined) {
     return {}
   }
@@ -143,16 +168,18 @@ function mapXaiProviderOptions(
     throw badXaiRequest(`providerOptions.xai must be an object for model "${model}".`)
   }
 
-  const unknownKeys = Object.keys(xaiOpts).filter((key) => key !== 'promptCacheKey')
+  const unknownKeys = Object.keys(xaiOpts).filter(
+    (key) => !XAI_PROVIDER_OPTION_KEYS.has(key),
+  )
   if (unknownKeys.length > 0) {
     throw badXaiRequest(
       `providerOptions.xai contains unsupported keys [${unknownKeys.join(
         ', ',
-      )}] for model "${model}". Allowed keys: promptCacheKey.`,
+      )}] for model "${model}". Allowed keys: promptCacheKey, tools.`,
     )
   }
 
-  const mapped: { promptCacheKey?: string } = {}
+  const mapped: MappedXaiProviderOptions = {}
   if (xaiOpts['promptCacheKey'] !== undefined) {
     if (
       typeof xaiOpts['promptCacheKey'] !== 'string' ||
@@ -165,7 +192,65 @@ function mapXaiProviderOptions(
     mapped.promptCacheKey = xaiOpts['promptCacheKey']
   }
 
+  if (xaiOpts['tools'] !== undefined) {
+    mapped.tools = mapXaiSearchTools(xaiOpts['tools'], model)
+  }
+
   return mapped
+}
+
+function mapXaiSearchTools(
+  tools: unknown,
+  model: string,
+): Array<Record<string, unknown>> {
+  if (!Array.isArray(tools)) {
+    throw badXaiRequest(
+      `providerOptions.xai.tools must be an array for model "${model}".`,
+    )
+  }
+  return tools.map((tool, index) => {
+    if (!isPlainRecord(tool) || typeof tool['type'] !== 'string') {
+      throw badXaiRequest(
+        `providerOptions.xai.tools[${index}] must be an object with a type for model "${model}".`,
+      )
+    }
+    if (tool['type'] === 'web_search') {
+      const wire: Record<string, unknown> = { type: 'web_search' }
+      if (tool['allowedDomains'] !== undefined)
+        wire['allowed_domains'] = tool['allowedDomains']
+      if (tool['excludedDomains'] !== undefined) {
+        wire['excluded_domains'] = tool['excludedDomains']
+      }
+      if (tool['enableImageUnderstanding'] !== undefined) {
+        wire['enable_image_understanding'] = tool['enableImageUnderstanding']
+      }
+      if (tool['enableImageSearch'] !== undefined) {
+        wire['enable_image_search'] = tool['enableImageSearch']
+      }
+      return wire
+    }
+    if (tool['type'] === 'x_search') {
+      const wire: Record<string, unknown> = { type: 'x_search' }
+      if (tool['allowedXHandles'] !== undefined) {
+        wire['allowed_x_handles'] = tool['allowedXHandles']
+      }
+      if (tool['excludedXHandles'] !== undefined) {
+        wire['excluded_x_handles'] = tool['excludedXHandles']
+      }
+      if (tool['fromDate'] !== undefined) wire['from_date'] = tool['fromDate']
+      if (tool['toDate'] !== undefined) wire['to_date'] = tool['toDate']
+      if (tool['enableImageUnderstanding'] !== undefined) {
+        wire['enable_image_understanding'] = tool['enableImageUnderstanding']
+      }
+      if (tool['enableVideoUnderstanding'] !== undefined) {
+        wire['enable_video_understanding'] = tool['enableVideoUnderstanding']
+      }
+      return wire
+    }
+    throw badXaiRequest(
+      `providerOptions.xai.tools[${index}].type "${String(tool['type'])}" is not supported for model "${model}".`,
+    )
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +324,19 @@ function mapUsage(usage: XaiUsageShape): Usage {
   for (const [key, value] of Object.entries(usage)) {
     if (typeof value === 'number' && !CANONICALLY_MAPPED_USAGE_KEYS.has(key)) {
       details[key] = value
+    }
+  }
+
+  // Live 2026-08-24: per-tool invocation counters live in the nested
+  // `server_side_tool_usage_details` object (web_search_calls, x_search_calls,
+  // document_search_calls, …). Flatten numeric members under their raw names
+  // so pricing can read them from Usage.details.
+  const toolUsage = usage['server_side_tool_usage_details']
+  if (isPlainRecord(toolUsage)) {
+    for (const [key, value] of Object.entries(toolUsage)) {
+      if (typeof value === 'number') {
+        details[key] = value
+      }
     }
   }
 
@@ -487,6 +585,12 @@ export interface XaiAdapterOptions {
    * Never set this in production code. Mirrors `GeminiAdapterOptions._clientFactory`.
    */
   _clientFactory?: (auth: AuthMaterial) => XaiClientLike | Promise<XaiClientLike>
+  /**
+   * @internal Testing-only.
+   *
+   * Override `fetch` for `POST /v1/tokenize-text` (not on the openai SDK).
+   */
+  _fetch?: typeof fetch
 }
 
 // ---------------------------------------------------------------------------
@@ -576,10 +680,8 @@ export function xaiAdapter(opts?: XaiAdapterOptions): ProviderAdapter {
       // ------------------------------------------------------------------
       // 3. Reasoning → { effort }
       //
-      // Admitted efforts are descriptor-owned. grok-4.5: `'low' | 'high'`
-      // (2026-07-09 live probe; 2026-08-12 also accepted `medium`/`xhigh`
-      // but this library does not silently widen 4.5 — hosts stay on the
-      // frozen 4.5 schema). grok-4.6: `'low' | 'medium' | 'high' | 'xhigh'`
+      // Admitted efforts are descriptor-owned. grok-4.5: `'low' | 'medium' | 'high'`
+      // (live-verified 2026-08-24). grok-4.6: `'low' | 'medium' | 'high' | 'xhigh'`
       // (live-verified 2026-08-12). `'none'` is rejected by both. budgetTokens
       // is not supported (level-style reasoning). includeThoughts is a no-op
       // for xAI — reasoning summaries come back unconditionally whenever
@@ -643,6 +745,19 @@ export function xaiAdapter(opts?: XaiAdapterOptions): ProviderAdapter {
         params.prompt_cache_key = xaiProviderConfig.promptCacheKey
       }
 
+      const hasFileRef = req.messages.some((msg) =>
+        msg.parts.some((part) => part.kind === 'file-ref'),
+      )
+      const searchTools = xaiProviderConfig.tools
+      if (searchTools !== undefined) {
+        if (req.modelDescriptor?.capabilities?.grounding !== true) {
+          throw badXaiRequest(
+            `providerOptions.xai.tools requires capabilities.grounding on the model descriptor for "${model}".`,
+          )
+        }
+        params.tools = searchTools
+      }
+
       // ------------------------------------------------------------------
       // 6. Client construction + SDK call — inside the classifier so ANY
       //    failure (including bad auth construction) is rethrown as a typed
@@ -673,9 +788,9 @@ export function xaiAdapter(opts?: XaiAdapterOptions): ProviderAdapter {
       const messageItems: XaiMessageOutputItem[] = []
 
       for (const item of response.output) {
-        if (item.type === 'message') {
+        if (isXaiMessageItem(item)) {
           messageItems.push(item)
-        } else {
+        } else if (isXaiReasoningItem(item)) {
           const joined = item.summary.map((s) => s.text).join('')
           if (joined.length > 0) {
             reasoningText = (reasoningText ?? '') + joined
@@ -719,6 +834,25 @@ export function xaiAdapter(opts?: XaiAdapterOptions): ProviderAdapter {
       const usage = mapUsage(response.usage)
       const finishReason = mapFinishReason(response)
 
+      const expectedToolCounters = expectedServerToolCounters(
+        xaiProviderConfig.tools,
+        hasFileRef,
+      )
+      if (expectedToolCounters.length > 0) {
+        usage.details['server_tools_requested'] = 1
+        const missing = expectedToolCounters.filter((key) => !(key in usage.details))
+        if (missing.length > 0) {
+          warnings.push({
+            type: 'other',
+            message: `xai: server tools were requested but usage is missing counters [${missing.join(
+              ', ',
+            )}]; tool cost will be estimated.`,
+          })
+        }
+      }
+
+      const citations = collectXaiCitations(response)
+
       // Response-level metadata → providerMetadata: usage.context_details
       // (non-numeric usage extra) and response.metadata (e.g.
       // system_fingerprint). Numeric usage extras live in usage.details; the
@@ -753,9 +887,170 @@ export function xaiAdapter(opts?: XaiAdapterOptions): ProviderAdapter {
         ...(Object.keys(providerMeta).length > 0
           ? { providerMetadata: providerMeta }
           : {}),
+        ...(citations.length > 0 ? { citations } : {}),
       }
 
       return result
     },
+
+    async countTokens(req: TokenCountRequest, ctx: AdapterCtx): Promise<TokenCount> {
+      if (req.provider !== 'xai') {
+        throw new LlmError(
+          `xaiAdapter received a request for provider "${req.provider}", expected "xai".`,
+          { kind: 'bad_request', retryable: false },
+        )
+      }
+
+      const text = concatenateTokenizeText(req)
+      const apiKey = requireApiKey(ctx.auth)
+      const fetchImpl = opts?._fetch ?? fetch
+
+      try {
+        const res = await fetchImpl('https://api.x.ai/v1/tokenize-text', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ model: req.model, text }),
+          ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}),
+        })
+
+        if (!res.ok) {
+          let parsed: unknown
+          try {
+            parsed = await res.json()
+          } catch {
+            parsed = await res.text().catch(() => '')
+          }
+          throw Object.assign(new Error(`xAI tokenize-text HTTP ${res.status}`), {
+            status: res.status,
+            error: parsed,
+          })
+        }
+
+        const raw: unknown = await res.json()
+        if (!isPlainRecord(raw) || !Array.isArray(raw['token_ids'])) {
+          throw new LlmError(
+            'xAI tokenize-text response is malformed: missing required field: token_ids',
+            { kind: 'server', retryable: true, provider: 'xai' },
+          )
+        }
+        const n = raw['token_ids'].length
+        return {
+          totalTokens: n,
+          accuracy: 'lower-bound',
+          details: { textTokens: n },
+          raw: raw as JsonValue,
+        }
+      } catch (rawErr) {
+        if (rawErr instanceof Error && rawErr.name === 'AbortError') {
+          throw new LlmError('xAI tokenize-text aborted', {
+            kind: 'aborted',
+            retryable: false,
+            provider: 'xai',
+            cause: rawErr,
+          })
+        }
+        throw classifyXaiError(rawErr)
+      }
+    },
   }
+}
+
+/** Live-pinned 2026-08-24 counter names from `usage.server_side_tool_usage_details`. */
+const WEB_SEARCH_COUNTER = 'web_search_calls'
+const X_SEARCH_COUNTER = 'x_search_calls'
+/** Attachment/document search lane. File-attach live confirm is ZDR-blocked. */
+const ATTACHMENT_SEARCH_COUNTER = 'document_search_calls'
+
+function expectedServerToolCounters(
+  tools: Array<Record<string, unknown>> | undefined,
+  hasFileRef: boolean,
+): string[] {
+  const keys: string[] = []
+  if (tools !== undefined) {
+    for (const tool of tools) {
+      if (tool['type'] === 'web_search') keys.push(WEB_SEARCH_COUNTER)
+      if (tool['type'] === 'x_search') keys.push(X_SEARCH_COUNTER)
+    }
+  }
+  if (hasFileRef) keys.push(ATTACHMENT_SEARCH_COUNTER)
+  return keys
+}
+
+function collectXaiCitations(response: XaiResponseShape): Citation[] {
+  const seen = new Set<string>()
+  const citations: Citation[] = []
+
+  const push = (url: unknown, title: unknown) => {
+    if (typeof url !== 'string' || url.length === 0) return
+    if (seen.has(url)) return
+    seen.add(url)
+    const citation: Citation = { url }
+    if (typeof title === 'string' && title.length > 0 && title !== url) {
+      citation.title = title
+    }
+    try {
+      const parsed = new URL(url)
+      if (parsed.hostname.length > 0) {
+        citation.sourceName = parsed.hostname.startsWith('www.')
+          ? parsed.hostname.slice(4)
+          : parsed.hostname
+      }
+    } catch {
+      /* keep url-only */
+    }
+    citations.push(citation)
+  }
+
+  if (Array.isArray(response.citations)) {
+    for (const item of response.citations) {
+      if (typeof item === 'string') {
+        push(item, undefined)
+      } else if (isPlainRecord(item)) {
+        push(item['url'] ?? item['uri'], item['title'])
+      }
+    }
+  }
+
+  for (const item of response.output) {
+    if (!isXaiMessageItem(item)) continue
+    for (const part of item.content) {
+      const annotations = part.annotations
+      if (!Array.isArray(annotations)) continue
+      for (const ann of annotations) {
+        if (!isPlainRecord(ann)) continue
+        if (ann['type'] !== undefined && ann['type'] !== 'url_citation') continue
+        push(ann['url'], ann['title'])
+      }
+    }
+  }
+
+  return citations
+}
+
+function concatenateTokenizeText(req: TokenCountRequest): string {
+  const chunks: string[] = []
+  if (req.system !== undefined && req.system.length > 0) {
+    chunks.push(req.system)
+  }
+  for (const message of req.messages) {
+    for (const part of message.parts) {
+      switch (part.kind) {
+        case 'text':
+          chunks.push(part.text)
+          break
+        case 'inline-media':
+        case 'file-uri':
+        case 'file-ref':
+          throw badXaiRequest(
+            `xAI countTokens rejects ${part.kind} parts; tokenize-text is text-only.`,
+          )
+        default:
+          return assertNever(part)
+      }
+    }
+  }
+  return chunks.join('\n')
 }

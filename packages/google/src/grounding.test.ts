@@ -20,8 +20,8 @@ describe('normalizeGroundingCitations', () => {
     const citations = normalizeGroundingCitations(groundingMetadata)
 
     expect(citations).toEqual([
-      { url: 'https://example.com/a', sourceName: 'Example A' },
-      { url: 'https://other.com/b', sourceName: 'Other B' },
+      { url: 'https://example.com/a', title: 'Example A', sourceName: 'Example A' },
+      { url: 'https://other.com/b', title: 'Other B', sourceName: 'Other B' },
     ])
   })
 
@@ -47,7 +47,11 @@ describe('normalizeGroundingCitations', () => {
     const citations = normalizeGroundingCitations(groundingMetadata)
 
     expect(citations).toEqual([
-      { url: 'https://www.example.com/page', sourceName: 'Example Site' },
+      {
+        url: 'https://www.example.com/page',
+        title: 'Example Site',
+        sourceName: 'Example Site',
+      },
     ])
   })
 
@@ -82,7 +86,9 @@ describe('normalizeGroundingCitations', () => {
 
     const citations = normalizeGroundingCitations(groundingMetadata)
 
-    expect(citations).toEqual([{ url: 'https://good.example.com/', sourceName: 'Good' }])
+    expect(citations).toEqual([
+      { url: 'https://good.example.com/', title: 'Good', sourceName: 'Good' },
+    ])
   })
 
   it('skips a javascript: URI (unsafe scheme), producing no citation', () => {
@@ -115,7 +121,11 @@ describe('normalizeGroundingCitations', () => {
     const citations = normalizeGroundingCitations(groundingMetadata)
 
     expect(citations).toEqual([
-      { url: 'https://example.com/page', sourceName: 'Example Page' },
+      {
+        url: 'https://example.com/page',
+        title: 'Example Page',
+        sourceName: 'Example Page',
+      },
     ])
   })
 
@@ -129,6 +139,8 @@ describe('normalizeGroundingCitations', () => {
 
     const citations = normalizeGroundingCitations(groundingMetadata)
 
-    expect(citations).toEqual([{ url: 'https://good.example.com/', sourceName: 'Good' }])
+    expect(citations).toEqual([
+      { url: 'https://good.example.com/', title: 'Good', sourceName: 'Good' },
+    ])
   })
 })

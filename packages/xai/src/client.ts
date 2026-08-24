@@ -113,6 +113,11 @@ export interface XaiResponseCreateParams {
   service_tier?: 'priority'
   /** Always `false` — this library never relies on xAI-side conversation storage. */
   store: false
+  /**
+   * Server-side and/or function tools. Wire names are snake_case.
+   * Shape is pinned from live 2026-08-24 fixtures.
+   */
+  tools?: Array<Record<string, unknown>>
 }
 
 // ---------------------------------------------------------------------------
@@ -150,8 +155,15 @@ export interface XaiMessageOutputItem {
   content: XaiOutputTextPart[]
 }
 
+/** Server-tool or function-call output items we do not collapse as messages. */
+export interface XaiOtherOutputItem {
+  type: string
+  [key: string]: unknown
+}
+
 /** Union of output-item shapes the Responses API may return. */
-export type XaiOutputItem = XaiReasoningOutputItem | XaiMessageOutputItem
+export type XaiOutputItem =
+  XaiReasoningOutputItem | XaiMessageOutputItem | XaiOtherOutputItem
 
 /**
  * Token usage metadata returned alongside an xAI response.
@@ -198,6 +210,12 @@ export interface XaiResponseShape {
    * `AdapterResult.providerMetadata` by the adapter when present.
    */
   metadata?: { [key: string]: unknown } | null
+  /**
+   * Top-level citations array. Live 2026-08-24 search-tools probes returned
+   * `null`; citations arrived as `output_text.annotations` of type
+   * `url_citation` instead.
+   */
+  citations?: unknown
 }
 
 // ---------------------------------------------------------------------------

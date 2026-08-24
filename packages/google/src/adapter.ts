@@ -30,6 +30,7 @@ import {
   TRANSPORT_TIMEOUT_BUFFER_MS,
 } from './client.js'
 import { GOOGLE_REASONING_EFFORT_BUDGET } from './reasoning-budget.js'
+import { normalizeGroundingCitations } from './grounding.js'
 import type {
   GeminiClientLike,
   GeminiGenerateConfig,
@@ -1026,6 +1027,12 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
           }
           return { providerMetadata: meta as JsonValue }
         })(),
+        ...(() => {
+          const gm = candidate.groundingMetadata
+          if (gm === undefined) return {}
+          const citations = normalizeGroundingCitations(gm)
+          return citations.length > 0 ? { citations } : {}
+        })(),
       }
 
       return result
@@ -1077,6 +1084,7 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
 
         return {
           totalTokens: response.totalTokens,
+          accuracy: 'exact',
           ...(details !== undefined ? { details } : {}),
           raw: response as unknown as JsonValue,
         }
