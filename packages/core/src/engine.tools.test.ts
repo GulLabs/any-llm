@@ -6,7 +6,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { createClient, createModelRegistry, LlmError } from './index.js'
-import { FakeAdapter, FakeClock, FakeIds } from '@gullabs/testing'
+import { FakeAdapter, FakeClock, FakeIds, RecordingSink } from '@gullabs/testing'
 import { makePermissiveTestDescriptor } from './test-model-descriptor.js'
 
 const TOOL = {
@@ -241,5 +241,37 @@ describe('engine function-calling validation', () => {
       { auth: { apiKey: 'k' } },
     )
     expect(result.text).toBe('ok')
+  })
+
+  it('persists requested tool names and count on the success record', async () => {
+    const sink = new RecordingSink()
+    const client = createClient({
+      adapters: [
+        new FakeAdapter('google', {
+          text: 'ok',
+          model: 'gemini-2.5-pro',
+          usage: { inputTokens: 1, outputTokens: 1, details: {}, raw: null },
+          warnings: [],
+        }),
+      ],
+      modelRegistry: createModelRegistry([
+        makePermissiveTestDescriptor({ model: 'gemini-2.5-pro', provider: 'google' }),
+      ]),
+      sink,
+      clock: new FakeClock(),
+      ids: new FakeIds(),
+    })
+    await client.generate(
+      {
+        provider: 'google',
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
+        tools: [TOOL],
+      },
+      { auth: { apiKey: 'k' } },
+    )
+    expect(sink.last()?.toolNames).toEqual(['get_temperature'])
+    expect(sink.last()?.toolCount).toBe(1)
+    expect(sink.last()?.toolCalls).toBeUndefined()
   })
 })

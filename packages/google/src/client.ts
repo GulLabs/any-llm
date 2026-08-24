@@ -87,7 +87,7 @@ export interface GeminiPartShape {
    * Real field name in @google/genai Candidate.content.parts: `thought`.
    */
   thought?: boolean
-  functionCall?: { name?: string; args?: unknown }
+  functionCall?: { id?: string; name?: string; args?: unknown }
 }
 
 /** A candidate returned by Gemini generateContent. */
@@ -203,11 +203,11 @@ export interface GeminiFileDataContentPart {
  * structural subset of the real `@google/genai` `Part` type for the fields we use.
  */
 export interface GeminiFunctionCallPart {
-  functionCall: { name: string; args?: unknown }
+  functionCall: { id?: string; name: string; args?: unknown }
 }
 
 export interface GeminiFunctionResponsePart {
-  functionResponse: { name: string; response: unknown }
+  functionResponse: { id?: string; name: string; response: unknown }
 }
 
 export type GeminiContentPart =

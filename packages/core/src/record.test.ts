@@ -68,6 +68,13 @@ describe('buildRecord — success path', () => {
     expect(r.recordSchemaVersion).toBe(1)
   })
 
+  it('persists requested toolNames and toolCount even without toolCalls', () => {
+    const r = buildRecord(makeBaseInput({ toolNames: ['get_temperature', 'lookup'] }))
+    expect(r.toolNames).toEqual(['get_temperature', 'lookup'])
+    expect(r.toolCount).toBe(2)
+    expect(r.toolCalls).toBeUndefined()
+  })
+
   it('persists toolCalls when present and omits empty arrays', () => {
     const toolCalls = [
       { toolCallId: 'c1', toolName: 'get_temperature', args: { location: 'SF' } },

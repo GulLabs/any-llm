@@ -23,7 +23,7 @@ export interface GeminiPartLike {
   text?: string
   /** Present and `true` on thought-summary parts. */
   thought?: boolean
-  functionCall?: { name?: string; args?: unknown }
+  functionCall?: { id?: string; name?: string; args?: unknown }
 }
 
 /** The `content` object inside a Gemini candidate. */

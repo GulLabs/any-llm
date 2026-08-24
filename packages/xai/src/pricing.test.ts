@@ -384,6 +384,37 @@ describe('computeXaiCost — tool lanes (live-pinned 2026-08-24)', () => {
     expect(cost.confidence).toBe('estimated')
   })
 
+  it('file-ref attachment_search_unpinned → estimated even with web counters', () => {
+    const usage: Usage = {
+      inputTokens: 1000,
+      outputTokens: 0,
+      details: {
+        server_tools_requested: 1,
+        attachment_search_unpinned: 1,
+        web_search_calls: 1,
+      },
+      raw: null,
+    }
+    const cost = computeXaiCost('grok-4.5', usage)
+    expect(cost.details.tools).toBe(5_000)
+    expect(cost.confidence).toBe('estimated')
+  })
+
+  it('file-ref only (unpinned, no web/X counters) → estimated tools 0', () => {
+    const usage: Usage = {
+      inputTokens: 1000,
+      outputTokens: 0,
+      details: {
+        server_tools_requested: 1,
+        attachment_search_unpinned: 1,
+      },
+      raw: null,
+    }
+    const cost = computeXaiCost('grok-4.5', usage)
+    expect(cost.details.tools).toBe(0)
+    expect(cost.confidence).toBe('estimated')
+  })
+
   it('server_tools_requested with counters present → exact and priced', () => {
     const usage: Usage = {
       inputTokens: 1000,

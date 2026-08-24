@@ -875,6 +875,7 @@ function buildSuccessRecord(
   externalId: string | undefined,
   outputParsed: boolean | undefined,
   authKeyId: string | undefined,
+  toolNames: string[] | undefined,
 ): ReturnType<typeof buildRecord> {
   return buildRecord({
     callId,
@@ -919,6 +920,7 @@ function buildSuccessRecord(
     ...(adapterResult.toolCalls !== undefined && adapterResult.toolCalls.length > 0
       ? { toolCalls: adapterResult.toolCalls }
       : {}),
+    ...(toolNames !== undefined && toolNames.length > 0 ? { toolNames } : {}),
     ...(adapterResult.providerMetadata !== undefined
       ? { providerMetadata: adapterResult.providerMetadata }
       : {}),
@@ -944,6 +946,7 @@ function buildErrorRecord(
   attemptNumber: number,
   externalId: string | undefined,
   authKeyId: string | undefined,
+  toolNames: string[] | undefined,
 ): ReturnType<typeof buildRecord> {
   return buildRecord({
     callId,
@@ -966,6 +969,7 @@ function buildErrorRecord(
     metadata: metadata ?? {},
     createdAt: new Date(startMs).toISOString(),
     error: err,
+    ...(toolNames !== undefined && toolNames.length > 0 ? { toolNames } : {}),
   })
 }
 
@@ -1551,6 +1555,7 @@ export function createClient(config: ClientConfig): Client {
           request.externalId,
           outputParsed,
           authKeyIdOf(callAuth),
+          request.tools?.map((t) => t.name),
         )
 
         // Step 11: Sink — fail-open.
@@ -1634,6 +1639,7 @@ export function createClient(config: ClientConfig): Client {
           attemptNumber,
           request.externalId,
           authKeyIdOf(callAuth),
+          request.tools?.map((t) => t.name),
         )
 
         // Sink error record — fail-open.
@@ -1769,6 +1775,7 @@ export function createClient(config: ClientConfig): Client {
           0,
           request.externalId,
           authKeyIdOf(callAuth),
+          request.tools?.map((t) => t.name),
         )
         await recordToSink(sink, syntheticRecord, safeLogger, callId)
       }

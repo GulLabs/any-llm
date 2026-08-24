@@ -224,7 +224,10 @@ export function computeXaiCost(model: string, usage: Usage, tier?: string): Cost
   const serverToolsRequested = usage.details['server_tools_requested'] === 1
   const missingRequestedCounters =
     usage.details['server_tools_missing'] === 1 ||
-    (serverToolsRequested && !XAI_TOOL_COUNTER_KEYS.some((key) => key in usage.details))
+    (serverToolsRequested &&
+      usage.details['attachment_search_unpinned'] !== 1 &&
+      !XAI_TOOL_COUNTER_KEYS.some((key) => key in usage.details))
+  const attachmentUnpinned = usage.details['attachment_search_unpinned'] === 1
 
   const toolsCost = missingRequestedCounters
     ? 0
@@ -240,7 +243,7 @@ export function computeXaiCost(model: string, usage: Usage, tier?: string): Cost
     microUsd,
     usd: microUsd / 1_000_000,
     pricingVersion: xaiPricingVersion,
-    confidence: missingRequestedCounters ? 'estimated' : 'exact',
+    confidence: missingRequestedCounters || attachmentUnpinned ? 'estimated' : 'exact',
     details: {
       input: inputCost,
       cached: cachedCost,

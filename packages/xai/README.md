@@ -58,6 +58,71 @@ const result = await client.generate(
 )
 ```
 
+### Function-calling seam (no agent loop)
+
+```ts
+const tools = [
+  {
+    name: 'get_temperature',
+    description: 'Get current temperature for a location',
+    inputJsonSchema: {
+      type: 'object',
+      properties: { location: { type: 'string' } },
+      required: ['location'],
+    },
+  },
+]
+
+const first = await client.generate(
+  {
+    provider: 'xai',
+    model: 'grok-4.6',
+    messages: [{ role: 'user', parts: [{ kind: 'text', text: 'Temperature in SF?' }] }],
+    tools,
+    toolChoice: 'required',
+  },
+  { auth: { apiKey: 'YOUR_XAI_API_KEY' } },
+)
+// first.finishReason === 'tool_calls'
+// first.toolCalls === [{ toolCallId, toolName, args }]
+
+const call = first.toolCalls![0]!
+const replay = await client.generate(
+  {
+    provider: 'xai',
+    model: 'grok-4.6',
+    messages: [
+      { role: 'user', parts: [{ kind: 'text', text: 'Temperature in SF?' }] },
+      {
+        role: 'assistant',
+        parts: [
+          {
+            kind: 'tool-call',
+            toolCallId: call.toolCallId,
+            toolName: call.toolName,
+            args: call.args,
+          },
+        ],
+      },
+      {
+        role: 'user',
+        parts: [
+          {
+            kind: 'tool-result',
+            toolCallId: call.toolCallId,
+            toolName: call.toolName,
+            result: { temperature: 59 },
+          },
+        ],
+      },
+    ],
+    tools,
+  },
+  { auth: { apiKey: 'YOUR_XAI_API_KEY' } },
+)
+// replay.text — model answer after the host dispatched the tool
+```
+
 ## grok-4.5 and grok-4.6
 
 The default registry ships two canonical models (500k token context window each). They route through this adapter and support:
@@ -116,7 +181,7 @@ try {
 | ZDR teams                   | New uploads and `file_id` attachments are blocked by xAI; errors mention Zero Data Retention when detectable                                                                                                  |
 | Max size                    | 48 MiB (conservative vs docs 48–50 MB)                                                                                                                                                                        |
 
-**Billing note:** attaching files on Responses implicitly enables xAI's `attachment_search` agentic tool. Per-invocation fees land in `Cost.details.tools`. Live 2026-08-24 `/v1/responses` pins counters at `usage.server_side_tool_usage_details` (`web_search_calls`, `x_search_calls`, `document_search_calls`, …); the adapter flattens those names into `usage.details`. File-attach confirmation of the attachment lane is blocked on ZDR keys (uploads return Zero Data Retention); `document_search_calls` is the live-payload key used for the $10/1k attachment lane. When the adapter requested server tools (`providerOptions.xai.tools` or `file-ref`) it also sets synthetic `usage.details.server_tools_requested = 1` (adapter-owned, not a provider field). Missing counters → `tools: 0`, `confidence: 'estimated'`, plus an adapter warning.
+**Billing note:** attaching files on Responses implicitly enables xAI's `attachment_search` agentic tool. Live 2026-08-24 pins `web_search_calls` and `x_search_calls` in `usage.server_side_tool_usage_details` (flattened into `usage.details`). The attachment_search counter is **not** live-pinned (ZDR blocks file attach on this key); a `file-ref` call sets synthetic `usage.details.attachment_search_unpinned = 1` and `Cost.confidence: 'estimated'` — it is never reported as exact `$0`. `server_tools_requested = 1` is adapter-owned. Missing expected web/X counters → `tools: 0`, `estimated`, plus an adapter warning.
 
 **Host tests:** `@gullabs/testing` exports `FakeXaiFileStore` (in-memory upload/get/delete with optional TTL clock and `failClosed`).
 

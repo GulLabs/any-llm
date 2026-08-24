@@ -73,6 +73,8 @@ export const llmCalls = pgTable(
     providerMetadata: jsonb('provider_metadata'),
     citations: jsonb('citations'),
     toolCalls: jsonb('tool_calls'),
+    toolNames: jsonb('tool_names'),
+    toolCount: integer('tool_count'),
     warnings: jsonb('warnings'),
     generationConfig: jsonb('generation_config').notNull(),
     reasoningText: text('reasoning_text'),

@@ -520,6 +520,7 @@ function mapPart(p: Part): GeminiContentPart {
     case 'tool-call':
       return {
         functionCall: {
+          id: p.toolCallId,
           name: p.toolName,
           args: p.args,
         },
@@ -528,6 +529,7 @@ function mapPart(p: Part): GeminiContentPart {
     case 'tool-result':
       return {
         functionResponse: {
+          id: p.toolCallId,
           name: p.toolName,
           response: p.isError === true ? { error: p.result } : p.result,
         },
@@ -1028,14 +1030,25 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       const thoughtParts: string[] = []
       const toolCalls: NonNullable<AdapterResult['toolCalls']> = []
 
+      const nameCounts = new Map<string, number>()
       for (const part of parts) {
         if (
           part.functionCall !== undefined &&
           typeof part.functionCall.name === 'string'
         ) {
+          const toolName = part.functionCall.name
+          const providerId = part.functionCall.id
+          let toolCallId: string
+          if (typeof providerId === 'string' && providerId.length > 0) {
+            toolCallId = providerId
+          } else {
+            const n = (nameCounts.get(toolName) ?? 0) + 1
+            nameCounts.set(toolName, n)
+            toolCallId = `call_${toolName}_${n}`
+          }
           toolCalls.push({
-            toolCallId: part.functionCall.name,
-            toolName: part.functionCall.name,
+            toolCallId,
+            toolName,
             args: (part.functionCall.args ?? {}) as JsonValue,
           })
         }

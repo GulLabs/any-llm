@@ -109,6 +109,8 @@ describe('drizzleUsageSink', () => {
       providerMetadata: { safetyRatings: [] },
       citations: undefined,
       toolCalls: undefined,
+      toolNames: undefined,
+      toolCount: undefined,
       warnings: [{ type: 'other', message: 'warn' }],
       generationConfig: { temperature: 0.2 },
       reasoningText: 'thought summary',

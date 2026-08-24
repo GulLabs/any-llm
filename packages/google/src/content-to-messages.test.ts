@@ -236,6 +236,25 @@ describe('geminiContentToMessages: function calling parts', () => {
     })
   })
 
+  it('prefers functionCall.id as toolCallId when present', () => {
+    const result = geminiContentToMessages({
+      contents: [
+        {
+          role: 'model',
+          parts: [
+            { functionCall: { id: 'fc_1', name: 'get_temp', args: { city: 'SF' } } },
+          ],
+        },
+      ],
+    })
+    expect(result.messages[0]?.parts[0]).toEqual({
+      kind: 'tool-call',
+      toolCallId: 'fc_1',
+      toolName: 'get_temp',
+      args: { city: 'SF' },
+    })
+  })
+
   it('rejects functionCall without a name', () => {
     expect(() =>
       geminiContentToMessages({

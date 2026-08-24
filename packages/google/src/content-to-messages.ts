@@ -141,14 +141,15 @@ function convertPart(part: GenaiPart, location: string): Part {
 
   if (baseKeys.length === 0) {
     if (keys.includes('functionCall') && keys.every((k) => k === 'functionCall')) {
-      const fc = (part as { functionCall?: { name?: string; args?: unknown } })
-        .functionCall
+      const fc = (
+        part as { functionCall?: { id?: string; name?: string; args?: unknown } }
+      ).functionCall
       if (fc === undefined || typeof fc.name !== 'string' || fc.name.length === 0) {
         throw badRequest(`${location}: functionCall.name is required.`)
       }
       return {
         kind: 'tool-call',
-        toolCallId: fc.name,
+        toolCallId: typeof fc.id === 'string' && fc.id.length > 0 ? fc.id : fc.name,
         toolName: fc.name,
         args: (fc.args ?? {}) as JsonValue,
       }
@@ -157,14 +158,15 @@ function convertPart(part: GenaiPart, location: string): Part {
       keys.includes('functionResponse') &&
       keys.every((k) => k === 'functionResponse')
     ) {
-      const fr = (part as { functionResponse?: { name?: string; response?: unknown } })
-        .functionResponse
+      const fr = (
+        part as { functionResponse?: { id?: string; name?: string; response?: unknown } }
+      ).functionResponse
       if (fr === undefined || typeof fr.name !== 'string' || fr.name.length === 0) {
         throw badRequest(`${location}: functionResponse.name is required.`)
       }
       return {
         kind: 'tool-result',
-        toolCallId: fr.name,
+        toolCallId: typeof fr.id === 'string' && fr.id.length > 0 ? fr.id : fr.name,
         toolName: fr.name,
         result: (fr.response ?? null) as JsonValue,
       }
