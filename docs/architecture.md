@@ -608,11 +608,11 @@ exported constants from `@gullabs/google`.
 
 ---
 
-## 12. Not in v1 / Deliberate Scope Boundaries
+## 12. Scope Boundaries
 
-These capabilities have designed seams in the type system but are not implemented yet. They are
-not deferred because of time pressure; they are excluded because the one-call foundation needs
-to be solid before the surface expands.
+Some items below are shipped seams; others remain unimplemented. The exclusions
+are deliberate: the one-call foundation stays small. An agent loop, streaming,
+and extra providers are still out of v1 machinery.
 
 **Streaming.** `generate` and `runStructured` return complete responses. The `Middleware` and
 `ProviderAdapter` interfaces are designed to accommodate a future `stream()` path without a
