@@ -135,9 +135,6 @@ describe('basic text completion', () => {
     expect(result.usage.details.num_server_side_tools_used).toBe(3)
     expect(result.usage.details.num_sources_used).toBe(2)
     expect(result.usage.details.server_tools_requested).toBe(1)
-    expect(result.warnings.some((w) => w.message.includes('document_search_calls'))).toBe(
-      true,
-    )
     expect(result.usage.raw).toMatchObject({
       num_server_side_tools_used: 3,
       num_sources_used: 2,
@@ -1270,7 +1267,312 @@ describe('engine e2e: safety-check 403 ledger', () => {
   })
 })
 
+describe('xai function calling', () => {
+  const tool = {
+    name: 'get_temperature',
+    description: 'Get temperature',
+    inputJsonSchema: { type: 'object', properties: { location: { type: 'string' } } },
+  }
+
+  it.each(['required', 'none'] as const)(
+    'forwards string toolChoice %s',
+    async (choice) => {
+      const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+      const adapter = xaiAdapter({ client })
+      await adapter.run(
+        makeResolvedReq({
+          modelDescriptor: grok45ModelDescriptor,
+          tools: [tool],
+          toolChoice: choice,
+        }),
+        FAKE_CTX,
+      )
+      expect((client.calls[0] as { tool_choice?: string }).tool_choice).toBe(choice)
+    },
+  )
+
+  it('forwards string toolChoice auto', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    await adapter.run(
+      makeResolvedReq({
+        modelDescriptor: grok45ModelDescriptor,
+        tools: [tool],
+        toolChoice: 'auto',
+      }),
+      FAKE_CTX,
+    )
+    expect((client.calls[0] as { tool_choice?: string }).tool_choice).toBe('auto')
+  })
+
+  it('maps function tools and flat tool_choice; collects function_call items', async () => {
+    const client = makeFakeXai({
+      id: 'resp-fn',
+      model: 'grok-4.6',
+      status: 'completed',
+      output: [
+        {
+          type: 'function_call',
+          call_id: 'call-1',
+          name: 'get_temperature',
+          arguments: '{"location":"SF"}',
+        } as never,
+      ],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    })
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({
+        model: 'grok-4.6',
+        modelDescriptor: grok45ModelDescriptor,
+        tools: [tool],
+        toolChoice: { name: 'get_temperature' },
+      }),
+      FAKE_CTX,
+    )
+    expect(result.finishReason).toBe('tool_calls')
+    expect(result.toolCalls).toEqual([
+      { toolCallId: 'call-1', toolName: 'get_temperature', args: { location: 'SF' } },
+    ])
+    const call = client.calls[0] as {
+      tools: unknown
+      tool_choice: unknown
+    }
+    expect(call.tools).toEqual([
+      {
+        type: 'function',
+        name: 'get_temperature',
+        description: 'Get temperature',
+        parameters: tool.inputJsonSchema,
+      },
+    ])
+    expect(call.tool_choice).toEqual({ type: 'function', name: 'get_temperature' })
+  })
+
+  it('replays tool-call and tool-result as store:false input items', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: '59F' }))
+    const adapter = xaiAdapter({ client })
+    await adapter.run(
+      makeResolvedReq({
+        modelDescriptor: grok45ModelDescriptor,
+        tools: [tool],
+        messages: [
+          { role: 'user', parts: [{ kind: 'text', text: 'temp?' }] },
+          {
+            role: 'assistant',
+            parts: [
+              {
+                kind: 'tool-call',
+                toolCallId: 'call-1',
+                toolName: 'get_temperature',
+                args: { location: 'SF' },
+              },
+            ],
+          },
+          {
+            role: 'user',
+            parts: [
+              {
+                kind: 'tool-result',
+                toolCallId: 'call-1',
+                toolName: 'get_temperature',
+                result: { temperature: 59 },
+              },
+            ],
+          },
+        ],
+      }),
+      FAKE_CTX,
+    )
+    const call = client.calls[0] as { input: unknown[]; store: boolean }
+    expect(call.store).toBe(false)
+    expect(call.input).toEqual([
+      { role: 'user', content: [{ type: 'input_text', text: 'temp?' }] },
+      {
+        type: 'function_call',
+        call_id: 'call-1',
+        name: 'get_temperature',
+        arguments: '{"location":"SF"}',
+      },
+      {
+        type: 'function_call_output',
+        call_id: 'call-1',
+        output: '{"temperature":59}',
+      },
+    ])
+  })
+
+  it('keeps unparsable function_call arguments as the raw string', async () => {
+    const client = makeFakeXai({
+      id: 'resp-fn-bad',
+      model: 'grok-4.5',
+      status: 'completed',
+      output: [
+        {
+          type: 'function_call',
+          call_id: 'call-bad',
+          name: 'get_temperature',
+          arguments: 'not-json',
+        } as never,
+      ],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    })
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({
+        modelDescriptor: grok45ModelDescriptor,
+        tools: [tool],
+      }),
+      FAKE_CTX,
+    )
+    expect(result.toolCalls?.[0]?.args).toBe('not-json')
+  })
+
+  it('combines server-side search tools with function tools', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    await adapter.run(
+      makeResolvedReq({
+        modelDescriptor: grok45ModelDescriptor,
+        tools: [tool],
+        config: { providerOptions: { xai: { tools: [{ type: 'web_search' }] } } },
+      }),
+      FAKE_CTX,
+    )
+    const tools = (client.calls[0] as { tools: Array<{ type: string }> }).tools
+    expect(tools.map((t) => t.type)).toEqual(['web_search', 'function'])
+  })
+
+  it('skips function_call items without call_id or name', async () => {
+    const client = makeFakeXai({
+      id: 'resp-fn-empty',
+      model: 'grok-4.5',
+      status: 'completed',
+      output: [
+        {
+          type: 'function_call',
+          call_id: '',
+          name: 'get_temperature',
+          arguments: '{}',
+        } as never,
+        { type: 'function_call', call_id: 'c1', name: '', arguments: '{}' } as never,
+        {
+          type: 'function_call',
+          call_id: 'c2',
+          name: 'get_temperature',
+          arguments: 12,
+        } as never,
+      ],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    })
+    const adapter = xaiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({
+        modelDescriptor: grok45ModelDescriptor,
+        tools: [tool],
+      }),
+      FAKE_CTX,
+    )
+    expect(result.toolCalls).toEqual([
+      { toolCallId: 'c2', toolName: 'get_temperature', args: {} },
+    ])
+  })
+
+  it('rejects an unknown search tool type at the adapter', async () => {
+    const adapter = xaiAdapter({ client: makeFakeXai(fakeXaiResponse({ text: 'ok' })) })
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          modelDescriptor: grok45ModelDescriptor,
+          config: {
+            providerOptions: { xai: { tools: [{ type: 'code_execution' }] as never } },
+          },
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+  })
+
+  it('rejects tools when functionCalling is not admitted', async () => {
+    const adapter = xaiAdapter({ client: makeFakeXai(fakeXaiResponse({ text: 'ok' })) })
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          tools: [tool],
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+  })
+
+  it('countTokens rejects tools', async () => {
+    const adapter = xaiAdapter({
+      _fetch: (async () => {
+        throw new Error('should not fetch')
+      }) as typeof fetch,
+    })
+    await expect(
+      adapter.countTokens!(
+        {
+          provider: 'xai',
+          model: 'grok-4.5',
+          messages: [{ role: 'user', parts: [{ kind: 'text', text: 'hi' }] }],
+          tools: [tool],
+        },
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+  })
+})
+
 describe('xai Live Search tools', () => {
+  it('maps all web_search and x_search optional wire fields', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    await adapter.run(
+      makeResolvedReq({
+        modelDescriptor: grok45ModelDescriptor,
+        config: {
+          providerOptions: {
+            xai: {
+              tools: [
+                {
+                  type: 'web_search',
+                  excludedDomains: ['spam.example'],
+                  enableImageUnderstanding: true,
+                  enableImageSearch: true,
+                },
+                {
+                  type: 'x_search',
+                  excludedXHandles: ['spam'],
+                  toDate: '2026-08-01',
+                  enableImageUnderstanding: true,
+                  enableVideoUnderstanding: true,
+                },
+              ],
+            },
+          },
+        },
+      }),
+      FAKE_CTX,
+    )
+    expect((client.calls[0] as { tools: unknown }).tools).toEqual([
+      {
+        type: 'web_search',
+        excluded_domains: ['spam.example'],
+        enable_image_understanding: true,
+        enable_image_search: true,
+      },
+      {
+        type: 'x_search',
+        excluded_x_handles: ['spam'],
+        to_date: '2026-08-01',
+        enable_image_understanding: true,
+        enable_video_understanding: true,
+      },
+    ])
+  })
+
   it('emits snake_case tools wire shape and fails closed without grounding', async () => {
     const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
     const adapter = xaiAdapter({ client })
@@ -1362,6 +1664,80 @@ describe('xai Live Search tools', () => {
     )
     expect(result.usage.details.server_tools_requested).toBe(1)
     expect(result.warnings[0]?.message).toContain('web_search_calls')
+  })
+
+  it('maps top-level citations array and ignores earlier message annotations', async () => {
+    const response = fakeXaiResponse({ text: 'final' })
+    response.citations = [
+      'https://first.example',
+      { url: 'https://second.example', title: 'Second' },
+    ]
+    response.output = [
+      {
+        type: 'message',
+        role: 'assistant',
+        content: [
+          {
+            type: 'output_text',
+            text: 'draft',
+            annotations: [
+              { type: 'url_citation', url: 'https://draft.example', title: 'Draft' },
+            ],
+          },
+        ],
+      },
+      {
+        type: 'message',
+        role: 'assistant',
+        content: [
+          {
+            type: 'output_text',
+            text: 'final',
+            annotations: [
+              { type: 'url_citation', url: 'https://final.example', title: 'Final' },
+            ],
+          },
+        ],
+      },
+    ]
+    const adapter = xaiAdapter({ client: makeFakeXai(response) })
+    const result = await adapter.run(
+      makeResolvedReq({ modelDescriptor: grok45ModelDescriptor }),
+      FAKE_CTX,
+    )
+    expect(result.citations?.map((c) => c.url)).toEqual([
+      'https://first.example',
+      'https://second.example',
+      'https://final.example',
+    ])
+    expect(result.citations?.some((c) => c.url === 'https://draft.example')).toBe(false)
+  })
+
+  it('rejects non-boolean parallelToolCalls', async () => {
+    const adapter = xaiAdapter({ client: makeFakeXai(fakeXaiResponse({ text: 'ok' })) })
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          config: { providerOptions: { xai: { parallelToolCalls: 'nope' as never } } },
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+  })
+
+  it('forwards parallelToolCalls', async () => {
+    const client = makeFakeXai(fakeXaiResponse({ text: 'ok' }))
+    const adapter = xaiAdapter({ client })
+    await adapter.run(
+      makeResolvedReq({
+        modelDescriptor: grok45ModelDescriptor,
+        config: { providerOptions: { xai: { parallelToolCalls: false } } },
+      }),
+      FAKE_CTX,
+    )
+    expect(
+      (client.calls[0] as { parallel_tool_calls?: boolean }).parallel_tool_calls,
+    ).toBe(false)
   })
 
   it('rejects unknown providerOptions.xai keys', async () => {

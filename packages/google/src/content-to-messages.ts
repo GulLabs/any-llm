@@ -24,7 +24,7 @@
  */
 
 import { LlmError } from '@gullabs/core'
-import type { Message, Part } from '@gullabs/core'
+import type { JsonValue, Message, Part } from '@gullabs/core'
 import type { Content, Part as GenaiPart } from '@google/genai'
 
 /**
@@ -140,6 +140,35 @@ function convertPart(part: GenaiPart, location: string): Part {
   )
 
   if (baseKeys.length === 0) {
+    if (keys.includes('functionCall') && keys.every((k) => k === 'functionCall')) {
+      const fc = (part as { functionCall?: { name?: string; args?: unknown } })
+        .functionCall
+      if (fc === undefined || typeof fc.name !== 'string' || fc.name.length === 0) {
+        throw badRequest(`${location}: functionCall.name is required.`)
+      }
+      return {
+        kind: 'tool-call',
+        toolCallId: fc.name,
+        toolName: fc.name,
+        args: (fc.args ?? {}) as JsonValue,
+      }
+    }
+    if (
+      keys.includes('functionResponse') &&
+      keys.every((k) => k === 'functionResponse')
+    ) {
+      const fr = (part as { functionResponse?: { name?: string; response?: unknown } })
+        .functionResponse
+      if (fr === undefined || typeof fr.name !== 'string' || fr.name.length === 0) {
+        throw badRequest(`${location}: functionResponse.name is required.`)
+      }
+      return {
+        kind: 'tool-result',
+        toolCallId: fr.name,
+        toolName: fr.name,
+        result: (fr.response ?? null) as JsonValue,
+      }
+    }
     if (keys.length === 0) {
       throw badRequest(
         `${location}: Part has no recognized fields set (expected exactly one of ` +
@@ -148,8 +177,8 @@ function convertPart(part: GenaiPart, location: string): Part {
     }
     throw badRequest(
       `${location}: Part keys [${keys.join(', ')}] are not supported by ` +
-        'geminiContentToMessages — only text, inlineData, and fileData parts can be ' +
-        'represented in any-llm.',
+        'geminiContentToMessages — only text, inlineData, fileData, functionCall, ' +
+        'and functionResponse parts can be represented in any-llm.',
     )
   }
 

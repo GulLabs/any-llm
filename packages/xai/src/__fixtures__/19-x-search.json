@@ -12,7 +12,6 @@
     "content-type": "application/json",
     "date": "Mon, 24 Aug 2026 11:35:34 GMT",
     "server": "cloudflare",
-    "set-cookie": "__cf_bm=eFOQHH4YpkTZ4RI1EcyOquUlHiHk0X2p.X0XnJQbEew-1787571320.963094-1.0.1.1-Y1h_mfqmzomQvtLeJCDacAulLwSNKimDruax5qlWu_K2FHYpfUY6iit2kbGg.B.KPXcYehW05IbPxGm5hi_FEXsKzpZrJkINQSADVr.cspNCCEApxqODvStIfhcNUqsN; HttpOnly; SameSite=None; Secure; Path=/; Domain=x.ai; Expires=Mon, 24 Aug 2026 12:05:34 GMT",
     "strict-transport-security": "max-age=31536000",
     "traceparent": "00-7fce28011049146ab351826e95de2343-da712b950000a031-01",
     "transfer-encoding": "chunked",
@@ -64,7 +63,7 @@
         "content": [
           {
             "type": "output_text",
-            "text": "We are now @SpaceXAI. render_inline_citationnittcitation_idPrem0 reln=\"post\"",
+            "text": "We are now @SpaceXAI. \ue200render_inline_citationnittcitation_idPrem0 reln=\"post\"",
             "logprobs": [],
             "annotations": []
           }
@@ -92,7 +91,7 @@
         "content": [
           {
             "type": "output_text",
-            "text": "We are now @SpaceXAI. render_inline_citationnittcitation_idPrem1 reln=\"post\"",
+            "text": "We are now @SpaceXAI. \ue200render_inline_citationnittcitation_idPrem1 reln=\"post\"",
             "logprobs": [],
             "annotations": [
               {

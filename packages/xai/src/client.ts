@@ -79,6 +79,24 @@ export interface XaiInputItem {
   content: XaiInputContentPart[]
 }
 
+/** Live-verified store:false replay item. */
+export interface XaiFunctionCallInputItem {
+  type: 'function_call'
+  call_id: string
+  name: string
+  arguments: string
+}
+
+/** Live-verified store:false replay item. */
+export interface XaiFunctionCallOutputInputItem {
+  type: 'function_call_output'
+  call_id: string
+  output: string
+}
+
+export type XaiRequestInputItem =
+  XaiInputItem | XaiFunctionCallInputItem | XaiFunctionCallOutputInputItem
+
 /**
  * Structured-output text-format request shape.
  * Real xAI field: `text.format`, NOT `response_format`.
@@ -98,7 +116,7 @@ export type XaiTextFormat =
  */
 export interface XaiResponseCreateParams {
   model: string
-  input: XaiInputItem[]
+  input: XaiRequestInputItem[]
   instructions?: string
   reasoning?: { effort: 'low' | 'medium' | 'high' | 'xhigh' }
   text?: { format: XaiTextFormat }
@@ -118,6 +136,9 @@ export interface XaiResponseCreateParams {
    * Shape is pinned from live 2026-08-24 fixtures.
    */
   tools?: Array<Record<string, unknown>>
+  /** `'auto' | 'required' | 'none'` or live-verified `{ type: 'function', name }`. */
+  tool_choice?: string | { type: 'function'; name: string }
+  parallel_tool_calls?: boolean
 }
 
 // ---------------------------------------------------------------------------

@@ -12,7 +12,6 @@
     "content-type": "application/json",
     "date": "Mon, 24 Aug 2026 11:35:44 GMT",
     "server": "cloudflare",
-    "set-cookie": "__cf_bm=Ee1zBCIfv7HGvIt98GqZYXwRICtXUmQZB0aQX2BgGRs-1787571342.1949785-1.0.1.1-QZc3jAfjatTvFQl0V.I2aVdMzQMdStLOUENuD5.coGuor_0HXK6i.WjubwpRa52L8bj7RhcdwFh8BQU6RIQAb7tX3U6tEsfZjgfCdHcNJ3crm3wxIS3uTVoLzaC.l7Ju; HttpOnly; SameSite=None; Secure; Path=/; Domain=x.ai; Expires=Mon, 24 Aug 2026 12:05:44 GMT",
     "strict-transport-security": "max-age=31536000",
     "traceparent": "00-6493588560cf0e57f2f0c9b97fc68400-913be61d000034f4-01",
     "transfer-encoding": "chunked",

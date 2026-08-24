@@ -27,8 +27,8 @@ import { buildXaiClient, requireApiKey } from './client.js'
 import type {
   XaiClientLike,
   XaiResponseCreateParams,
-  XaiInputItem,
   XaiInputContentPart,
+  XaiRequestInputItem,
   XaiResponseShape,
   XaiUsageShape,
   XaiMessageOutputItem,
@@ -140,6 +140,12 @@ function mapPart(p: Part): XaiInputContentPart {
       return { type: 'input_file', file_id: p.fileId }
     }
 
+    case 'tool-call':
+    case 'tool-result':
+      throw badXaiRequest(
+        `xAI mapPart does not emit ${p.kind} as a content part; the request mapper handles replay items.`,
+      )
+
     default:
       return assertNever(p)
   }
@@ -149,11 +155,12 @@ function mapPart(p: Part): XaiInputContentPart {
 // providerOptions.xai → explicit allowlisted mapping
 // ---------------------------------------------------------------------------
 
-const XAI_PROVIDER_OPTION_KEYS = new Set(['promptCacheKey', 'tools'])
+const XAI_PROVIDER_OPTION_KEYS = new Set(['promptCacheKey', 'tools', 'parallelToolCalls'])
 
 type MappedXaiProviderOptions = {
   promptCacheKey?: string
   tools?: Array<Record<string, unknown>>
+  parallelToolCalls?: boolean
 }
 
 function mapXaiProviderOptions(
@@ -175,7 +182,7 @@ function mapXaiProviderOptions(
     throw badXaiRequest(
       `providerOptions.xai contains unsupported keys [${unknownKeys.join(
         ', ',
-      )}] for model "${model}". Allowed keys: promptCacheKey, tools.`,
+      )}] for model "${model}". Allowed keys: promptCacheKey, tools, parallelToolCalls.`,
     )
   }
 
@@ -194,6 +201,15 @@ function mapXaiProviderOptions(
 
   if (xaiOpts['tools'] !== undefined) {
     mapped.tools = mapXaiSearchTools(xaiOpts['tools'], model)
+  }
+
+  if (xaiOpts['parallelToolCalls'] !== undefined) {
+    if (typeof xaiOpts['parallelToolCalls'] !== 'boolean') {
+      throw badXaiRequest(
+        `providerOptions.xai.parallelToolCalls must be a boolean for model "${model}".`,
+      )
+    }
+    mapped.parallelToolCalls = xaiOpts['parallelToolCalls']
   }
 
   return mapped
@@ -621,10 +637,48 @@ export function xaiAdapter(opts?: XaiAdapterOptions): ProviderAdapter {
       // ------------------------------------------------------------------
       // 1. Map messages → input
       // ------------------------------------------------------------------
-      const input: XaiInputItem[] = req.messages.map((msg) => ({
-        role: msg.role === 'assistant' ? 'assistant' : 'user',
-        content: msg.parts.map(mapPart),
-      }))
+      const input: XaiRequestInputItem[] = []
+      for (const msg of req.messages) {
+        const contentParts: XaiInputContentPart[] = []
+        for (const part of msg.parts) {
+          if (part.kind === 'tool-call') {
+            if (contentParts.length > 0) {
+              input.push({
+                role: msg.role === 'assistant' ? 'assistant' : 'user',
+                content: contentParts.splice(0),
+              })
+            }
+            input.push({
+              type: 'function_call',
+              call_id: part.toolCallId,
+              name: part.toolName,
+              arguments: JSON.stringify(part.args),
+            })
+            continue
+          }
+          if (part.kind === 'tool-result') {
+            if (contentParts.length > 0) {
+              input.push({
+                role: msg.role === 'assistant' ? 'assistant' : 'user',
+                content: contentParts.splice(0),
+              })
+            }
+            input.push({
+              type: 'function_call_output',
+              call_id: part.toolCallId,
+              output: JSON.stringify(part.result),
+            })
+            continue
+          }
+          contentParts.push(mapPart(part))
+        }
+        if (contentParts.length > 0) {
+          input.push({
+            role: msg.role === 'assistant' ? 'assistant' : 'user',
+            content: contentParts,
+          })
+        }
+      }
 
       // ------------------------------------------------------------------
       // 2. Build request params
@@ -758,6 +812,30 @@ export function xaiAdapter(opts?: XaiAdapterOptions): ProviderAdapter {
         params.tools = searchTools
       }
 
+      if (req.tools !== undefined && req.tools.length > 0) {
+        if (req.modelDescriptor?.capabilities?.functionCalling !== true) {
+          throw badXaiRequest(
+            `tools is not supported for xai model "${model}" (capabilities.functionCalling is not true).`,
+          )
+        }
+        const functionTools = req.tools.map((tool) => ({
+          type: 'function',
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.inputJsonSchema,
+        }))
+        params.tools = [...(params.tools ?? []), ...functionTools]
+        if (req.toolChoice !== undefined) {
+          params.tool_choice =
+            typeof req.toolChoice === 'string'
+              ? req.toolChoice
+              : { type: 'function', name: req.toolChoice.name }
+        }
+      }
+      if (xaiProviderConfig.parallelToolCalls !== undefined) {
+        params.parallel_tool_calls = xaiProviderConfig.parallelToolCalls
+      }
+
       // ------------------------------------------------------------------
       // 6. Client construction + SDK call — inside the classifier so ANY
       //    failure (including bad auth construction) is rethrown as a typed
@@ -786,6 +864,7 @@ export function xaiAdapter(opts?: XaiAdapterOptions): ProviderAdapter {
       let text = ''
       let reasoningText: string | undefined
       const messageItems: XaiMessageOutputItem[] = []
+      const toolCalls: NonNullable<AdapterResult['toolCalls']> = []
 
       for (const item of response.output) {
         if (isXaiMessageItem(item)) {
@@ -794,6 +873,20 @@ export function xaiAdapter(opts?: XaiAdapterOptions): ProviderAdapter {
           const joined = item.summary.map((s) => s.text).join('')
           if (joined.length > 0) {
             reasoningText = (reasoningText ?? '') + joined
+          }
+        } else if (item.type === 'function_call') {
+          const callId = typeof item['call_id'] === 'string' ? item['call_id'] : ''
+          const name = typeof item['name'] === 'string' ? item['name'] : ''
+          let args: JsonValue = {}
+          if (typeof item['arguments'] === 'string') {
+            try {
+              args = JSON.parse(item['arguments']) as JsonValue
+            } catch {
+              args = item['arguments']
+            }
+          }
+          if (callId.length > 0 && name.length > 0) {
+            toolCalls.push({ toolCallId: callId, toolName: name, args })
           }
         }
       }
@@ -838,10 +931,11 @@ export function xaiAdapter(opts?: XaiAdapterOptions): ProviderAdapter {
         xaiProviderConfig.tools,
         hasFileRef,
       )
-      if (expectedToolCounters.length > 0) {
+      if (expectedToolCounters.length > 0 || hasFileRef) {
         usage.details['server_tools_requested'] = 1
         const missing = expectedToolCounters.filter((key) => !(key in usage.details))
         if (missing.length > 0) {
+          usage.details['server_tools_missing'] = 1
           warnings.push({
             type: 'other',
             message: `xai: server tools were requested but usage is missing counters [${missing.join(
@@ -851,7 +945,7 @@ export function xaiAdapter(opts?: XaiAdapterOptions): ProviderAdapter {
         }
       }
 
-      const citations = collectXaiCitations(response)
+      const citations = collectXaiCitations(response, messageItems)
 
       // Response-level metadata → providerMetadata: usage.context_details
       // (non-numeric usage extra) and response.metadata (e.g.
@@ -888,6 +982,7 @@ export function xaiAdapter(opts?: XaiAdapterOptions): ProviderAdapter {
           ? { providerMetadata: providerMeta }
           : {}),
         ...(citations.length > 0 ? { citations } : {}),
+        ...(toolCalls.length > 0 ? { toolCalls, finishReason: 'tool_calls' } : {}),
       }
 
       return result
@@ -898,6 +993,11 @@ export function xaiAdapter(opts?: XaiAdapterOptions): ProviderAdapter {
         throw new LlmError(
           `xaiAdapter received a request for provider "${req.provider}", expected "xai".`,
           { kind: 'bad_request', retryable: false },
+        )
+      }
+      if (req.tools !== undefined && req.tools.length > 0) {
+        throw badXaiRequest(
+          'xAI countTokens rejects tools; tokenize-text cannot represent tool declarations.',
         )
       }
 
@@ -961,12 +1061,9 @@ export function xaiAdapter(opts?: XaiAdapterOptions): ProviderAdapter {
 /** Live-pinned 2026-08-24 counter names from `usage.server_side_tool_usage_details`. */
 const WEB_SEARCH_COUNTER = 'web_search_calls'
 const X_SEARCH_COUNTER = 'x_search_calls'
-/** Attachment/document search lane. File-attach live confirm is ZDR-blocked. */
-const ATTACHMENT_SEARCH_COUNTER = 'document_search_calls'
-
 function expectedServerToolCounters(
   tools: Array<Record<string, unknown>> | undefined,
-  hasFileRef: boolean,
+  _hasFileRef: boolean,
 ): string[] {
   const keys: string[] = []
   if (tools !== undefined) {
@@ -975,11 +1072,13 @@ function expectedServerToolCounters(
       if (tool['type'] === 'x_search') keys.push(X_SEARCH_COUNTER)
     }
   }
-  if (hasFileRef) keys.push(ATTACHMENT_SEARCH_COUNTER)
   return keys
 }
 
-function collectXaiCitations(response: XaiResponseShape): Citation[] {
+function collectXaiCitations(
+  response: XaiResponseShape,
+  messageItems: XaiMessageOutputItem[],
+): Citation[] {
   const seen = new Set<string>()
   const citations: Citation[] = []
 
@@ -1014,8 +1113,9 @@ function collectXaiCitations(response: XaiResponseShape): Citation[] {
     }
   }
 
-  for (const item of response.output) {
-    if (!isXaiMessageItem(item)) continue
+  const lastMessage = messageItems.at(-1)
+  const citationMessages = lastMessage === undefined ? [] : [lastMessage]
+  for (const item of citationMessages) {
     for (const part of item.content) {
       const annotations = part.annotations
       if (!Array.isArray(annotations)) continue
@@ -1044,6 +1144,8 @@ function concatenateTokenizeText(req: TokenCountRequest): string {
         case 'inline-media':
         case 'file-uri':
         case 'file-ref':
+        case 'tool-call':
+        case 'tool-result':
           throw badXaiRequest(
             `xAI countTokens rejects ${part.kind} parts; tokenize-text is text-only.`,
           )

@@ -111,10 +111,32 @@ export type FileRefPart = {
 }
 
 /**
+ * An assistant-emitted tool call. Only valid on `assistant` messages.
+ */
+export type ToolCallPart = {
+  kind: 'tool-call'
+  toolCallId: string
+  toolName: string
+  args: JsonValue
+}
+
+/**
+ * A user-supplied tool result. Only valid on `user` messages.
+ */
+export type ToolResultPart = {
+  kind: 'tool-result'
+  toolCallId: string
+  toolName: string
+  result: JsonValue
+  isError?: boolean
+}
+
+/**
  * Discriminated union of all supported message part kinds.
  * Switch on `part.kind` for exhaustive narrowing.
  */
-export type Part = TextPart | InlineMediaPart | FileUriPart | FileRefPart
+export type Part =
+  TextPart | InlineMediaPart | FileUriPart | FileRefPart | ToolCallPart | ToolResultPart
 
 // ---------------------------------------------------------------------------
 // Part type guards
@@ -162,6 +184,16 @@ export function isFileUriPart(part: Part): part is FileUriPart {
  */
 export function isFileRefPart(part: Part): part is FileRefPart {
   return part.kind === 'file-ref'
+}
+
+/** Narrows `part` to {@link ToolCallPart}. */
+export function isToolCallPart(part: Part): part is ToolCallPart {
+  return part.kind === 'tool-call'
+}
+
+/** Narrows `part` to {@link ToolResultPart}. */
+export function isToolResultPart(part: Part): part is ToolResultPart {
+  return part.kind === 'tool-result'
 }
 
 /**
@@ -258,6 +290,19 @@ export interface GenConfig {
  * A request to an LLM.
  *
  */
+/**
+ * A caller-defined function the model may invoke.
+ * `description` is required (xAI documents it as required; reject-don't-map).
+ */
+export interface ToolDefinition {
+  name: string
+  description: string
+  inputJsonSchema: JsonValue
+}
+
+/** How the model should choose among {@link LlmRequest.tools}. */
+export type ToolChoice = 'auto' | 'required' | 'none' | { name: string }
+
 export interface LlmRequest {
   /**
    * Explicit provider identifier — the engine routes by this field directly
@@ -280,6 +325,16 @@ export interface LlmRequest {
    * Parts may be text, inline media (base64), or provider-hosted file references.
    */
   messages: Message[]
+  /**
+   * Optional function-calling tools. Tools-in / tool-call+tool-result-parts
+   * out — no agent loop. Invalid without unique non-empty names and
+   * non-empty descriptions.
+   */
+  tools?: ToolDefinition[]
+  /**
+   * Tool selection policy. Only valid when {@link tools} is present.
+   */
+  toolChoice?: ToolChoice
   /**
    * Optional structured output hint.
    *
@@ -335,7 +390,7 @@ export interface LlmRequest {
 // ---------------------------------------------------------------------------
 
 /** Why the model stopped generating. */
-export type FinishReason = 'stop' | 'length' | 'content_filter' | 'other'
+export type FinishReason = 'stop' | 'length' | 'content_filter' | 'other' | 'tool_calls'
 
 /**
  * A normalized citation produced by a provider adapter.
@@ -509,6 +564,11 @@ export interface LlmResult {
    * Empty arrays are never emitted.
    */
   citations?: Citation[]
+  /**
+   * Projection of assistant `tool-call` parts for dispatch.
+   * May coexist with `text`.
+   */
+  toolCalls?: Array<{ toolCallId: string; toolName: string; args: JsonValue }>
   /**
    * Raw provider metadata (grounding citations, safety ratings, etc.).
    * Stored as JsonValue to avoid a hard coupling to provider-specific types.

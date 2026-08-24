@@ -37,6 +37,7 @@ export const grok45ModelDescriptor: ModelDescriptor = {
     sampling: 'tunable',
     caching: { explicit: false, minTokens: 0 },
     grounding: true,
+    functionCalling: true,
     // No serviceTiers key — grok-4.5 has no admitted service-tier vocabulary.
   },
   configSchema: Grok45ConfigSchema,
@@ -59,6 +60,7 @@ export const grok46ModelDescriptor: ModelDescriptor = {
     sampling: 'tunable',
     caching: { explicit: false, minTokens: 0 },
     grounding: true,
+    functionCalling: true,
     serviceTiers: ['priority'],
   },
   configSchema: Grok46ConfigSchema,

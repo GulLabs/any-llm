@@ -85,6 +85,15 @@ describe('xaiAdapter.countTokens — non-text rejects', () => {
       },
     ],
     ['file-ref', { kind: 'file-ref' as const, fileId: 'file_abc' }],
+    [
+      'tool-call',
+      {
+        kind: 'tool-call' as const,
+        toolCallId: 'c1',
+        toolName: 'f',
+        args: {},
+      },
+    ],
   ])('rejects %s parts', async (_label, part) => {
     const adapter = xaiAdapter({
       _fetch: makeFetch(async () => {

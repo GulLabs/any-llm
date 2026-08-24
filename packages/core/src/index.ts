@@ -18,8 +18,12 @@ export type {
   InlineMediaPart,
   FileUriPart,
   FileRefPart,
+  ToolCallPart,
+  ToolResultPart,
   Part,
   Message,
+  ToolDefinition,
+  ToolChoice,
   ReasoningEffort,
   ReasoningIntent,
   ProviderOptions,
@@ -33,7 +37,14 @@ export type {
   Citation,
   LlmResult,
 } from './types.js'
-export { isTextPart, isInlineMediaPart, isFileUriPart, isFileRefPart } from './types.js'
+export {
+  isTextPart,
+  isInlineMediaPart,
+  isFileUriPart,
+  isFileRefPart,
+  isToolCallPart,
+  isToolResultPart,
+} from './types.js'
 
 // Errors
 export type {

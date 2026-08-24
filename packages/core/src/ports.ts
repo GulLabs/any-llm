@@ -22,6 +22,8 @@ import type {
   CallMetadata,
   Cost,
   Citation,
+  ToolDefinition,
+  ToolChoice,
 } from './types.js'
 import type { LlmCallRecord } from './record.js'
 import type { LlmError, LlmErrorKind } from './errors.js'
@@ -82,6 +84,10 @@ export interface ResolvedRequest {
    * the result or failure.
    */
   attemptNumber?: number
+  /** Function-calling tools, copied from {@link LlmRequest.tools}. */
+  tools?: ToolDefinition[]
+  /** Tool selection policy, copied from {@link LlmRequest.toolChoice}. */
+  toolChoice?: ToolChoice
 }
 
 /**
@@ -136,6 +142,14 @@ export interface AdapterResult {
    * verbatim. Omit when unused; do not emit an empty array.
    */
   citations?: Citation[]
+  /**
+   * Projection of assistant tool-call parts. Omit when unused.
+   */
+  toolCalls?: Array<{
+    toolCallId: string
+    toolName: string
+    args: JsonValue
+  }>
   /** Raw provider metadata (grounding, safety ratings, etc.). */
   providerMetadata?: JsonValue
 }
@@ -156,6 +170,11 @@ export interface TokenCountRequest {
   system?: string
   /** Conversation history included in the token count. */
   messages: Message[]
+  /**
+   * Tool declarations included in the token count (token-bearing request
+   * context). `toolChoice` is excluded — it selects behavior.
+   */
+  tools?: ToolDefinition[]
 }
 
 /**

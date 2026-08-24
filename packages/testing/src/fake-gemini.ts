@@ -23,6 +23,7 @@ export interface GeminiPartLike {
   text?: string
   /** Present and `true` on thought-summary parts. */
   thought?: boolean
+  functionCall?: { name?: string; args?: unknown }
 }
 
 /** The `content` object inside a Gemini candidate. */
@@ -112,6 +113,8 @@ export interface FakeGeminiResponseOpts {
    * JSON text from regular text at the part level.
    */
   structuredJson?: string
+  /** Extra candidate parts (e.g. functionCall). Appended after text parts. */
+  parts?: GeminiPartLike[]
   // Usage metadata fields
   promptTokenCount?: number
   candidatesTokenCount?: number
@@ -152,6 +155,9 @@ export function fakeGeminiResponse(
   const mainText = opts.structuredJson ?? opts.text
   if (mainText !== undefined) {
     parts.push({ text: mainText })
+  }
+  if (opts.parts !== undefined) {
+    parts.push(...opts.parts)
   }
 
   // Build candidate.

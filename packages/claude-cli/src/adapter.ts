@@ -160,7 +160,7 @@ function mapUsage(usage: ClaudeCliUsageShape | undefined): Usage {
 function partText(part: Part): string {
   if (part.kind !== 'text') {
     throw new LlmError(
-      'claude-cli is text-only; non-text message parts are not supported',
+      'claude-cli is text-only; non-text message parts (inline media, file URIs, tool-call, tool-result) are not supported',
       {
         kind: 'bad_request',
         retryable: false,
@@ -293,6 +293,12 @@ export function claudeCliAdapter(opts?: ClaudeCliAdapterOptions): ProviderAdapte
       if (req.provider !== 'claude-cli') {
         throw new LlmError(
           `@gullabs/claude-cli received a request routed for provider "${req.provider}" — this adapter only serves "claude-cli"`,
+          { kind: 'bad_request', retryable: false, provider: 'claude-cli' },
+        )
+      }
+      if (req.tools !== undefined && req.tools.length > 0) {
+        throw new LlmError(
+          'claude-cli does not support LlmRequest.tools; CLI runtimes are out of the function-calling seam.',
           { kind: 'bad_request', retryable: false, provider: 'claude-cli' },
         )
       }

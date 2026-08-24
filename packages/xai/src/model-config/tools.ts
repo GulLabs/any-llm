@@ -118,6 +118,10 @@ export const XaiProviderOptionsSchema = z
       title: 'Live Search Tools',
       description: 'xAI server-side web_search / x_search tools.',
     }),
+    parallelToolCalls: z.boolean().optional().meta({
+      title: 'Parallel Tool Calls',
+      description: 'xAI Responses parallel_tool_calls. Not a generic contract field.',
+    }),
   })
   .meta({
     title: 'xAI Provider Options',

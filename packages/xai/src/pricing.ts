@@ -48,14 +48,9 @@ export const xaiPricingVersion = 'xai-2026-08-24' as const
 export const XAI_TOOL_RATE_MICRO_USD = {
   web_search_calls: 5_000,
   x_search_calls: 5_000,
-  document_search_calls: 10_000,
 } as const
 
-const XAI_TOOL_COUNTER_KEYS = [
-  'web_search_calls',
-  'x_search_calls',
-  'document_search_calls',
-] as const
+const XAI_TOOL_COUNTER_KEYS = ['web_search_calls', 'x_search_calls'] as const
 
 /**
  * Per-model rate entry (all values in µUSD per million tokens).
@@ -227,8 +222,9 @@ export function computeXaiCost(model: string, usage: Usage, tier?: string): Cost
   )
 
   const serverToolsRequested = usage.details['server_tools_requested'] === 1
-  const countersPresent = XAI_TOOL_COUNTER_KEYS.some((key) => key in usage.details)
-  const missingRequestedCounters = serverToolsRequested && !countersPresent
+  const missingRequestedCounters =
+    usage.details['server_tools_missing'] === 1 ||
+    (serverToolsRequested && !XAI_TOOL_COUNTER_KEYS.some((key) => key in usage.details))
 
   const toolsCost = missingRequestedCounters
     ? 0

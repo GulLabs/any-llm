@@ -33,6 +33,8 @@ export type XaiProviderOptions = {
   promptCacheKey?: string
   /** Server-side Live Search tools (`web_search`, `x_search`). */
   tools?: Array<XaiWebSearchTool | XaiXSearchTool>
+  /** xAI-only; Gemini has no parallel-tool knob. */
+  parallelToolCalls?: boolean
 }
 
 declare module '@gullabs/core' {

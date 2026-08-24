@@ -137,11 +137,10 @@ xAI caching is automatic — there is no explicit cache-create/cache-store API c
 
 `XAI_PRICING` is a frozen, versioned snapshot (`xaiPricingVersion: 'xai-2026-08-24'`) — a point-in-time capture from `/v1/models`, not a live lookup (ADR-005). Rates are in µUSD per million tokens. Tool invocations add `Cost.details.tools` (`microUsd = input + cached + output + tools`):
 
-| Counter (raw `usage.details` key) | Rate        |
-| --------------------------------- | ----------- |
-| `web_search_calls`                | $5 / 1,000  |
-| `x_search_calls`                  | $5 / 1,000  |
-| `document_search_calls`           | $10 / 1,000 |
+| Counter (raw `usage.details` key) | Rate       |
+| --------------------------------- | ---------- |
+| `web_search_calls`                | $5 / 1,000 |
+| `x_search_calls`                  | $5 / 1,000 |
 
 Enable Live Search with `providerOptions.xai.tools` (`web_search` / `x_search`). Citations land on `result.citations`. `countTokens` uses `POST /v1/tokenize-text` and returns `accuracy: 'lower-bound'` (text parts only; media / file parts are `bad_request`).
 

@@ -145,9 +145,10 @@ export interface Cost {
   microUsd: number | null
   pricingVersion: string
   confidence: 'exact' | 'estimated' // 'estimated' if any priced field had to be inferred
-  details: { input: number; cached: number; output: number } // microUsd; MUST sum to microUsd.
+  details: { input: number; cached: number; output: number; tools: number }
+  // MUST sum to microUsd: input + cached + output + tools.
   // NOTE: thinking tokens are inside outputTokens and billed at the output rate — NO separate
-  // 'thinking' cost lane (that would break sum(details) === microUsd). thinkingTokens is usage-only.
+  // 'thinking' cost lane. thinkingTokens is usage-only. tools is 0 when the call had no priced tools.
 }
 ```
 

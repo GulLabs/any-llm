@@ -152,6 +152,47 @@ const INVALID_TOOLS: Array<{ name: string; config: unknown }> = [
       providerOptions: { xai: { notARealKey: true } },
     },
   },
+  {
+    name: 'both allowed and excluded X handles',
+    config: {
+      providerOptions: {
+        xai: {
+          tools: [
+            {
+              type: 'x_search',
+              allowedXHandles: ['a'],
+              excludedXHandles: ['b'],
+            },
+          ],
+        },
+      },
+    },
+  },
+  {
+    name: '>20 X handles',
+    config: {
+      providerOptions: {
+        xai: {
+          tools: [
+            {
+              type: 'x_search',
+              allowedXHandles: Array.from({ length: 21 }, (_, i) => `h${i}`),
+            },
+          ],
+        },
+      },
+    },
+  },
+  {
+    name: 'invalid x_search date',
+    config: {
+      providerOptions: {
+        xai: {
+          tools: [{ type: 'x_search', fromDate: 'not-a-date' }],
+        },
+      },
+    },
+  },
 ]
 
 describe.each([

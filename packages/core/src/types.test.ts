@@ -19,6 +19,8 @@ import type {
   InlineMediaPart,
   FileUriPart,
   FileRefPart,
+  ToolCallPart,
+  ToolResultPart,
   Part,
   Message,
   GenConfig,
@@ -154,7 +156,7 @@ describe('Warning type shape', () => {
 describe('FinishReason type shape', () => {
   it('is a union of known values', () => {
     expectTypeOf<FinishReason>().toEqualTypeOf<
-      'stop' | 'length' | 'content_filter' | 'other'
+      'stop' | 'length' | 'content_filter' | 'other' | 'tool_calls'
     >()
   })
 })
@@ -200,7 +202,12 @@ describe('FileRefPart type shape', () => {
 describe('Part type shape', () => {
   it('is the union of TextPart | InlineMediaPart | FileUriPart | FileRefPart', () => {
     expectTypeOf<Part>().toEqualTypeOf<
-      TextPart | InlineMediaPart | FileUriPart | FileRefPart
+      | TextPart
+      | InlineMediaPart
+      | FileUriPart
+      | FileRefPart
+      | ToolCallPart
+      | ToolResultPart
     >()
   })
 })

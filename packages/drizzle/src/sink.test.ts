@@ -108,6 +108,7 @@ describe('drizzleUsageSink', () => {
       rawUsage: { promptTokenCount: 100 },
       providerMetadata: { safetyRatings: [] },
       citations: undefined,
+      toolCalls: undefined,
       warnings: [{ type: 'other', message: 'warn' }],
       generationConfig: { temperature: 0.2 },
       reasoningText: 'thought summary',

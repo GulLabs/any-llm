@@ -61,6 +61,7 @@ describe('@gullabs/core package surface', () => {
       model: string
       system?: string
       messages: import('./types.js').Message[]
+      tools?: import('./types.js').ToolDefinition[]
     }>()
     expectTypeOf<TokenCount>().toEqualTypeOf<{
       totalTokens: number

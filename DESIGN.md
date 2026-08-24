@@ -284,8 +284,9 @@ with the dev CLI providers below; `keyId` is the ADR-026 attribution label, `Api
 Additional forms (OAuth token, bearer token) would extend the union further.
 Vertex AI specifically is on the roadmap; see ROADMAP.md.
 
-**Function calling.** The `Part` union's `kind` discriminant is reserved for future `tool-call`
-and `tool-result` variants. `LlmRequest` does not yet carry a `tools` field.
+**Function calling.** The `Part` union includes `tool-call` and `tool-result`.
+`LlmRequest.tools` / `toolChoice` are the generic seam (ADR-029). There is no
+agent loop.
 
 **`Redactor` port.** A planned port for scrubbing sensitive content from messages and results
 before persistence. Absent in v1; the port name is reserved. If added, it would be fail-closed

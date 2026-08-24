@@ -191,7 +191,7 @@ Input contracts (`callSite.inputSchema`, `request.inputContract`, `requireInputC
 
 Pre-1.0. Breaking changes may land in minor versions. Read the [per-package changelogs](./CHANGELOG.md) before upgrading.
 
-Not in this release: streaming, tool-calling, Vertex AI, multimodal output. Seams exist; machinery does not. See [`ROADMAP.md`](./ROADMAP.md).
+Not in this release: streaming, an agent loop, Vertex AI, multimodal output. Tool-calling is a seam only (tools in, tool-call/tool-result parts out — ADR-029). See [`ROADMAP.md`](./ROADMAP.md).
 
 ## Contributing
 

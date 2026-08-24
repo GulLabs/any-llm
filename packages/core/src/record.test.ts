@@ -68,6 +68,17 @@ describe('buildRecord — success path', () => {
     expect(r.recordSchemaVersion).toBe(1)
   })
 
+  it('persists toolCalls when present and omits empty arrays', () => {
+    const toolCalls = [
+      { toolCallId: 'c1', toolName: 'get_temperature', args: { location: 'SF' } },
+    ]
+    const withCalls = buildRecord(makeBaseInput({ toolCalls }))
+    expect(withCalls.toolCalls).toEqual(toolCalls)
+
+    const empty = buildRecord(makeBaseInput({ toolCalls: [] }))
+    expect(empty.toolCalls).toBeUndefined()
+  })
+
   it('persists citations when present and omits empty arrays', () => {
     const citations = [{ url: 'https://example.com', title: 'Example' }]
     const withCitations = buildRecord(makeBaseInput({ citations }))
