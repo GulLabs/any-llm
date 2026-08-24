@@ -253,6 +253,40 @@ describe('geminiContentToMessages: function calling parts', () => {
     ).toEqual(['call_lookup_1', 'call_lookup_2'])
   })
 
+  it('does not collide fallback with a reserved provider id', () => {
+    const result = geminiContentToMessages({
+      contents: [
+        {
+          role: 'model',
+          parts: [
+            { functionCall: { id: 'call_lookup_1', name: 'lookup', args: { q: '1' } } },
+            { functionCall: { name: 'lookup', args: { q: '2' } } },
+          ],
+        },
+      ],
+    })
+    expect(
+      result.messages[0]?.parts.map((p) => (p as { toolCallId?: string }).toolCallId),
+    ).toEqual(['call_lookup_1', 'call_lookup_2'])
+  })
+
+  it('reserves a later provider id before allocating an earlier fallback', () => {
+    const result = geminiContentToMessages({
+      contents: [
+        {
+          role: 'model',
+          parts: [
+            { functionCall: { name: 'lookup', args: { q: '1' } } },
+            { functionCall: { id: 'call_lookup_1', name: 'lookup', args: { q: '2' } } },
+          ],
+        },
+      ],
+    })
+    expect(
+      result.messages[0]?.parts.map((p) => (p as { toolCallId?: string }).toolCallId),
+    ).toEqual(['call_lookup_2', 'call_lookup_1'])
+  })
+
   it('prefers functionCall.id as toolCallId when present', () => {
     const result = geminiContentToMessages({
       contents: [

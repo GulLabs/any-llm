@@ -32,6 +32,7 @@ import {
 } from './client.js'
 import { GOOGLE_REASONING_EFFORT_BUDGET } from './reasoning-budget.js'
 import { normalizeGroundingCitations } from './grounding.js'
+import { reserveProviderToolCallIds, resolveToolCallId } from './tool-call-id.js'
 import type {
   GeminiClientLike,
   GeminiGenerateConfig,
@@ -1031,23 +1032,22 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       const toolCalls: NonNullable<AdapterResult['toolCalls']> = []
 
       const nameCounts = new Map<string, number>()
+      const reservedIds = reserveProviderToolCallIds(
+        parts.map((part) => part.functionCall?.id),
+      )
       for (const part of parts) {
         if (
           part.functionCall !== undefined &&
           typeof part.functionCall.name === 'string'
         ) {
           const toolName = part.functionCall.name
-          const providerId = part.functionCall.id
-          let toolCallId: string
-          if (typeof providerId === 'string' && providerId.length > 0) {
-            toolCallId = providerId
-          } else {
-            const n = (nameCounts.get(toolName) ?? 0) + 1
-            nameCounts.set(toolName, n)
-            toolCallId = `call_${toolName}_${n}`
-          }
           toolCalls.push({
-            toolCallId,
+            toolCallId: resolveToolCallId(
+              part.functionCall.id,
+              toolName,
+              nameCounts,
+              reservedIds,
+            ),
             toolName,
             args: (part.functionCall.args ?? {}) as JsonValue,
           })

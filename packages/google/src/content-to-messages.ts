@@ -26,6 +26,7 @@
 import { LlmError } from '@gullabs/core'
 import type { JsonValue, Message, Part } from '@gullabs/core'
 import type { Content, Part as GenaiPart } from '@google/genai'
+import { reserveProviderToolCallIds, resolveToolCallId } from './tool-call-id.js'
 
 /**
  * Input accepted by {@link geminiContentToMessages}.
@@ -137,6 +138,7 @@ function convertPart(
   part: GenaiPart,
   location: string,
   nameCounts: Map<string, number>,
+  reservedIds: Set<string>,
 ): Part {
   const keys = definedKeys(part)
   const baseKeys = keys.filter(
@@ -151,17 +153,9 @@ function convertPart(
       if (fc === undefined || typeof fc.name !== 'string' || fc.name.length === 0) {
         throw badRequest(`${location}: functionCall.name is required.`)
       }
-      let toolCallId: string
-      if (typeof fc.id === 'string' && fc.id.length > 0) {
-        toolCallId = fc.id
-      } else {
-        const n = (nameCounts.get(fc.name) ?? 0) + 1
-        nameCounts.set(fc.name, n)
-        toolCallId = `call_${fc.name}_${n}`
-      }
       return {
         kind: 'tool-call',
-        toolCallId,
+        toolCallId: resolveToolCallId(fc.id, fc.name, nameCounts, reservedIds),
         toolName: fc.name,
         args: (fc.args ?? {}) as JsonValue,
       }
@@ -176,18 +170,15 @@ function convertPart(
       if (fr === undefined || typeof fr.name !== 'string' || fr.name.length === 0) {
         throw badRequest(`${location}: functionResponse.name is required.`)
       }
-      let toolCallId: string
-      if (typeof fr.id === 'string' && fr.id.length > 0) {
-        toolCallId = fr.id
-      } else {
-        const key = `result:${fr.name}`
-        const n = (nameCounts.get(key) ?? 0) + 1
-        nameCounts.set(key, n)
-        toolCallId = `call_${fr.name}_${n}`
-      }
       return {
         kind: 'tool-result',
-        toolCallId,
+        toolCallId: resolveToolCallId(
+          fr.id,
+          fr.name,
+          nameCounts,
+          reservedIds,
+          `result:${fr.name}`,
+        ),
         toolName: fr.name,
         result: (fr.response ?? null) as JsonValue,
       }
@@ -393,6 +384,17 @@ export function geminiContentToMessages(
       : undefined
 
   const nameCounts = new Map<string, number>()
+  const reservedIds = reserveProviderToolCallIds(
+    input.contents.flatMap((content) =>
+      (content.parts ?? []).flatMap((part) => {
+        const p = part as {
+          functionCall?: { id?: string }
+          functionResponse?: { id?: string }
+        }
+        return [p.functionCall?.id, p.functionResponse?.id]
+      }),
+    ),
+  )
   const messages: Message[] = input.contents.map((content, contentIndex) => {
     const location = `contents[${contentIndex}]`
     const envelopeExtraKeys = definedKeys(content).filter(
@@ -406,7 +408,7 @@ export function geminiContentToMessages(
     }
     const role = convertRole(content.role, location)
     const parts = (content.parts ?? []).map((part, partIndex) =>
-      convertPart(part, `${location}.parts[${partIndex}]`, nameCounts),
+      convertPart(part, `${location}.parts[${partIndex}]`, nameCounts, reservedIds),
     )
     return { role, parts }
   })

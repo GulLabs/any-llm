@@ -2206,6 +2206,58 @@ describe('google function calling', () => {
     expect(result.toolCalls?.map((c) => c.toolCallId)).toEqual(['fc_a', 'fc_b'])
   })
 
+  it('does not collide fallback with a reserved provider id', async () => {
+    const client = makeFakeGemini(
+      fakeGeminiResponse({
+        text: '',
+        parts: [
+          { functionCall: { id: 'call_lookup_1', name: 'lookup', args: { q: '1' } } },
+          { functionCall: { name: 'lookup', args: { q: '2' } } },
+        ],
+      }),
+    )
+    const adapter = geminiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({
+        modelDescriptor: defaultGeminiRegistry.resolve('google', 'gemini-2.5-pro')!,
+        tools: [
+          { name: 'lookup', description: 'd', inputJsonSchema: { type: 'object' } },
+        ],
+      }),
+      FAKE_CTX,
+    )
+    expect(result.toolCalls?.map((c) => c.toolCallId)).toEqual([
+      'call_lookup_1',
+      'call_lookup_2',
+    ])
+  })
+
+  it('reserves a later provider id before allocating an earlier fallback', async () => {
+    const client = makeFakeGemini(
+      fakeGeminiResponse({
+        text: '',
+        parts: [
+          { functionCall: { name: 'lookup', args: { q: '1' } } },
+          { functionCall: { id: 'call_lookup_1', name: 'lookup', args: { q: '2' } } },
+        ],
+      }),
+    )
+    const adapter = geminiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({
+        modelDescriptor: defaultGeminiRegistry.resolve('google', 'gemini-2.5-pro')!,
+        tools: [
+          { name: 'lookup', description: 'd', inputJsonSchema: { type: 'object' } },
+        ],
+      }),
+      FAKE_CTX,
+    )
+    expect(result.toolCalls?.map((c) => c.toolCallId)).toEqual([
+      'call_lookup_2',
+      'call_lookup_1',
+    ])
+  })
+
   it('replays toolCallId as functionCall/functionResponse id', async () => {
     const client = makeFakeGemini(fakeGeminiResponse({ text: '59' }))
     const adapter = geminiAdapter({ client })
