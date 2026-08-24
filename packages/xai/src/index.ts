@@ -23,7 +23,7 @@
  * @module
  */
 
-export type { XaiProviderOptions } from './types.js'
+export type { XaiProviderOptions, XaiWebSearchTool, XaiXSearchTool } from './types.js'
 export type {
   XaiClientLike,
   XaiInputTextPart,
@@ -69,6 +69,7 @@ export {
 } from './models.js'
 export {
   XAI_PRICING,
+  XAI_TOOL_RATE_MICRO_USD,
   xaiPricingVersion,
   computeXaiCost,
   xaiPricingSource,

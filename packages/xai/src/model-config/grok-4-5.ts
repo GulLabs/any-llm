@@ -4,12 +4,15 @@
  * Mirrors `@gullabs/core`'s `packages/core/src/model-config/*.ts` doc-density
  * style, but is a single self-contained `z.strictObject` — unlike Gemini's
  * schemas, xai has no service-tier branching (no `z.union` of tier variants
- * needed), no `topK`, and only a single reasoning-effort union (`'low'|'high'`).
+ * needed), no `topK`, and a reasoning-effort union of `'low'|'medium'|'high'`
+ * (live-verified 2026-08-24).
  *
  * @module
  */
 
 import { z } from 'zod'
+
+import { XaiProviderOptionsSchema } from './tools.js'
 
 export const Grok45ConfigSchema = z
   .strictObject({
@@ -35,11 +38,12 @@ export const Grok45ConfigSchema = z
       }),
     reasoning: z
       .strictObject({
-        effort: z.enum(['low', 'high']).meta({
+        effort: z.enum(['low', 'medium', 'high']).meta({
           title: 'Reasoning Effort',
           description:
-            'Reasoning effort for grok-4.5. Only "low" and "high" are admitted ' +
-            '(live-verified); "none"/"medium"/"xhigh" are rejected by the live API.',
+            'Reasoning effort for grok-4.5. "low", "medium", and "high" are ' +
+            'admitted (live-verified 2026-08-24); "none"/"xhigh" are rejected ' +
+            'by the live API. Vendor default when omitted is "high".',
         }),
       })
       .optional()
@@ -55,24 +59,7 @@ export const Grok45ConfigSchema = z
     }),
     providerOptions: z
       .strictObject({
-        xai: z
-          .strictObject({
-            promptCacheKey: z
-              .string()
-              .min(1)
-              .optional()
-              .meta({
-                title: 'Prompt Cache Key',
-                description:
-                  'xAI conversation-routing cache key — maps to Responses API ' +
-                  '`prompt_cache_key`.',
-              }),
-          })
-          .optional()
-          .meta({
-            title: 'xAI Provider Options',
-            description: 'Allowlisted xAI provider options for grok-4.5.',
-          }),
+        xai: XaiProviderOptionsSchema.optional(),
       })
       .optional()
       .meta({
@@ -84,7 +71,7 @@ export const Grok45ConfigSchema = z
     title: 'Grok45Config',
     description:
       'Strict Responses API config for model grok-4.5. Level reasoning ' +
-      '(low/high only), tunable sampling, no service tiers, structured output, ' +
-      'vision, priced.',
+      '(low/medium/high), tunable sampling, no service tiers, structured output, ' +
+      'vision, Live Search tools, priced.',
     examples: [{ reasoning: { effort: 'high' } }],
   })

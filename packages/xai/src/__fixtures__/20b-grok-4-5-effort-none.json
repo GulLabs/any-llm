@@ -1,0 +1,25 @@
+{
+  "status": 400,
+  "ok": false,
+  "ms": 221,
+  "headers": {
+    "access-control-allow-origin": "*",
+    "access-control-expose-headers": "*",
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a3020d5b1827fcac-SEA",
+    "connection": "keep-alive",
+    "content-length": "98",
+    "content-type": "application/json",
+    "date": "Mon, 24 Aug 2026 11:35:12 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=31536000",
+    "vary": "origin, access-control-request-method, access-control-request-headers",
+    "x-data-retention": "zdr",
+    "x-request-id": "7abd1ba6-6a72-94bc-b1be-9da49d487c02",
+    "x-zero-data-retention": "true"
+  },
+  "body": {
+    "code": "invalid-argument",
+    "error": "This model does not support `reasoning_effort` value `none`."
+  }
+}

@@ -4,6 +4,7 @@ import * as surface from './index.js'
 import type {
   TokenCountRequest,
   TokenCount,
+  Citation,
   Client,
   LlmErrorIssue,
   LlmErrorOptions,
@@ -60,9 +61,11 @@ describe('@gullabs/core package surface', () => {
       model: string
       system?: string
       messages: import('./types.js').Message[]
+      tools?: import('./types.js').ToolDefinition[]
     }>()
     expectTypeOf<TokenCount>().toEqualTypeOf<{
       totalTokens: number
+      accuracy: 'exact' | 'lower-bound'
       details?: Record<string, number>
       raw: import('./types.js').JsonValue
     }>()
@@ -95,6 +98,14 @@ describe('@gullabs/core package surface', () => {
     expectTypeOf<LlmRequest['inputContract']>().toEqualTypeOf<
       { schema: StandardSchemaV1; value: unknown } | undefined
     >()
+  })
+
+  it('exports Citation from the package surface', () => {
+    expectTypeOf<Citation>().toEqualTypeOf<{
+      url: string
+      title?: string
+      sourceName?: string
+    }>()
   })
 
   it('exports ClientConfig.requireInputContract as an optional boolean (D4 surface)', () => {

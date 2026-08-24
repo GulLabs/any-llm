@@ -19,6 +19,7 @@ import { describe, it, expect } from 'vitest'
 import type { AdapterCtx, JsonValue, ResolvedRequest } from '@gullabs/core'
 import { makeFakeXai } from '@gullabs/testing'
 import { xaiAdapter, classifyXaiError } from './adapter.js'
+import { grok45ModelDescriptor, grok46ModelDescriptor } from './models.js'
 import { makeTestDescriptor } from '../../core/src/test-model-descriptor.js'
 
 /** Read + JSON.parse a fixture file at test time (no resolveJsonModule needed). */
@@ -482,5 +483,144 @@ describe('fixture: 15-safety-check-403', () => {
     expect(result.retryable).toBe(false)
     expect(result.httpStatus).toBe(403)
     expect(result.provider).toBe('xai')
+  })
+})
+
+describe('fixture: 17-web-search', () => {
+  it('maps live search annotations to citations and flattens tool counters', async () => {
+    const fixture = loadFixture<FixtureCall>('17-web-search.json')
+    const adapter = xaiAdapter({
+      client: makeFakeXai(fixture.body as never),
+    })
+    const result = await adapter.run(
+      {
+        provider: 'xai',
+        model: 'grok-4.6',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'search' }] }],
+        config: { providerOptions: { xai: { tools: [{ type: 'web_search' }] } } },
+        modelDescriptor: grok46ModelDescriptor,
+      },
+      {
+        auth: { apiKey: 'test-key' },
+        logger: { info() {}, warn() {}, error() {}, debug() {} },
+      },
+    )
+    expect(result.citations?.some((c) => c.url.includes('docs.x.ai'))).toBe(true)
+    expect(result.usage.details.web_search_calls).toBe(1)
+    expect(result.usage.details.server_tools_requested).toBe(1)
+  })
+})
+
+describe('fixture: 18-structured-search', () => {
+  it('allows structured output combined with search tools', async () => {
+    const fixture = loadFixture<FixtureCall>('18-structured-search.json')
+    const adapter = xaiAdapter({
+      client: makeFakeXai(fixture.body as never),
+    })
+    const result = await adapter.run(
+      {
+        provider: 'xai',
+        model: 'grok-4.6',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'search' }] }],
+        outputJsonSchema: {
+          type: 'object',
+          properties: { window: { type: 'string' } },
+          required: ['window'],
+        },
+        config: { providerOptions: { xai: { tools: [{ type: 'web_search' }] } } },
+        modelDescriptor: grok46ModelDescriptor,
+      },
+      {
+        auth: { apiKey: 'test-key' },
+        logger: { info() {}, warn() {}, error() {}, debug() {} },
+      },
+    )
+    expect(result.rawStructured).toEqual({ window: '500000' })
+    expect(result.usage.details.web_search_calls).toBe(2)
+    expect(result.citations?.length).toBeGreaterThan(0)
+  })
+})
+
+describe('fixture: 20-grok-4-5-effort-medium', () => {
+  it('maps the live medium-effort 200', async () => {
+    const fixture = loadFixture<FixtureCall>('20-grok-4-5-effort-medium.json')
+    expect(fixture.status).toBe(200)
+    const adapter = xaiAdapter({ client: makeFakeXai(fixture.body as never) })
+    const result = await adapter.run(
+      {
+        provider: 'xai',
+        model: 'grok-4.5',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'ok' }] }],
+        config: {},
+        modelDescriptor: grok45ModelDescriptor,
+      },
+      {
+        auth: { apiKey: 'test-key' },
+        logger: { info() {}, warn() {}, error() {}, debug() {} },
+      },
+    )
+    expect(result.finishReason).toBe('stop')
+    expect(result.text?.toLowerCase()).toContain('ok')
+  })
+})
+
+describe('fixture: 20b-grok-4-5-effort-none', () => {
+  it('records live none-effort 400', () => {
+    const fixture = loadFixture<FixtureCall>('20b-grok-4-5-effort-none.json')
+    expect(fixture.status).toBe(400)
+    const err = classifyXaiError({ status: fixture.status, error: fixture.body })
+    expect(err.kind).toBe('bad_request')
+  })
+})
+
+describe('fixture: 21-function-call-first', () => {
+  it('maps the live function_call output item', async () => {
+    const fixture = loadFixture<FixtureCall>('21-function-call-first.json')
+    const adapter = xaiAdapter({ client: makeFakeXai(fixture.body as never) })
+    const result = await adapter.run(
+      {
+        provider: 'xai',
+        model: 'grok-4.6',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'temp' }] }],
+        config: {},
+        tools: [
+          {
+            name: 'get_temperature',
+            description: 'Get temperature',
+            inputJsonSchema: { type: 'object' },
+          },
+        ],
+        modelDescriptor: grok46ModelDescriptor,
+      },
+      {
+        auth: { apiKey: 'test-key' },
+        logger: { info() {}, warn() {}, error() {}, debug() {} },
+      },
+    )
+    expect(result.finishReason).toBe('tool_calls')
+    expect(result.toolCalls?.[0]?.toolName).toBe('get_temperature')
+    expect(result.toolCalls?.[0]?.toolCallId).toMatch(/^call-/)
+  })
+})
+
+describe('fixture: 22-function-call-replay-store-false', () => {
+  it('maps the live store:false replay final message', async () => {
+    const fixture = loadFixture<FixtureCall>('22-function-call-replay-store-false.json')
+    expect(fixture.status).toBe(200)
+    const adapter = xaiAdapter({ client: makeFakeXai(fixture.body as never) })
+    const result = await adapter.run(
+      {
+        provider: 'xai',
+        model: 'grok-4.6',
+        messages: [{ role: 'user', parts: [{ kind: 'text', text: 'temp' }] }],
+        config: {},
+        modelDescriptor: grok46ModelDescriptor,
+      },
+      {
+        auth: { apiKey: 'test-key' },
+        logger: { info() {}, warn() {}, error() {}, debug() {} },
+      },
+    )
+    expect(result.text).toMatch(/59/)
   })
 })

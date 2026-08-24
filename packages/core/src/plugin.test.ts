@@ -26,7 +26,7 @@ function makeFakePricingSource(): PricingSource {
         usd: 0,
         pricingVersion: 'test-1',
         confidence: 'exact',
-        details: { input: 0, cached: 0, output: 0 },
+        details: { input: 0, cached: 0, output: 0, tools: 0 },
       }
     },
     hasModel(): boolean {

@@ -218,10 +218,60 @@ describe('geminiContentToMessages: supported part kinds', () => {
   })
 })
 
+describe('geminiContentToMessages: function calling parts', () => {
+  it('converts functionCall to tool-call', () => {
+    const result = geminiContentToMessages({
+      contents: [
+        {
+          role: 'model',
+          parts: [{ functionCall: { name: 'get_temp', args: { city: 'SF' } } }],
+        },
+      ],
+    })
+    expect(result.messages[0]?.parts[0]).toEqual({
+      kind: 'tool-call',
+      toolCallId: 'get_temp',
+      toolName: 'get_temp',
+      args: { city: 'SF' },
+    })
+  })
+
+  it('rejects functionCall without a name', () => {
+    expect(() =>
+      geminiContentToMessages({
+        contents: [{ role: 'model', parts: [{ functionCall: { args: {} } }] }],
+      }),
+    ).toThrow(/functionCall.name/)
+  })
+
+  it('rejects functionResponse without a name', () => {
+    expect(() =>
+      geminiContentToMessages({
+        contents: [{ role: 'user', parts: [{ functionResponse: { response: {} } }] }],
+      }),
+    ).toThrow(/functionResponse.name/)
+  })
+
+  it('converts functionResponse to tool-result', () => {
+    const result = geminiContentToMessages({
+      contents: [
+        {
+          role: 'user',
+          parts: [{ functionResponse: { name: 'get_temp', response: { temp: 59 } } }],
+        },
+      ],
+    })
+    expect(result.messages[0]?.parts[0]).toEqual({
+      kind: 'tool-result',
+      toolCallId: 'get_temp',
+      toolName: 'get_temp',
+      result: { temp: 59 },
+    })
+  })
+})
+
 describe('geminiContentToMessages: unsupported part kinds', () => {
   const unsupportedCases: Array<[string, Record<string, unknown>]> = [
-    ['functionCall', { functionCall: { name: 'f', args: {} } }],
-    ['functionResponse', { functionResponse: { name: 'f', response: {} } }],
     ['executableCode', { executableCode: { code: '1+1', language: 'PYTHON' } }],
     [
       'codeExecutionResult',

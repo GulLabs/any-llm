@@ -79,6 +79,24 @@ export interface XaiInputItem {
   content: XaiInputContentPart[]
 }
 
+/** Live-verified store:false replay item. */
+export interface XaiFunctionCallInputItem {
+  type: 'function_call'
+  call_id: string
+  name: string
+  arguments: string
+}
+
+/** Live-verified store:false replay item. */
+export interface XaiFunctionCallOutputInputItem {
+  type: 'function_call_output'
+  call_id: string
+  output: string
+}
+
+export type XaiRequestInputItem =
+  XaiInputItem | XaiFunctionCallInputItem | XaiFunctionCallOutputInputItem
+
 /**
  * Structured-output text-format request shape.
  * Real xAI field: `text.format`, NOT `response_format`.
@@ -98,7 +116,7 @@ export type XaiTextFormat =
  */
 export interface XaiResponseCreateParams {
   model: string
-  input: XaiInputItem[]
+  input: XaiRequestInputItem[]
   instructions?: string
   reasoning?: { effort: 'low' | 'medium' | 'high' | 'xhigh' }
   text?: { format: XaiTextFormat }
@@ -113,6 +131,14 @@ export interface XaiResponseCreateParams {
   service_tier?: 'priority'
   /** Always `false` — this library never relies on xAI-side conversation storage. */
   store: false
+  /**
+   * Server-side and/or function tools. Wire names are snake_case.
+   * Shape is pinned from live 2026-08-24 fixtures.
+   */
+  tools?: Array<Record<string, unknown>>
+  /** `'auto' | 'required' | 'none'` or live-verified `{ type: 'function', name }`. */
+  tool_choice?: string | { type: 'function'; name: string }
+  parallel_tool_calls?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -150,8 +176,15 @@ export interface XaiMessageOutputItem {
   content: XaiOutputTextPart[]
 }
 
+/** Server-tool or function-call output items we do not collapse as messages. */
+export interface XaiOtherOutputItem {
+  type: string
+  [key: string]: unknown
+}
+
 /** Union of output-item shapes the Responses API may return. */
-export type XaiOutputItem = XaiReasoningOutputItem | XaiMessageOutputItem
+export type XaiOutputItem =
+  XaiReasoningOutputItem | XaiMessageOutputItem | XaiOtherOutputItem
 
 /**
  * Token usage metadata returned alongside an xAI response.
@@ -198,6 +231,12 @@ export interface XaiResponseShape {
    * `AdapterResult.providerMetadata` by the adapter when present.
    */
   metadata?: { [key: string]: unknown } | null
+  /**
+   * Top-level citations array. Live 2026-08-24 search-tools probes returned
+   * `null`; citations arrived as `output_text.annotations` of type
+   * `url_citation` instead.
+   */
+  citations?: unknown
 }
 
 // ---------------------------------------------------------------------------

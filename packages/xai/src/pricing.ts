@@ -38,7 +38,19 @@
 import type { Cost, PricingSource, Usage } from '@gullabs/core'
 
 /** Identifies this pricing snapshot — bump the date when rates change. */
-export const xaiPricingVersion = 'xai-2026-08-12' as const
+export const xaiPricingVersion = 'xai-2026-08-24' as const
+
+/**
+ * Live-pinned 2026-08-24 per-invocation tool rates (µUSD per call).
+ * Source: `usage.server_side_tool_usage_details` on /v1/responses.
+ * $5 / 1,000 web or X searches; $10 / 1,000 attachment/document searches.
+ */
+export const XAI_TOOL_RATE_MICRO_USD = {
+  web_search_calls: 5_000,
+  x_search_calls: 5_000,
+} as const
+
+const XAI_TOOL_COUNTER_KEYS = ['web_search_calls', 'x_search_calls'] as const
 
 /**
  * Per-model rate entry (all values in µUSD per million tokens).
@@ -160,8 +172,13 @@ function selectRates(
  * 4. Billable input = `inputTokens − (cachedInputTokens ?? 0)`, clamped to 0.
  * 5. Round each component (input, cached, output) independently to the
  *    nearest integer micro-USD.
- * 6. `microUsd` is the sum of the three components — guarantees
- *    `details.input + details.cached + details.output === microUsd` exactly.
+ * 6. `microUsd` is the sum of the four components — guarantees
+ *    `details.input + details.cached + details.output + details.tools === microUsd`.
+ * 7. Tool lanes: live-pinned counters `web_search_calls`, `x_search_calls`,
+ *    `document_search_calls`. If `usage.details.server_tools_requested === 1`
+ *    and those counters are absent, token lanes are priced, `tools: 0`,
+ *    `confidence: 'estimated'`. `'exact'` requires counters present or no
+ *    server tools requested.
  */
 export function computeXaiCost(model: string, usage: Usage, tier?: string): Cost {
   const rates = lookupRates(model)
@@ -172,7 +189,7 @@ export function computeXaiCost(model: string, usage: Usage, tier?: string): Cost
       usd: null,
       pricingVersion: xaiPricingVersion,
       confidence: 'estimated',
-      details: { input: 0, cached: 0, output: 0 },
+      details: { input: 0, cached: 0, output: 0, tools: 0 },
       unpricedReason: `Unknown model "${model}"; no pricing entry found.`,
     }
   }
@@ -187,7 +204,7 @@ export function computeXaiCost(model: string, usage: Usage, tier?: string): Cost
         usd: null,
         pricingVersion: xaiPricingVersion,
         confidence: 'estimated',
-        details: { input: 0, cached: 0, output: 0 },
+        details: { input: 0, cached: 0, output: 0, tools: 0 },
         unpricedReason: `Unknown service tier "${tier}"; xai model "${model}" has no such tier, refusing to guess a pricing multiplier.`,
       }
     }
@@ -204,17 +221,31 @@ export function computeXaiCost(model: string, usage: Usage, tier?: string): Cost
     (usage.outputTokens * base.outputPerM * factor) / 1_000_000,
   )
 
-  const microUsd = inputCost + cachedCost + outputCost
+  const serverToolsRequested = usage.details['server_tools_requested'] === 1
+  const missingRequestedCounters =
+    usage.details['server_tools_missing'] === 1 ||
+    (serverToolsRequested && !XAI_TOOL_COUNTER_KEYS.some((key) => key in usage.details))
+
+  const toolsCost = missingRequestedCounters
+    ? 0
+    : XAI_TOOL_COUNTER_KEYS.reduce((sum, key) => {
+        const count = usage.details[key]
+        if (typeof count !== 'number' || count <= 0) return sum
+        return sum + Math.round(count * XAI_TOOL_RATE_MICRO_USD[key])
+      }, 0)
+
+  const microUsd = inputCost + cachedCost + outputCost + toolsCost
 
   return {
     microUsd,
     usd: microUsd / 1_000_000,
     pricingVersion: xaiPricingVersion,
-    confidence: 'exact',
+    confidence: missingRequestedCounters ? 'estimated' : 'exact',
     details: {
       input: inputCost,
       cached: cachedCost,
       output: outputCost,
+      tools: toolsCost,
     },
   }
 }

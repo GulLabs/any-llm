@@ -53,6 +53,7 @@ import type {
   Warning,
   Cost,
 } from './types.js'
+import { isToolCallPart, isToolResultPart } from './types.js'
 import type { CallSite } from './callsite.js'
 import type { StandardSchemaV1 } from './standard-schema.js'
 
@@ -912,6 +913,12 @@ function buildSuccessRecord(
     ...(adapterResult.reasoningText !== undefined
       ? { reasoningText: adapterResult.reasoningText }
       : {}),
+    ...(adapterResult.citations !== undefined && adapterResult.citations.length > 0
+      ? { citations: adapterResult.citations }
+      : {}),
+    ...(adapterResult.toolCalls !== undefined && adapterResult.toolCalls.length > 0
+      ? { toolCalls: adapterResult.toolCalls }
+      : {}),
     ...(adapterResult.providerMetadata !== undefined
       ? { providerMetadata: adapterResult.providerMetadata }
       : {}),
@@ -1304,6 +1311,8 @@ export function createClient(config: ClientConfig): Client {
         ? { outputJsonSchema: request.output.jsonSchema }
         : {}),
       ...(descriptor !== undefined ? { modelDescriptor: descriptor } : {}),
+      ...(request.tools !== undefined ? { tools: request.tools } : {}),
+      ...(request.toolChoice !== undefined ? { toolChoice: request.toolChoice } : {}),
     }
 
     // EngineCtx carries stable call-level state.  ctx.signal is the raw
@@ -1575,6 +1584,12 @@ export function createClient(config: ClientConfig): Client {
           ...(adapterResult.servedServiceTier !== undefined
             ? { servedServiceTier: adapterResult.servedServiceTier }
             : {}),
+          ...(adapterResult.citations !== undefined && adapterResult.citations.length > 0
+            ? { citations: adapterResult.citations }
+            : {}),
+          ...(adapterResult.toolCalls !== undefined && adapterResult.toolCalls.length > 0
+            ? { toolCalls: adapterResult.toolCalls }
+            : {}),
           ...(adapterResult.providerMetadata !== undefined
             ? { providerMetadata: adapterResult.providerMetadata }
             : {}),
@@ -1796,6 +1811,102 @@ export function createClient(config: ClientConfig): Client {
     }
   }
 
+  function validateFunctionCalling(request: LlmRequest): void {
+    const issues: LlmErrorIssue[] = []
+    const tools = request.tools
+    if (request.toolChoice !== undefined && (tools === undefined || tools.length === 0)) {
+      issues.push({
+        path: 'toolChoice',
+        message: 'toolChoice is only valid when tools is present.',
+      })
+    }
+    if (tools !== undefined && request.output?.jsonSchema !== undefined) {
+      issues.push({
+        path: 'tools',
+        message: 'tools cannot be combined with structured output in this iteration.',
+      })
+    }
+    const names = new Set<string>()
+    if (tools !== undefined) {
+      tools.forEach((tool, index) => {
+        if (typeof tool.name !== 'string' || tool.name.length === 0) {
+          issues.push({
+            path: `tools.${index}.name`,
+            message: 'tool name must be non-empty.',
+          })
+        } else if (names.has(tool.name)) {
+          issues.push({
+            path: `tools.${index}.name`,
+            message: `tool name "${tool.name}" is duplicated.`,
+          })
+        } else {
+          names.add(tool.name)
+        }
+        if (typeof tool.description !== 'string' || tool.description.length === 0) {
+          issues.push({
+            path: `tools.${index}.description`,
+            message: 'tool description is required and must be non-empty.',
+          })
+        }
+        if (
+          tool.inputJsonSchema === null ||
+          typeof tool.inputJsonSchema !== 'object' ||
+          Array.isArray(tool.inputJsonSchema)
+        ) {
+          issues.push({
+            path: `tools.${index}.inputJsonSchema`,
+            message: 'inputJsonSchema must be an object schema.',
+          })
+        }
+      })
+    }
+    if (request.toolChoice !== undefined && typeof request.toolChoice === 'object') {
+      if (!names.has(request.toolChoice.name)) {
+        issues.push({
+          path: 'toolChoice.name',
+          message: `toolChoice.name "${request.toolChoice.name}" is not a member of tools.`,
+        })
+      }
+    }
+
+    const seenCallIds: string[] = []
+    request.messages.forEach((message, mi) => {
+      message.parts.forEach((part, pi) => {
+        if (isToolCallPart(part)) {
+          if (message.role !== 'assistant') {
+            issues.push({
+              path: `messages.${mi}.parts.${pi}`,
+              message: 'tool-call parts are only valid on assistant messages.',
+            })
+          }
+          seenCallIds.push(part.toolCallId)
+        }
+        if (isToolResultPart(part)) {
+          if (message.role !== 'user') {
+            issues.push({
+              path: `messages.${mi}.parts.${pi}`,
+              message: 'tool-result parts are only valid on user messages.',
+            })
+          }
+          if (!seenCallIds.includes(part.toolCallId)) {
+            issues.push({
+              path: `messages.${mi}.parts.${pi}.toolCallId`,
+              message: `tool-result toolCallId "${part.toolCallId}" does not match a prior tool-call.`,
+            })
+          }
+        }
+      })
+    })
+
+    if (issues.length > 0) {
+      throw new LlmError('Invalid function-calling request.', {
+        kind: 'bad_request',
+        retryable: false,
+        issues,
+      })
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Public methods
   // -------------------------------------------------------------------------
@@ -1808,6 +1919,7 @@ export function createClient(config: ClientConfig): Client {
           { kind: 'bad_request', retryable: false },
         )
       }
+      validateFunctionCalling(request)
       const runtimeOpts = opts as GenerateOptions | undefined
       const callAuth = requireAuth(runtimeOpts?.auth)
       // Config resolution: libDefaults → request.config

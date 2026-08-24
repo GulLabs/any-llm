@@ -35,12 +35,12 @@ describe('Grok45ConfigSchema', () => {
     expect(result.success).toBe(false)
   })
 
-  it.each(['none', 'medium', 'xhigh'])('rejects reasoning.effort=%s', (effort) => {
+  it.each(['none', 'xhigh'])('rejects reasoning.effort=%s', (effort) => {
     const result = Grok45ConfigSchema.safeParse({ reasoning: { effort } })
     expect(result.success).toBe(false)
   })
 
-  it.each(['low', 'high'] as const)('accepts reasoning.effort=%s', (effort) => {
+  it.each(['low', 'medium', 'high'] as const)('accepts reasoning.effort=%s', (effort) => {
     const result = Grok45ConfigSchema.safeParse({ reasoning: { effort } })
     expect(result.success).toBe(true)
   })

@@ -630,3 +630,49 @@ describe('LlmError shape', () => {
     }
   })
 })
+
+describe('function-calling seam reject', () => {
+  it('rejects LlmRequest.tools', async () => {
+    const { runner } = makeFakeRunner(() => envelopeResult(PLAIN_ENVELOPE))
+    const adapter = claudeCliAdapter({ runner })
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          tools: [{ name: 'f', description: 'd', inputJsonSchema: { type: 'object' } }],
+        }),
+        CLI_SESSION_CTX,
+      ),
+    ).rejects.toMatchObject({
+      kind: 'bad_request',
+      message: expect.stringContaining('tools'),
+    })
+  })
+
+  it('rejects tool-call parts', async () => {
+    const { runner } = makeFakeRunner(() => envelopeResult(PLAIN_ENVELOPE))
+    const adapter = claudeCliAdapter({ runner })
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          messages: [
+            {
+              role: 'assistant',
+              parts: [
+                {
+                  kind: 'tool-call',
+                  toolCallId: 'c1',
+                  toolName: 'f',
+                  args: {},
+                },
+              ],
+            },
+          ],
+        }),
+        CLI_SESSION_CTX,
+      ),
+    ).rejects.toMatchObject({
+      kind: 'bad_request',
+      message: expect.stringContaining('tool-call'),
+    })
+  })
+})

@@ -1611,3 +1611,49 @@ HTTP **200** + `promptFeedback.blockReason` and already throw `content_filter`.
 mutations stay non-retryable); issue
 [#65](https://github.com/GulLabs/any-llm/issues/65);
 `docs/error-classification-design.md`.
+
+---
+
+## ADR-029: Function-calling seam — tools in, parts out, no agent loop
+
+**Status:** Accepted
+
+**Context:**
+Both Google and xAI support client-side function calling. Without a generic
+seam, agentic callers bypass the library and lose cost/usage/ledger on their
+most expensive calls. An agent loop, tool executor, or retry-on-tool-error
+policy would be framework magic this library explicitly refuses.
+
+**Decision:**
+
+1. **Seam only.** `LlmRequest.tools` / `toolChoice` in; `tool-call` /
+   `tool-result` parts and `LlmResult.toolCalls` out. No loop, no execution.
+2. **Placement.** `tool-call` only on `assistant` messages; `tool-result` only
+   on `user` messages. No `tool` role. Pairing: every `tool-result.toolCallId`
+   must match a prior `tool-call`.
+3. **`FinishReason` includes `'tool_calls'`.** Breaking; no compat lane.
+4. **`runStructured` + `tools` is `bad_request`.** Structured-final-answer
+   with a tool loop is an app-layer concern. `generate` with both `tools` and
+   `output.jsonSchema` is also rejected.
+5. **`description` is required** on `ToolDefinition`. `toolChoice` is invalid
+   without `tools`. Tool names must be unique. `toolChoice.name` must be a
+   member of `tools`.
+6. **Adapters gate on `capabilities.functionCalling`.** Gemini models: true.
+   Gemma: absent until verified. grok-4.5 / grok-4.6: true. CLI adapters
+   `bad_request` `tools` and the new part kinds.
+7. **Google mix:** `LlmRequest.tools` + `providerOptions.google.tools`
+   (googleSearch) is reject-always until a model is fixture-verified.
+8. **xAI replay:** live-verified 2026-08-24 that `/v1/responses` accepts
+   replayed `function_call` + `function_call_output` with `store: false`.
+   Named `tool_choice` uses the flat Responses form
+   `{ type: 'function', name }` (nested chat-completions form 422s).
+9. **`countTokens`:** `TokenCountRequest.tools` is forwarded by Google
+   (`accuracy: 'exact'`). xAI `bad_request`s `tools` (tokenize-text cannot
+   represent declarations).
+10. **`parallelToolCalls`** is xAI-only (`providerOptions.xai`).
+
+**Consequences:**
+
+- Callers own dispatch and the next `generate` turn.
+- DESIGN.md un-reserves `tool-call` / `tool-result`.
+- P0 no-legacy: `FinishReason` widens without an alias.

@@ -168,9 +168,12 @@ describe('computeCost — double-counting scenario', () => {
     expect(result.details).toEqual(costNoThinking.details)
 
     // Sum invariant.
-    expect(result.details.input + result.details.cached + result.details.output).toBe(
-      result.microUsd,
-    )
+    expect(
+      result.details.input +
+        result.details.cached +
+        result.details.output +
+        result.details.tools,
+    ).toBe(result.microUsd)
 
     expect(result.confidence).toBe('exact')
     expect(result.pricingVersion).toBe(TEST_PRICING_VERSION)
@@ -230,9 +233,12 @@ describe('computeCost — edge cases', () => {
 
     expect(result.microUsd).not.toBeNull()
     expect(result.details.input).toBe(0)
-    expect(result.details.input + result.details.cached + result.details.output).toBe(
-      result.microUsd,
-    )
+    expect(
+      result.details.input +
+        result.details.cached +
+        result.details.output +
+        result.details.tools,
+    ).toBe(result.microUsd)
   })
 
   it('cached > input → clamps to zero billable input (no negative cost)', () => {
@@ -252,7 +258,7 @@ describe('computeCost — edge cases', () => {
     const result = cost('acme-flat', usage)
 
     expect(result.microUsd).toBe(0)
-    expect(result.details).toEqual({ input: 0, cached: 0, output: 0 })
+    expect(result.details).toEqual({ input: 0, cached: 0, output: 0, tools: 0 })
   })
 
   it('unknown model → microUsd null, confidence estimated, details zero', () => {
@@ -261,7 +267,7 @@ describe('computeCost — edge cases', () => {
 
     expect(result.microUsd).toBeNull()
     expect(result.confidence).toBe('estimated')
-    expect(result.details).toEqual({ input: 0, cached: 0, output: 0 })
+    expect(result.details).toEqual({ input: 0, cached: 0, output: 0, tools: 0 })
     expect(result.pricingVersion).toBe(TEST_PRICING_VERSION)
     expect(result.unpricedReason).toContain('some-future-model-xyz')
   })
@@ -296,7 +302,7 @@ describe('computeCost — edge cases', () => {
     expect(result.microUsd).toBeNull()
     expect(result.usd).toBeNull()
     expect(result.confidence).toBe('estimated')
-    expect(result.details).toEqual({ input: 0, cached: 0, output: 0 })
+    expect(result.details).toEqual({ input: 0, cached: 0, output: 0, tools: 0 })
     expect(result.unpricedReason).toContain('enterprise-super-tier')
   })
 
@@ -398,7 +404,11 @@ describe('property — sum(details) === microUsd', () => {
         continue
       }
 
-      const sum = result.details.input + result.details.cached + result.details.output
+      const sum =
+        result.details.input +
+        result.details.cached +
+        result.details.output +
+        result.details.tools
       if (sum !== result.microUsd) {
         failures.push(
           `i=${i} model=${model} input=${inputTokens} cached=${cachedInputTokens} output=${outputTokens}` +

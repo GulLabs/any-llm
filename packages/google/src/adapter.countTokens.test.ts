@@ -38,6 +38,7 @@ describe('geminiAdapter.countTokens — happy path', () => {
     const result = await adapter.countTokens!(makeCountReq(), FAKE_CTX)
 
     expect(result.totalTokens).toBe(42)
+    expect(result.accuracy).toBe('exact')
     expect(result.details).toEqual({ cached: 10 })
     expect(result.raw).toEqual({ totalTokens: 42, cachedContentTokenCount: 10 })
   })
@@ -49,7 +50,40 @@ describe('geminiAdapter.countTokens — happy path', () => {
     const result = await adapter.countTokens!(makeCountReq(), FAKE_CTX)
 
     expect(result.totalTokens).toBe(5)
+    expect(result.accuracy).toBe('exact')
     expect(result.details).toBeUndefined()
+  })
+
+  it('forwards tools as functionDeclarations and stays exact', async () => {
+    const client = makeFakeGemini({ candidates: [] }, { totalTokens: 9 })
+    const adapter = geminiAdapter({ client })
+    const result = await adapter.countTokens!(
+      makeCountReq({
+        tools: [
+          {
+            name: 'get_temperature',
+            description: 'Get temperature',
+            inputJsonSchema: { type: 'object' },
+          },
+        ],
+      }),
+      FAKE_CTX,
+    )
+    expect(result.accuracy).toBe('exact')
+    const call = client.countTokensCalls[0] as {
+      config?: { tools?: unknown }
+    }
+    expect(call.config?.tools).toEqual([
+      {
+        functionDeclarations: [
+          {
+            name: 'get_temperature',
+            description: 'Get temperature',
+            parameters: { type: 'object' },
+          },
+        ],
+      },
+    ])
   })
 })
 

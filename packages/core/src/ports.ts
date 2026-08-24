@@ -21,6 +21,9 @@ import type {
   LlmResult,
   CallMetadata,
   Cost,
+  Citation,
+  ToolDefinition,
+  ToolChoice,
 } from './types.js'
 import type { LlmCallRecord } from './record.js'
 import type { LlmError, LlmErrorKind } from './errors.js'
@@ -81,6 +84,10 @@ export interface ResolvedRequest {
    * the result or failure.
    */
   attemptNumber?: number
+  /** Function-calling tools, copied from {@link LlmRequest.tools}. */
+  tools?: ToolDefinition[]
+  /** Tool selection policy, copied from {@link LlmRequest.toolChoice}. */
+  toolChoice?: ToolChoice
 }
 
 /**
@@ -130,6 +137,19 @@ export interface AdapterResult {
   responseId?: string
   /** Warnings about lossy setting mappings, unsupported options, etc. */
   warnings: Warning[]
+  /**
+   * Normalized citations. Adapters own shaping; the engine passes through
+   * verbatim. Omit when unused; do not emit an empty array.
+   */
+  citations?: Citation[]
+  /**
+   * Projection of assistant tool-call parts. Omit when unused.
+   */
+  toolCalls?: Array<{
+    toolCallId: string
+    toolName: string
+    args: JsonValue
+  }>
   /** Raw provider metadata (grounding, safety ratings, etc.). */
   providerMetadata?: JsonValue
 }
@@ -150,6 +170,11 @@ export interface TokenCountRequest {
   system?: string
   /** Conversation history included in the token count. */
   messages: Message[]
+  /**
+   * Tool declarations included in the token count (token-bearing request
+   * context). `toolChoice` is excluded — it selects behavior.
+   */
+  tools?: ToolDefinition[]
 }
 
 /**
@@ -158,6 +183,14 @@ export interface TokenCountRequest {
 export interface TokenCount {
   /** Total tokens the provider would count for the request. */
   totalTokens: number
+  /**
+   * How representative this count is of the generation call.
+   *
+   * - `'exact'` — the provider counted the real request (e.g. Gemini).
+   * - `'lower-bound'` — the provider counted a text-only projection that
+   *   omits inference-added framing (e.g. xAI `/v1/tokenize-text`).
+   */
+  accuracy: 'exact' | 'lower-bound'
   /**
    * Open per-category breakdown (e.g. `{ cached: 128 }`).
    * Present only when the provider reports a breakdown.

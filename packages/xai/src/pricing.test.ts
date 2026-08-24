@@ -88,7 +88,7 @@ describe('computeXaiCost — standard tier', () => {
     // outputCost = round(500 * 6_000_000 / 1_000_000) = 3000
     expect(cost.confidence).toBe('exact')
     expect(cost.pricingVersion).toBe(xaiPricingVersion)
-    expect(cost.details).toEqual({ input: 1600, cached: 60, output: 3000 })
+    expect(cost.details).toEqual({ input: 1600, cached: 60, output: 3000, tools: 0 })
     expect(cost.microUsd).toBe(1600 + 60 + 3000)
     expect(cost.usd).toBe((1600 + 60 + 3000) / 1_000_000)
   })
@@ -100,9 +100,9 @@ describe('computeXaiCost — standard tier', () => {
       cachedInputTokens: 111,
     })
     const cost = computeXaiCost('grok-4.5', usage)
-    expect(cost.details.input + cost.details.cached + cost.details.output).toBe(
-      cost.microUsd,
-    )
+    expect(
+      cost.details.input + cost.details.cached + cost.details.output + cost.details.tools,
+    ).toBe(cost.microUsd)
   })
 })
 
@@ -313,6 +313,86 @@ describe('xaiPricingSource', () => {
   it('price() delegates to computeXaiCost', () => {
     const usage = makeUsage({ inputTokens: 1000, outputTokens: 500 })
     const cost = xaiPricingSource().price('grok-4.5', usage)
+    expect(cost.confidence).toBe('exact')
+  })
+})
+
+describe('computeXaiCost — tool lanes (live-pinned 2026-08-24)', () => {
+  it('prices web_search_calls and x_search_calls at $5/1k', () => {
+    const usage: Usage = {
+      inputTokens: 1000,
+      outputTokens: 0,
+      details: {
+        web_search_calls: 2,
+        x_search_calls: 1,
+      },
+      raw: null,
+    }
+    const cost = computeXaiCost('grok-4.5', usage)
+    expect(cost.details.tools).toBe(15_000)
+    expect(cost.confidence).toBe('exact')
+    expect(
+      cost.details.input + cost.details.cached + cost.details.output + cost.details.tools,
+    ).toBe(cost.microUsd)
+  })
+
+  it('gt200k token rates still apply independently of tool lanes', () => {
+    const usage: Usage = {
+      inputTokens: 200_001,
+      outputTokens: 0,
+      details: { web_search_calls: 1 },
+      raw: null,
+    }
+    const cost = computeXaiCost('grok-4.5', usage)
+    expect(cost.details.input).toBe(800_004)
+    expect(cost.details.tools).toBe(5_000)
+  })
+
+  it('server_tools_requested without counters → tools 0, estimated', () => {
+    const usage: Usage = {
+      inputTokens: 1000,
+      outputTokens: 0,
+      details: { server_tools_requested: 1 },
+      raw: null,
+    }
+    const cost = computeXaiCost('grok-4.5', usage)
+    expect(cost.details.tools).toBe(0)
+    expect(cost.confidence).toBe('estimated')
+    expect(cost.details.input).toBeGreaterThan(0)
+  })
+
+  it('no server tools requested → exact, tools 0', () => {
+    const usage = makeUsage({ inputTokens: 1000, outputTokens: 0 })
+    const cost = computeXaiCost('grok-4.5', usage)
+    expect(cost.details.tools).toBe(0)
+    expect(cost.confidence).toBe('exact')
+  })
+
+  it('server_tools_missing → estimated even if another counter is present', () => {
+    const usage: Usage = {
+      inputTokens: 1000,
+      outputTokens: 0,
+      details: {
+        server_tools_requested: 1,
+        server_tools_missing: 1,
+        x_search_calls: 2,
+      },
+      raw: null,
+    }
+    const cost = computeXaiCost('grok-4.5', usage)
+    expect(cost.details.tools).toBe(0)
+    expect(cost.confidence).toBe('estimated')
+  })
+
+  it('server_tools_requested with counters present → exact and priced', () => {
+    const usage: Usage = {
+      inputTokens: 1000,
+      outputTokens: 0,
+      details: { server_tools_requested: 1, web_search_calls: 1 },
+      raw: null,
+    }
+    const cost = computeXaiCost('grok-4.5', usage)
+    expect(cost.details.tools).toBe(5_000)
     expect(cost.confidence).toBe('exact')
   })
 })

@@ -87,6 +87,7 @@ export interface GeminiPartShape {
    * Real field name in @google/genai Candidate.content.parts: `thought`.
    */
   thought?: boolean
+  functionCall?: { name?: string; args?: unknown }
 }
 
 /** A candidate returned by Gemini generateContent. */
@@ -201,8 +202,20 @@ export interface GeminiFileDataContentPart {
  * Each member (including the optional per-part `mediaResolution`) is a
  * structural subset of the real `@google/genai` `Part` type for the fields we use.
  */
+export interface GeminiFunctionCallPart {
+  functionCall: { name: string; args?: unknown }
+}
+
+export interface GeminiFunctionResponsePart {
+  functionResponse: { name: string; response: unknown }
+}
+
 export type GeminiContentPart =
-  GeminiTextContentPart | GeminiInlineDataContentPart | GeminiFileDataContentPart
+  | GeminiTextContentPart
+  | GeminiInlineDataContentPart
+  | GeminiFileDataContentPart
+  | GeminiFunctionCallPart
+  | GeminiFunctionResponsePart
 
 /** A content object (message) we construct. */
 export interface GeminiContent {
@@ -273,6 +286,20 @@ export interface GeminiGenerateConfig {
    *   API-key auth is supported below.)
    */
   httpOptions?: { timeout?: number; headers?: Record<string, string> }
+  tools?: Array<{
+    functionDeclarations?: Array<{
+      name: string
+      description: string
+      parameters?: unknown
+    }>
+    googleSearch?: Record<string, never>
+  }>
+  toolConfig?: {
+    functionCallingConfig?: {
+      mode?: 'AUTO' | 'ANY' | 'NONE'
+      allowedFunctionNames?: string[]
+    }
+  }
 }
 
 /**
@@ -300,6 +327,7 @@ export interface GeminiCountTokensParams {
      * is forwarded here directly, unlike `run()`'s combined timer signal.
      */
     abortSignal?: AbortSignal
+    tools?: GeminiGenerateConfig['tools']
   }
 }
 

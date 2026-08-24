@@ -94,6 +94,7 @@ export interface XaiResponseLike {
   service_tier?: string
   store?: boolean
   prompt_cache_key?: string | null
+  citations?: unknown
 }
 
 // ---------------------------------------------------------------------------

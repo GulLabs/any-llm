@@ -11,6 +11,7 @@ import type {
   LlmResult,
   Usage,
   Cost,
+  Citation,
   Warning,
   FinishReason,
   JsonValue,
@@ -18,6 +19,8 @@ import type {
   InlineMediaPart,
   FileUriPart,
   FileRefPart,
+  ToolCallPart,
+  ToolResultPart,
   Part,
   Message,
   GenConfig,
@@ -118,12 +121,29 @@ describe('Cost type shape', () => {
     expectTypeOf<Cost['confidence']>().toEqualTypeOf<'exact' | 'estimated'>()
   })
 
-  it('details has input, cached, output as numbers', () => {
+  it('details has input, cached, output, tools as numbers', () => {
     expectTypeOf<Cost['details']>().toEqualTypeOf<{
       input: number
       cached: number
       output: number
+      tools: number
     }>()
+  })
+})
+
+describe('Citation type shape', () => {
+  it('requires url and optionally title/sourceName', () => {
+    expectTypeOf<Citation>().toEqualTypeOf<{
+      url: string
+      title?: string
+      sourceName?: string
+    }>()
+  })
+})
+
+describe('LlmResult.citations', () => {
+  it('is Citation[] | undefined', () => {
+    expectTypeOf<LlmResult['citations']>().toEqualTypeOf<Citation[] | undefined>()
   })
 })
 
@@ -136,7 +156,7 @@ describe('Warning type shape', () => {
 describe('FinishReason type shape', () => {
   it('is a union of known values', () => {
     expectTypeOf<FinishReason>().toEqualTypeOf<
-      'stop' | 'length' | 'content_filter' | 'other'
+      'stop' | 'length' | 'content_filter' | 'other' | 'tool_calls'
     >()
   })
 })
@@ -182,7 +202,12 @@ describe('FileRefPart type shape', () => {
 describe('Part type shape', () => {
   it('is the union of TextPart | InlineMediaPart | FileUriPart | FileRefPart', () => {
     expectTypeOf<Part>().toEqualTypeOf<
-      TextPart | InlineMediaPart | FileUriPart | FileRefPart
+      | TextPart
+      | InlineMediaPart
+      | FileUriPart
+      | FileRefPart
+      | ToolCallPart
+      | ToolResultPart
     >()
   })
 })

@@ -22,6 +22,7 @@ import type {
   Message,
   TokenCountRequest,
   TokenCount,
+  ToolChoice,
 } from '@gullabs/core'
 import {
   buildGoogleClient,
@@ -30,6 +31,7 @@ import {
   TRANSPORT_TIMEOUT_BUFFER_MS,
 } from './client.js'
 import { GOOGLE_REASONING_EFFORT_BUDGET } from './reasoning-budget.js'
+import { normalizeGroundingCitations } from './grounding.js'
 import type {
   GeminiClientLike,
   GeminiGenerateConfig,
@@ -55,7 +57,7 @@ type GeminiDispatchConfig = GeminiGenerateConfig & {
   cachedContent?: string
   httpOptions?: { timeout?: number }
   safetySettings?: GeminiSafetySetting[]
-  tools?: GeminiAllowedTool[]
+  tools?: GeminiGenerateConfig['tools']
 }
 
 const ALLOWED_GOOGLE_PROVIDER_OPTION_KEYS = new Set([
@@ -470,6 +472,16 @@ function mapUsage(meta: GeminiUsageMetadataShape | undefined): Usage {
  * (`Part.mediaResolution`).  The normalised value is mapped to the
  * `PartMediaResolutionLevel` string enum before emission.
  */
+function mapGoogleToolChoice(choice: ToolChoice): {
+  mode: 'AUTO' | 'ANY' | 'NONE'
+  allowedFunctionNames?: string[]
+} {
+  if (choice === 'auto') return { mode: 'AUTO' }
+  if (choice === 'required') return { mode: 'ANY' }
+  if (choice === 'none') return { mode: 'NONE' }
+  return { mode: 'ANY', allowedFunctionNames: [choice.name] }
+}
+
 function mapPart(p: Part): GeminiContentPart {
   switch (p.kind) {
     case 'text':
@@ -504,6 +516,22 @@ function mapPart(p: Part): GeminiContentPart {
         'Google Gemini expects FileUriPart with a Files API uri; got file-ref (provider file id). Upload via GoogleFileStore and pass the returned uri.',
         { kind: 'bad_request', retryable: false, provider: 'google' },
       )
+
+    case 'tool-call':
+      return {
+        functionCall: {
+          name: p.toolName,
+          args: p.args,
+        },
+      }
+
+    case 'tool-result':
+      return {
+        functionResponse: {
+          name: p.toolName,
+          response: p.isError === true ? { error: p.result } : p.result,
+        },
+      }
 
     default:
       return assertNever(p)
@@ -741,6 +769,35 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
         config.tools = googleProviderConfig.tools
       }
 
+      if (req.tools !== undefined && req.tools.length > 0) {
+        if (req.modelDescriptor?.capabilities?.functionCalling !== true) {
+          throw new LlmError(
+            `tools is not supported for google model "${model}" (capabilities.functionCalling is not true).`,
+            { kind: 'bad_request', retryable: false, provider: 'google' },
+          )
+        }
+        if (googleProviderConfig.tools !== undefined) {
+          throw new LlmError(
+            'tools cannot be combined with providerOptions.google.tools (googleSearch) in this iteration.',
+            { kind: 'bad_request', retryable: false, provider: 'google' },
+          )
+        }
+        config.tools = [
+          {
+            functionDeclarations: req.tools.map((tool) => ({
+              name: tool.name,
+              description: tool.description,
+              parameters: tool.inputJsonSchema,
+            })),
+          },
+        ]
+        if (req.toolChoice !== undefined) {
+          config.toolConfig = {
+            functionCallingConfig: mapGoogleToolChoice(req.toolChoice),
+          }
+        }
+      }
+
       // ------------------------------------------------------------------
       // 5a. Fixed-sampling models reject sampling params even when a custom
       //     descriptor or direct adapter test bypasses core parsing.
@@ -969,8 +1026,19 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       // Separate thought parts from text parts.
       const textParts: string[] = []
       const thoughtParts: string[] = []
+      const toolCalls: NonNullable<AdapterResult['toolCalls']> = []
 
       for (const part of parts) {
+        if (
+          part.functionCall !== undefined &&
+          typeof part.functionCall.name === 'string'
+        ) {
+          toolCalls.push({
+            toolCallId: part.functionCall.name,
+            toolName: part.functionCall.name,
+            args: (part.functionCall.args ?? {}) as JsonValue,
+          })
+        }
         if (part.text !== undefined) {
           if (part.thought === true) {
             thoughtParts.push(part.text)
@@ -1007,7 +1075,11 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
         ...(text.length > 0 ? { text } : {}),
         ...(reasoningText !== undefined ? { reasoningText } : {}),
         ...(rawStructured !== undefined ? { rawStructured } : {}),
-        ...(finishReason !== undefined ? { finishReason } : {}),
+        ...(toolCalls.length > 0
+          ? { toolCalls, finishReason: 'tool_calls' }
+          : finishReason !== undefined
+            ? { finishReason }
+            : {}),
         ...(response.modelVersion !== undefined
           ? { modelVersion: response.modelVersion }
           : {}),
@@ -1026,6 +1098,12 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
           }
           return { providerMetadata: meta as JsonValue }
         })(),
+        ...(() => {
+          const gm = candidate.groundingMetadata
+          if (gm === undefined) return {}
+          const citations = normalizeGroundingCitations(gm)
+          return citations.length > 0 ? { citations } : {}
+        })(),
       }
 
       return result
@@ -1040,16 +1118,31 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
       }
 
       const contents = mapMessagesToGeminiContents(req.messages)
+      const countTools =
+        req.tools !== undefined && req.tools.length > 0
+          ? [
+              {
+                functionDeclarations: req.tools.map((tool) => ({
+                  name: tool.name,
+                  description: tool.description,
+                  parameters: tool.inputJsonSchema,
+                })),
+              },
+            ]
+          : undefined
       const params: GeminiCountTokensParams = {
         model: req.model,
         contents,
-        ...(req.system !== undefined || ctx.signal !== undefined
+        ...(req.system !== undefined ||
+        ctx.signal !== undefined ||
+        countTools !== undefined
           ? {
               config: {
                 ...(req.system !== undefined
                   ? { systemInstruction: { parts: [{ text: req.system }] } }
                   : {}),
                 ...(ctx.signal !== undefined ? { abortSignal: ctx.signal } : {}),
+                ...(countTools !== undefined ? { tools: countTools } : {}),
               },
             }
           : {}),
@@ -1077,6 +1170,7 @@ export function geminiAdapter(opts?: GeminiAdapterOptions): ProviderAdapter {
 
         return {
           totalTokens: response.totalTokens,
+          accuracy: 'exact',
           ...(details !== undefined ? { details } : {}),
           raw: response as unknown as JsonValue,
         }

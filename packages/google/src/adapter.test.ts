@@ -2100,11 +2100,27 @@ describe('grounding — providerMetadata merge', () => {
 
     const resultMeta = result.providerMetadata as Record<string, unknown> | undefined
     expect(resultMeta?.['groundingMetadata']).toEqual(fakeGrounding)
+    expect(result.citations).toEqual([
+      { url: 'https://example.com', title: 'Example', sourceName: 'Example' },
+    ])
 
     expect(sink.records).toHaveLength(1)
     const recordMeta = sink.last()?.providerMetadata as
       Record<string, unknown> | undefined
     expect(recordMeta?.['groundingMetadata']).toEqual(fakeGrounding)
+    expect(sink.last()?.citations).toEqual(result.citations)
+  })
+
+  it('omits result.citations when grounding chunks yield no usable URLs', async () => {
+    const client = makeFakeGemini(
+      fakeGeminiResponse({
+        text: 'plain',
+        groundingMetadata: { groundingChunks: [{ web: { uri: 'javascript:alert(1)' } }] },
+      }),
+    )
+    const adapter = geminiAdapter({ client })
+    const result = await adapter.run(makeResolvedReq(), FAKE_CTX)
+    expect(result.citations).toBeUndefined()
   })
 })
 
@@ -2119,11 +2135,104 @@ describe('grounding — registry capabilities', () => {
       expect(desc.capabilities?.grounding).toBe(true)
     }
   })
+
+  it('all 7 Gemini model descriptors have capabilities.functionCalling === true', () => {
+    for (const desc of geminiModelDescriptors) {
+      expect(desc.capabilities?.functionCalling).toBe(true)
+    }
+  })
+
+  it('Gemma descriptors do not advertise functionCalling', () => {
+    for (const desc of gemmaModelDescriptors) {
+      expect(desc.capabilities?.functionCalling).toBeUndefined()
+    }
+  })
 })
 
 // ---------------------------------------------------------------------------
 // Fixed-sampling defensive check
 // ---------------------------------------------------------------------------
+
+describe('google function calling', () => {
+  it('maps tools and named toolChoice; emits toolCalls', async () => {
+    const client = makeFakeGemini(
+      fakeGeminiResponse({
+        text: '',
+        parts: [{ functionCall: { name: 'get_temperature', args: { location: 'SF' } } }],
+      }),
+    )
+    const adapter = geminiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({
+        modelDescriptor: {
+          ...defaultGeminiRegistry.resolve('google', 'gemini-2.5-pro')!,
+        },
+        tools: [
+          {
+            name: 'get_temperature',
+            description: 'Get temperature',
+            inputJsonSchema: { type: 'object' },
+          },
+        ],
+        toolChoice: { name: 'get_temperature' },
+      }),
+      FAKE_CTX,
+    )
+    expect(result.finishReason).toBe('tool_calls')
+    expect(result.toolCalls?.[0]?.toolName).toBe('get_temperature')
+  })
+
+  it.each([
+    ['auto', { mode: 'AUTO' }],
+    ['required', { mode: 'ANY' }],
+    ['none', { mode: 'NONE' }],
+  ] as const)('maps toolChoice %s', async (choice, expected) => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: 'ok' }))
+    const adapter = geminiAdapter({ client })
+    await adapter.run(
+      makeResolvedReq({
+        modelDescriptor: defaultGeminiRegistry.resolve('google', 'gemini-2.5-pro')!,
+        tools: [{ name: 'f', description: 'd', inputJsonSchema: { type: 'object' } }],
+        toolChoice: choice,
+      }),
+      FAKE_CTX,
+    )
+    const call = client.calls[0] as {
+      config?: { toolConfig?: { functionCallingConfig?: unknown } }
+    }
+    expect(call.config?.toolConfig?.functionCallingConfig).toEqual(expected)
+  })
+
+  it('rejects tools when functionCalling is not admitted', async () => {
+    const adapter = geminiAdapter({
+      client: makeFakeGemini(fakeGeminiResponse({ text: 'x' })),
+    })
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          tools: [{ name: 'f', description: 'd', inputJsonSchema: { type: 'object' } }],
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+  })
+
+  it('rejects mixing LlmRequest.tools with googleSearch', async () => {
+    const adapter = geminiAdapter({
+      client: makeFakeGemini(fakeGeminiResponse({ text: 'x' })),
+    })
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          modelDescriptor: defaultGeminiRegistry.resolve('google', 'gemini-2.5-pro')!,
+          tools: [{ name: 'f', description: 'd', inputJsonSchema: { type: 'object' } }],
+          config: { providerOptions: { google: { tools: [{ googleSearch: {} }] } } },
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({ kind: 'bad_request' })
+  })
+})
 
 describe('fixed-sampling defensive check', () => {
   it('throws LlmError bad_request when providerOptions.google supplies sampling params for a fixed-sampling model', async () => {

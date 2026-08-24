@@ -110,7 +110,7 @@ function requireTextOnly(parts: Part[]): string[] {
   return parts.map((p) => {
     if (p.kind !== 'text') {
       throw new LlmError(
-        'codex-cli is text-only; non-text message parts (inline media, file URIs) are not supported — do not use -i images in v1',
+        'codex-cli is text-only; non-text message parts (inline media, file URIs, tool-call, tool-result) are not supported — do not use -i images in v1',
         { kind: 'bad_request', retryable: false, provider: 'codex-cli' },
       )
     }
@@ -393,6 +393,12 @@ export function codexCliAdapter(opts?: CodexCliAdapterOptions): ProviderAdapter 
       if (req.provider !== 'codex-cli') {
         throw new LlmError(
           `@gullabs/codex-cli received a request routed for provider "${req.provider}" — this adapter only serves "codex-cli"`,
+          { kind: 'bad_request', retryable: false, provider: 'codex-cli' },
+        )
+      }
+      if (req.tools !== undefined && req.tools.length > 0) {
+        throw new LlmError(
+          'codex-cli does not support LlmRequest.tools; CLI runtimes are out of the function-calling seam.',
           { kind: 'bad_request', retryable: false, provider: 'codex-cli' },
         )
       }

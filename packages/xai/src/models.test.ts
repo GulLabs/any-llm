@@ -29,14 +29,15 @@ describe('grok45ModelDescriptor', () => {
     expect(grok45ModelDescriptor.capabilities).toMatchObject({
       reasoning: true,
       reasoningApi: 'level',
-      admittedReasoningEfforts: ['low', 'high'],
+      admittedReasoningEfforts: ['low', 'medium', 'high'],
       structuredOutput: true,
       nativeStructuredOutput: true,
       vision: true,
       audioInput: false,
       sampling: 'tunable',
       caching: { explicit: false, minTokens: 0 },
-      grounding: false,
+      grounding: true,
+      functionCalling: true,
     })
     expect(grok45ModelDescriptor.capabilities?.serviceTiers).toBeUndefined()
   })
@@ -82,7 +83,8 @@ describe('grok46ModelDescriptor', () => {
       audioInput: false,
       sampling: 'tunable',
       caching: { explicit: false, minTokens: 0 },
-      grounding: false,
+      grounding: true,
+      functionCalling: true,
       serviceTiers: ['priority'],
     })
   })
@@ -150,15 +152,22 @@ describe('xaiRegistry', () => {
     }
   })
 
-  it('validateConfig rejects an invalid config via the Standard Schema surface', () => {
+  it('validateConfig accepts grok-4.5 medium (live-verified 2026-08-24)', () => {
     const descriptor = xaiRegistry.resolve('xai', 'grok-4.5')
     const result = descriptor?.validateConfig['~standard'].validate({
       reasoning: { effort: 'medium' },
     })
     expect(result).toBeDefined()
     if (result !== undefined && !(result instanceof Promise)) {
-      expect(result.issues).toBeDefined()
+      expect(result.issues).toBeUndefined()
     }
+  })
+
+  it('admittedReasoningEfforts matches the grok-4.5 schema enum', () => {
+    const effort = Grok45ConfigSchema.shape.reasoning.unwrap().shape.effort
+    expect([...grok45ModelDescriptor.capabilities!.admittedReasoningEfforts!]).toEqual([
+      ...effort.options,
+    ])
   })
 
   it('validateConfig accepts grok-4.6 xhigh and priority', () => {

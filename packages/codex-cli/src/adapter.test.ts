@@ -1188,3 +1188,25 @@ describe('auth', () => {
     expect(result.text).toBe('hi')
   })
 })
+
+describe('function-calling seam reject', () => {
+  it('rejects LlmRequest.tools', async () => {
+    const { runner } = makeFakeRunner(async () => ({
+      stdout: PLAIN_JSONL,
+      stderr: '',
+      exitCode: 0,
+    }))
+    const adapter = codexCliAdapter({ runner })
+    await expect(
+      adapter.run(
+        makeResolvedReq({
+          tools: [{ name: 'f', description: 'd', inputJsonSchema: { type: 'object' } }],
+        }),
+        FAKE_CTX,
+      ),
+    ).rejects.toMatchObject({
+      kind: 'bad_request',
+      message: expect.stringContaining('tools'),
+    })
+  })
+})

@@ -8,7 +8,15 @@
  * @module
  */
 
-import type { JsonValue, Usage, FinishReason, Warning, GenConfig, Cost } from './types.js'
+import type {
+  JsonValue,
+  Usage,
+  FinishReason,
+  Warning,
+  GenConfig,
+  Cost,
+  Citation,
+} from './types.js'
 import type { LlmErrorKind, LlmError } from './errors.js'
 import { assertNever } from './assert.js'
 import { redactSecrets } from './redact.js'
@@ -143,6 +151,13 @@ export interface LlmCallRecord {
    * `raw_usage` column rather than defaulted to an empty object.
    */
   rawUsage: JsonValue
+  /**
+   * Normalized citations persisted as JSON.
+   * Absent when the adapter produced none.
+   */
+  citations?: Citation[]
+  /** Projection of assistant tool-call parts (JSONB). */
+  toolCalls?: Array<{ toolCallId: string; toolName: string; args: JsonValue }>
   /** Raw provider metadata (grounding, safety ratings, etc.) (JSONB). */
   providerMetadata?: JsonValue
   /** Serialized `Warning[]` (JSONB). */
@@ -237,6 +252,9 @@ export interface BuildRecordInput {
    * Present when `includeThoughts` was requested and the provider responded.
    */
   reasoningText?: string
+  /** Normalized citations from the adapter (absent when unused). */
+  citations?: Citation[]
+  toolCalls?: Array<{ toolCallId: string; toolName: string; args: JsonValue }>
   /** Raw provider metadata (JSONB). */
   providerMetadata?: JsonValue
 }
@@ -645,6 +663,12 @@ export function buildRecord(input: BuildRecordInput): LlmCallRecord {
     // JSONB lanes.
     tokenDetails,
     rawUsage: usage.raw,
+    ...(input.citations !== undefined && input.citations.length > 0
+      ? { citations: input.citations }
+      : {}),
+    ...(input.toolCalls !== undefined && input.toolCalls.length > 0
+      ? { toolCalls: input.toolCalls }
+      : {}),
     ...(input.providerMetadata !== undefined
       ? { providerMetadata: input.providerMetadata }
       : {}),

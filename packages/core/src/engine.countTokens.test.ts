@@ -66,7 +66,12 @@ function makeReq(overrides?: Partial<TokenCountRequest>): TokenCountRequest {
 
 describe('engine.countTokens — happy path', () => {
   it('returns the TokenCount verbatim from the adapter', async () => {
-    const tokenCount: TokenCount = { totalTokens: 42, details: { cached: 10 }, raw: null }
+    const tokenCount: TokenCount = {
+      totalTokens: 42,
+      accuracy: 'exact',
+      details: { cached: 10 },
+      raw: null,
+    }
     const adapter = new CountTokensFakeAdapter('google', tokenCount)
     const client = createClient({
       adapters: [adapter],
@@ -85,6 +90,7 @@ describe('engine.countTokens — validation errors', () => {
   it('unregistered (provider, model) → bad_request', async () => {
     const adapter = new CountTokensFakeAdapter('google', {
       totalTokens: 1,
+      accuracy: 'exact',
       raw: null,
     })
     const client = createClient({
@@ -125,7 +131,11 @@ describe('engine.countTokens — validation errors', () => {
   })
 
   it('missing opts.auth → same invalid_auth error as generate()', async () => {
-    const adapter = new CountTokensFakeAdapter('google', { totalTokens: 1, raw: null })
+    const adapter = new CountTokensFakeAdapter('google', {
+      totalTokens: 1,
+      accuracy: 'exact',
+      raw: null,
+    })
     const client = createClient({
       adapters: [adapter],
       modelRegistry: TEST_REGISTRY,
@@ -152,7 +162,7 @@ describe('engine.countTokens — signal propagation', () => {
       }
       async countTokens(_req: TokenCountRequest, ctx: AdapterCtx): Promise<TokenCount> {
         capturedSignal = ctx.signal
-        return { totalTokens: 5, raw: null }
+        return { totalTokens: 5, accuracy: 'exact', raw: null }
       }
     })()
     const client = createClient({
@@ -171,7 +181,11 @@ describe('engine.countTokens — logger events', () => {
   it('emits llm.count_tokens.start / .success on the success path', async () => {
     const infoFn = vi.fn()
     const logger: Logger = { info: infoFn, warn() {}, error() {}, debug() {} }
-    const adapter = new CountTokensFakeAdapter('google', { totalTokens: 7, raw: null })
+    const adapter = new CountTokensFakeAdapter('google', {
+      totalTokens: 7,
+      accuracy: 'exact',
+      raw: null,
+    })
     const client = createClient({
       adapters: [adapter],
       modelRegistry: TEST_REGISTRY,
@@ -212,7 +226,11 @@ describe('engine.countTokens — logger events', () => {
 describe('engine.countTokens — no sink writes', () => {
   it('does not write any sink record on a successful call', async () => {
     const sink = new RecordingSink()
-    const adapter = new CountTokensFakeAdapter('google', { totalTokens: 3, raw: null })
+    const adapter = new CountTokensFakeAdapter('google', {
+      totalTokens: 3,
+      accuracy: 'exact',
+      raw: null,
+    })
     const client = createClient({
       adapters: [adapter],
       modelRegistry: TEST_REGISTRY,
