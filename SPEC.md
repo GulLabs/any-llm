@@ -19,8 +19,10 @@
 4. **Track cost** (provider-scoped pricing snapshots → micro-USD, frozen per record; each
    provider package ships its own `PricingSource`).
 
-Everything else from DESIGN.md is OUT of scope for now (no streaming, no tools/function-calling
-seam). Seams are present; machinery is intentionally small.
+Everything else from DESIGN.md is OUT of scope for now (no streaming, no agent loop).
+The function-calling **seam** shipped (ADR-029): `LlmRequest.tools` / `toolChoice` in,
+`tool-call` / `tool-result` parts and `LlmResult.toolCalls` out — no tool execution.
+Seams are present; machinery is intentionally small.
 
 ## Non-negotiable invariants
 

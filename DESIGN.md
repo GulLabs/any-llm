@@ -262,6 +262,9 @@ error before the SDK call.
 **`Cost.usd` convenience field.** `= microUsd / 1_000_000`. Display-only; micro-USD remains
 canonical and is the only value persisted.
 
+**Function calling.** Shipped as a seam only (ADR-029). The `Part` union includes
+`tool-call` and `tool-result`. `LlmRequest.tools` / `toolChoice` in; no agent loop.
+
 ## Planned Seams (not yet)
 
 The following capabilities have documented ports or type-system placeholders. They are excluded
@@ -283,10 +286,6 @@ currently `{ apiKey: string, keyId?: string } | { cliSession: true }` (the CLI-s
 with the dev CLI providers below; `keyId` is the ADR-026 attribution label, `ApiKeyAuth`-only).
 Additional forms (OAuth token, bearer token) would extend the union further.
 Vertex AI specifically is on the roadmap; see ROADMAP.md.
-
-**Function calling.** The `Part` union includes `tool-call` and `tool-result`.
-`LlmRequest.tools` / `toolChoice` are the generic seam (ADR-029). There is no
-agent loop.
 
 **`Redactor` port.** A planned port for scrubbing sensitive content from messages and results
 before persistence. Absent in v1; the port name is reserved. If added, it would be fail-closed
