@@ -133,7 +133,11 @@ function convertMediaResolution(
  * combined with any other key, or a part with zero recognized fields —
  * throws `LlmError('bad_request')` naming the offending key(s).
  */
-function convertPart(part: GenaiPart, location: string): Part {
+function convertPart(
+  part: GenaiPart,
+  location: string,
+  nameCounts: Map<string, number>,
+): Part {
   const keys = definedKeys(part)
   const baseKeys = keys.filter(
     (key) => key === 'text' || key === 'inlineData' || key === 'fileData',
@@ -147,9 +151,17 @@ function convertPart(part: GenaiPart, location: string): Part {
       if (fc === undefined || typeof fc.name !== 'string' || fc.name.length === 0) {
         throw badRequest(`${location}: functionCall.name is required.`)
       }
+      let toolCallId: string
+      if (typeof fc.id === 'string' && fc.id.length > 0) {
+        toolCallId = fc.id
+      } else {
+        const n = (nameCounts.get(fc.name) ?? 0) + 1
+        nameCounts.set(fc.name, n)
+        toolCallId = `call_${fc.name}_${n}`
+      }
       return {
         kind: 'tool-call',
-        toolCallId: typeof fc.id === 'string' && fc.id.length > 0 ? fc.id : fc.name,
+        toolCallId,
         toolName: fc.name,
         args: (fc.args ?? {}) as JsonValue,
       }
@@ -164,9 +176,18 @@ function convertPart(part: GenaiPart, location: string): Part {
       if (fr === undefined || typeof fr.name !== 'string' || fr.name.length === 0) {
         throw badRequest(`${location}: functionResponse.name is required.`)
       }
+      let toolCallId: string
+      if (typeof fr.id === 'string' && fr.id.length > 0) {
+        toolCallId = fr.id
+      } else {
+        const key = `result:${fr.name}`
+        const n = (nameCounts.get(key) ?? 0) + 1
+        nameCounts.set(key, n)
+        toolCallId = `call_${fr.name}_${n}`
+      }
       return {
         kind: 'tool-result',
-        toolCallId: typeof fr.id === 'string' && fr.id.length > 0 ? fr.id : fr.name,
+        toolCallId,
         toolName: fr.name,
         result: (fr.response ?? null) as JsonValue,
       }
@@ -371,6 +392,7 @@ export function geminiContentToMessages(
       ? convertSystemInstruction(input.systemInstruction)
       : undefined
 
+  const nameCounts = new Map<string, number>()
   const messages: Message[] = input.contents.map((content, contentIndex) => {
     const location = `contents[${contentIndex}]`
     const envelopeExtraKeys = definedKeys(content).filter(
@@ -384,7 +406,7 @@ export function geminiContentToMessages(
     }
     const role = convertRole(content.role, location)
     const parts = (content.parts ?? []).map((part, partIndex) =>
-      convertPart(part, `${location}.parts[${partIndex}]`),
+      convertPart(part, `${location}.parts[${partIndex}]`, nameCounts),
     )
     return { role, parts }
   })
