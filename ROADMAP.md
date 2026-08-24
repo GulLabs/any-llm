@@ -29,9 +29,9 @@ Will return with an explicit credential shape — a plain object containing the 
 
 A `stream()` method that returns an async iterable of normalized `StreamEvent` objects plus a `final: Promise<LlmResult>`. The `ProviderAdapter` interface is designed to accommodate a `runStream` method. Records are written on every terminal stream outcome including abort.
 
-### Tool / function calling
+### Agent loop / tool execution
 
-The `Part` union's `kind` discriminant is reserved for future `tool-call` and `tool-result` variants. `LlmRequest` does not yet carry a `tools` field.
+The function-calling **seam** shipped in ADR-029 (tools in, tool-call/tool-result parts out). An in-library agent loop, tool executor, or retry-on-tool-error policy is still out of scope.
 
 ### Multimodal output
 

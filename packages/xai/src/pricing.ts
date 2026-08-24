@@ -43,7 +43,7 @@ export const xaiPricingVersion = 'xai-2026-08-24' as const
 /**
  * Live-pinned 2026-08-24 per-invocation tool rates (µUSD per call).
  * Source: `usage.server_side_tool_usage_details` on /v1/responses.
- * $5 / 1,000 web or X searches; $10 / 1,000 attachment/document searches.
+ * $5 / 1,000 web or X searches. Attachment search is not priced until live-pinned.
  */
 export const XAI_TOOL_RATE_MICRO_USD = {
   web_search_calls: 5_000,
@@ -174,10 +174,10 @@ function selectRates(
  *    nearest integer micro-USD.
  * 6. `microUsd` is the sum of the four components — guarantees
  *    `details.input + details.cached + details.output + details.tools === microUsd`.
- * 7. Tool lanes: live-pinned counters `web_search_calls`, `x_search_calls`,
- *    `document_search_calls`. If `usage.details.server_tools_requested === 1`
- *    and those counters are absent, token lanes are priced, `tools: 0`,
- *    `confidence: 'estimated'`. `'exact'` requires counters present or no
+ * 7. Tool lanes: live-pinned counters `web_search_calls`, `x_search_calls`.
+ *    Missing expected counters → `tools: 0`, `estimated`. File-ref sets
+ *    `attachment_search_unpinned` → `estimated` (attachment not priced).
+ *    `'exact'` requires no unpinned attachment and counters present or no
  *    server tools requested.
  */
 export function computeXaiCost(model: string, usage: Usage, tier?: string): Cost {
@@ -224,7 +224,10 @@ export function computeXaiCost(model: string, usage: Usage, tier?: string): Cost
   const serverToolsRequested = usage.details['server_tools_requested'] === 1
   const missingRequestedCounters =
     usage.details['server_tools_missing'] === 1 ||
-    (serverToolsRequested && !XAI_TOOL_COUNTER_KEYS.some((key) => key in usage.details))
+    (serverToolsRequested &&
+      usage.details['attachment_search_unpinned'] !== 1 &&
+      !XAI_TOOL_COUNTER_KEYS.some((key) => key in usage.details))
+  const attachmentUnpinned = usage.details['attachment_search_unpinned'] === 1
 
   const toolsCost = missingRequestedCounters
     ? 0
@@ -240,7 +243,7 @@ export function computeXaiCost(model: string, usage: Usage, tier?: string): Cost
     microUsd,
     usd: microUsd / 1_000_000,
     pricingVersion: xaiPricingVersion,
-    confidence: missingRequestedCounters ? 'estimated' : 'exact',
+    confidence: missingRequestedCounters || attachmentUnpinned ? 'estimated' : 'exact',
     details: {
       input: inputCost,
       cached: cachedCost,

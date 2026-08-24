@@ -158,6 +158,13 @@ export interface LlmCallRecord {
   citations?: Citation[]
   /** Projection of assistant tool-call parts (JSONB). */
   toolCalls?: Array<{ toolCallId: string; toolName: string; args: JsonValue }>
+  /**
+   * Requested tool names from `LlmRequest.tools` (alongside generationConfig).
+   * Present even when the model returned prose and no `toolCalls`.
+   */
+  toolNames?: string[]
+  /** `toolNames.length` when tools were requested. */
+  toolCount?: number
   /** Raw provider metadata (grounding, safety ratings, etc.) (JSONB). */
   providerMetadata?: JsonValue
   /** Serialized `Warning[]` (JSONB). */
@@ -255,6 +262,8 @@ export interface BuildRecordInput {
   /** Normalized citations from the adapter (absent when unused). */
   citations?: Citation[]
   toolCalls?: Array<{ toolCallId: string; toolName: string; args: JsonValue }>
+  toolNames?: string[]
+  toolCount?: number
   /** Raw provider metadata (JSONB). */
   providerMetadata?: JsonValue
 }
@@ -668,6 +677,9 @@ export function buildRecord(input: BuildRecordInput): LlmCallRecord {
       : {}),
     ...(input.toolCalls !== undefined && input.toolCalls.length > 0
       ? { toolCalls: input.toolCalls }
+      : {}),
+    ...(input.toolNames !== undefined && input.toolNames.length > 0
+      ? { toolNames: input.toolNames, toolCount: input.toolNames.length }
       : {}),
     ...(input.providerMetadata !== undefined
       ? { providerMetadata: input.providerMetadata }

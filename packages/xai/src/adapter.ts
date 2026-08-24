@@ -943,6 +943,16 @@ export function xaiAdapter(opts?: XaiAdapterOptions): ProviderAdapter {
             )}]; tool cost will be estimated.`,
           })
         }
+        if (hasFileRef) {
+          // Attachment_search counter is not live-pinned (ZDR blocks file
+          // attach). Never claim exact $0 for a file-ref call.
+          usage.details['attachment_search_unpinned'] = 1
+          warnings.push({
+            type: 'other',
+            message:
+              'xai: file-ref enables attachment_search but that counter is not live-pinned; tool cost is estimated.',
+          })
+        }
       }
 
       const citations = collectXaiCitations(response, messageItems)

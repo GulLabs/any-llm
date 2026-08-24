@@ -624,8 +624,9 @@ Anthropic or OpenAI API provider is a new self-contained package composed via
 `composeProviders` — zero core edits. Multi-adapter setups work today: the default router
 matches `req.provider` against adapter ids directly, one adapter configured or ten.
 
-**Function calling / tool use.** `LlmRequest` does not yet carry a `tools` field. The `Part`
-union's `kind` discriminant is reserved for future `tool-call` and `tool-result` variants.
+**Function calling / tool use.** Shipped as a seam only (ADR-029): `LlmRequest.tools` /
+`toolChoice` in, `tool-call` / `tool-result` parts and `LlmResult.toolCalls` out. No
+agent loop, no tool execution. `runStructured` + `tools` is `bad_request`.
 
 **Provider-fallback middleware.** The middleware contract allows calling `next` with a modified
 `ResolvedRequest` pointing to a different model. A fallback middleware (retry on `server` with

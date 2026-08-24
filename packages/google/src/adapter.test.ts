@@ -2180,6 +2180,153 @@ describe('google function calling', () => {
     )
     expect(result.finishReason).toBe('tool_calls')
     expect(result.toolCalls?.[0]?.toolName).toBe('get_temperature')
+    expect(result.toolCalls?.[0]?.toolCallId).toBe('call_get_temperature_1')
+  })
+
+  it('uses provider functionCall.id and keeps two same-name calls distinct', async () => {
+    const client = makeFakeGemini(
+      fakeGeminiResponse({
+        text: '',
+        parts: [
+          { functionCall: { id: 'fc_a', name: 'lookup', args: { q: '1' } } },
+          { functionCall: { id: 'fc_b', name: 'lookup', args: { q: '2' } } },
+        ],
+      }),
+    )
+    const adapter = geminiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({
+        modelDescriptor: defaultGeminiRegistry.resolve('google', 'gemini-2.5-pro')!,
+        tools: [
+          { name: 'lookup', description: 'd', inputJsonSchema: { type: 'object' } },
+        ],
+      }),
+      FAKE_CTX,
+    )
+    expect(result.toolCalls?.map((c) => c.toolCallId)).toEqual(['fc_a', 'fc_b'])
+  })
+
+  it('does not collide fallback with a reserved provider id', async () => {
+    const client = makeFakeGemini(
+      fakeGeminiResponse({
+        text: '',
+        parts: [
+          { functionCall: { id: 'call_lookup_1', name: 'lookup', args: { q: '1' } } },
+          { functionCall: { name: 'lookup', args: { q: '2' } } },
+        ],
+      }),
+    )
+    const adapter = geminiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({
+        modelDescriptor: defaultGeminiRegistry.resolve('google', 'gemini-2.5-pro')!,
+        tools: [
+          { name: 'lookup', description: 'd', inputJsonSchema: { type: 'object' } },
+        ],
+      }),
+      FAKE_CTX,
+    )
+    expect(result.toolCalls?.map((c) => c.toolCallId)).toEqual([
+      'call_lookup_1',
+      'call_lookup_2',
+    ])
+  })
+
+  it('reserves a later provider id before allocating an earlier fallback', async () => {
+    const client = makeFakeGemini(
+      fakeGeminiResponse({
+        text: '',
+        parts: [
+          { functionCall: { name: 'lookup', args: { q: '1' } } },
+          { functionCall: { id: 'call_lookup_1', name: 'lookup', args: { q: '2' } } },
+        ],
+      }),
+    )
+    const adapter = geminiAdapter({ client })
+    const result = await adapter.run(
+      makeResolvedReq({
+        modelDescriptor: defaultGeminiRegistry.resolve('google', 'gemini-2.5-pro')!,
+        tools: [
+          { name: 'lookup', description: 'd', inputJsonSchema: { type: 'object' } },
+        ],
+      }),
+      FAKE_CTX,
+    )
+    expect(result.toolCalls?.map((c) => c.toolCallId)).toEqual([
+      'call_lookup_2',
+      'call_lookup_1',
+    ])
+  })
+
+  it('replays toolCallId as functionCall/functionResponse id', async () => {
+    const client = makeFakeGemini(fakeGeminiResponse({ text: '59' }))
+    const adapter = geminiAdapter({ client })
+    await adapter.run(
+      makeResolvedReq({
+        modelDescriptor: defaultGeminiRegistry.resolve('google', 'gemini-2.5-pro')!,
+        tools: [
+          {
+            name: 'get_temperature',
+            description: 'd',
+            inputJsonSchema: { type: 'object' },
+          },
+        ],
+        messages: [
+          { role: 'user', parts: [{ kind: 'text', text: 'temp?' }] },
+          {
+            role: 'assistant',
+            parts: [
+              {
+                kind: 'tool-call',
+                toolCallId: 'fc_1',
+                toolName: 'get_temperature',
+                args: { location: 'SF' },
+              },
+            ],
+          },
+          {
+            role: 'user',
+            parts: [
+              {
+                kind: 'tool-result',
+                toolCallId: 'fc_1',
+                toolName: 'get_temperature',
+                result: { temperature: 59 },
+              },
+            ],
+          },
+        ],
+      }),
+      FAKE_CTX,
+    )
+    const contents = (client.calls[0] as { contents: unknown }).contents
+    expect(contents).toEqual([
+      { role: 'user', parts: [{ text: 'temp?' }] },
+      {
+        role: 'model',
+        parts: [
+          {
+            functionCall: {
+              id: 'fc_1',
+              name: 'get_temperature',
+              args: { location: 'SF' },
+            },
+          },
+        ],
+      },
+      {
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'fc_1',
+              name: 'get_temperature',
+              response: { temperature: 59 },
+            },
+          },
+        ],
+      },
+    ])
   })
 
   it.each([

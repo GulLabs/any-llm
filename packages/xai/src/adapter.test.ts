@@ -135,6 +135,10 @@ describe('basic text completion', () => {
     expect(result.usage.details.num_server_side_tools_used).toBe(3)
     expect(result.usage.details.num_sources_used).toBe(2)
     expect(result.usage.details.server_tools_requested).toBe(1)
+    expect(result.usage.details.attachment_search_unpinned).toBe(1)
+    expect(result.warnings.some((w) => w.message.includes('attachment_search'))).toBe(
+      true,
+    )
     expect(result.usage.raw).toMatchObject({
       num_server_side_tools_used: 3,
       num_sources_used: 2,

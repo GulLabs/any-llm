@@ -52,6 +52,8 @@ import type { LlmCallRecord, JsonValue } from '@gullabs/core'
 //   provider_metadata:   jsonb (nullable)
 //   citations:           jsonb (nullable)
 //   tool_calls:          jsonb (nullable)
+//   tool_names:          jsonb (nullable)
+//   tool_count:          integer (nullable)
 //   warnings:            jsonb (nullable)
 //   generation_config:   jsonb NOT NULL
 //   reasoning_text:      text (nullable)
@@ -92,6 +94,8 @@ const CREATE_TABLE_SQL = /* sql */ `
     provider_metadata     JSONB,
     citations             JSONB,
     tool_calls            JSONB,
+    tool_names            JSONB,
+    tool_count            INTEGER,
     warnings              JSONB,
     generation_config     JSONB        NOT NULL,
     reasoning_text        TEXT,
@@ -291,6 +295,24 @@ describe('drizzleUsageSink — real PGlite integration', () => {
       .where(eq(llmCalls.attemptId, 'attempt_tool_calls'))
     expect(rows).toHaveLength(1)
     expect(rows[0]!.toolCalls).toEqual(toolCalls)
+  })
+
+  it('round-trips requested toolNames and toolCount', async () => {
+    const db = await createTestDb()
+    const sink = drizzleUsageSink(asInsertableDb(db))
+    await sink.record(
+      makeRecord({
+        attemptId: 'attempt_tool_names',
+        toolNames: ['get_temperature'],
+        toolCount: 1,
+      }),
+    )
+    const rows = await db
+      .select()
+      .from(llmCalls)
+      .where(eq(llmCalls.attemptId, 'attempt_tool_names'))
+    expect(rows[0]!.toolNames).toEqual(['get_temperature'])
+    expect(rows[0]!.toolCount).toBe(1)
   })
 
   // (b) attemptId idempotency: two records with the same attemptId → exactly one row.
