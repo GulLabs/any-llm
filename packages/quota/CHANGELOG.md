@@ -1,5 +1,12 @@
 # @gullabs/quota
 
+## 0.3.8
+
+### Patch Changes
+
+- Updated dependencies [6a5a662]
+  - @gullabs/core@0.13.1
+
 ## 0.3.7
 
 ### Patch Changes

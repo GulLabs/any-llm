@@ -1,5 +1,13 @@
 # @gullabs/google
 
+## 0.11.1
+
+### Patch Changes
+
+- 6a5a662: Fix Codex WS-C follow-ups: file-ref attachment pricing is estimated until the counter is live-pinned; Google toolCallId uses provider `functionCall.id` (or a unique per-name suffix) and replays it; requested tool names/count persist alongside generationConfig.
+- Updated dependencies [6a5a662]
+  - @gullabs/core@0.13.1
+
 ## 0.11.0
 
 ### Minor Changes

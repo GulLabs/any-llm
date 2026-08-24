@@ -1,5 +1,12 @@
 # @gullabs/codex-cli
 
+## 0.6.1
+
+### Patch Changes
+
+- Updated dependencies [6a5a662]
+  - @gullabs/core@0.13.1
+
 ## 0.6.0
 
 ### Minor Changes
