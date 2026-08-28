@@ -150,7 +150,7 @@ Gemini 2.5 uses `reasoning.budgetTokens`. Gemini 3 / Gemma built-ins use `reason
 | [`@gullabs/claude-cli`](./packages/claude-cli) | Dev-only local `claude` CLI provider. Not for production                     |
 | [`@gullabs/codex-cli`](./packages/codex-cli)   | Dev-only local `codex` CLI provider. Not for production                      |
 
-Published on npm under `@gullabs`, Apache-2.0, Node `>=20.9.0`.
+Published on npm under `@gullabs`, Apache-2.0, Node `>=22.12.0`.
 
 ## Pipeline
 

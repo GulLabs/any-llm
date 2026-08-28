@@ -4,4 +4,9 @@ coverage
 pnpm-lock.yaml
 .craftsman
 .remember
+.research
 docs/assets
+
+# Recorded live-API captures. These are data, not authored source — keep them
+# byte-identical to what the provider returned so a re-capture produces no diff.
+packages/*/src/__fixtures__
