@@ -112,6 +112,27 @@ paths to other repos.
 
 ---
 
+## B-008 — xAI fixture re-capture script
+
+- **Priority:** P2
+- **Status:** open, plan not yet written.
+- **Origin:** `packages/xai/src/__fixtures__/*.json` are live captures (grok-4.5 on
+  2026-07-09, grok-4.6 on 2026-08-12) backing 63 contract tests, including the only
+  external check on cost math — `pricing.test.ts` reconciles `XAI_PRICING` against xAI's
+  own `/v1/models` prices and against `cost_in_usd_ticks` from a real billed call. They
+  were captured by hand and there is no way to refresh them, so they prove the adapter
+  handled the API _as of the capture date_, not as of today. Silent provider drift stays
+  green.
+- **Scope:** a manual, key-gated dev script in the shape of `scripts/probe-capabilities.mjs`
+  (not in CI, documented cost warning): replay each recorded request against the live
+  Responses API, strip Authorization/Bearer/API-key-shaped strings, write the response
+  back to `__fixtures__/`, and diff so drift shows up as a reviewable change. Fixtures are
+  Prettier-ignored so a re-capture produces no formatting noise.
+- **Next step:** write the plan; decide whether the diff runs on a release cadence or
+  ad hoc.
+
+---
+
 ## Optional later (not ticketed)
 
 - Tool-invocation fee Cost lane for xAI server tools (`attachment_search`, etc.) once
