@@ -1,5 +1,36 @@
 # @gullabs/any-llm
 
+## 0.10.0
+
+### Minor Changes
+
+- 79bac18: Raise the supported runtime and narrow provider peer ranges.
+
+  - **Breaking:** `engines.node` is now `>=22.12.0` on every published package. Node 20
+    reached end of life in April 2026 and is no longer supported.
+  - **Breaking:** `@gullabs/google` requires `@google/genai` `^2` (was `^1 || ^2`), and
+    `@gullabs/any-llm` now depends on `@google/genai` `^2.19.0`.
+  - **Breaking:** `@gullabs/xai` requires `openai` `^7` (was `^6 || ^7`).
+
+  Development moves to Node 24 (`.nvmrc` pins 24.20.0) and pnpm 11.24.0; pnpm settings
+  now live in `pnpm-workspace.yaml` rather than `package.json` and `.npmrc`.
+
+### Patch Changes
+
+- 79bac18: Point `repository.url`, `homepage`, and `bugs` at the canonical GitHub org path
+  `gul-labs/any-llm`. The org was renamed from `GulLabs`; the old path still
+  redirects in a browser, but npm provenance matches `repository.url` literally
+  against the attestation's `sourceRepositoryURI`, so a redirect does not satisfy
+  it and the next provenance publish would have failed the same way the earlier
+  lowercase-casing incident did.
+
+  The npm scope `@gullabs` is a separate namespace and is unchanged.
+
+- Updated dependencies [79bac18]
+- Updated dependencies [79bac18]
+  - @gullabs/core@0.14.0
+  - @gullabs/google@0.12.0
+
 ## 0.9.3
 
 ### Patch Changes
