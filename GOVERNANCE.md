@@ -1,6 +1,6 @@
 # Governance
 
-any-llm is maintained by [Gul Labs](https://github.com/GulLabs).
+any-llm is maintained by [Gul Labs](https://github.com/gul-labs).
 
 | Role       | Who                                        | Scope                                        |
 | ---------- | ------------------------------------------ | -------------------------------------------- |

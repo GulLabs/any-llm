@@ -5,6 +5,6 @@
     "source": "issue-65-report",
     "reported": "2026-08-14",
     "model": "grok-4.5",
-    "note": "Shape reported in GulLabs/any-llm#65 — not an in-repo live capture. openai PermissionDeniedError: err.status=403, err.code=undefined, err.error=plain string, err.message='403 \"Content violates usage guidelines. Failed check: SAFETY_CHECK_TYPE_CYBER\"'."
+    "note": "Shape reported in gul-labs/any-llm#65 — not an in-repo live capture. openai PermissionDeniedError: err.status=403, err.code=undefined, err.error=plain string, err.message='403 \"Content violates usage guidelines. Failed check: SAFETY_CHECK_TYPE_CYBER\"'."
   }
 }

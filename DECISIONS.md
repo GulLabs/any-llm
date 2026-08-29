@@ -1609,7 +1609,7 @@ HTTP **200** + `promptFeedback.blockReason` and already throw `content_filter`.
 
 **References:** ADR-003 (closed `LlmErrorKind` union); ADR-024 (non-idempotent store
 mutations stay non-retryable); issue
-[#65](https://github.com/GulLabs/any-llm/issues/65);
+[#65](https://github.com/gul-labs/any-llm/issues/65);
 `docs/error-classification-design.md`.
 
 ---

@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/GulLabs/any-llm/actions/workflows/ci.yml"><img src="https://github.com/GulLabs/any-llm/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/gul-labs/any-llm/actions/workflows/ci.yml"><img src="https://github.com/gul-labs/any-llm/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://www.npmjs.com/package/@gullabs/any-llm"><img src="https://img.shields.io/npm/v/@gullabs/any-llm.svg" alt="npm @gullabs/any-llm"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="Apache-2.0"></a>
   <a href="https://www.npmjs.com/package/@gullabs/any-llm"><img src="https://img.shields.io/node/v/@gullabs/any-llm.svg" alt="Node current"></a>
@@ -210,4 +210,4 @@ pnpm quality   # build + lint + typecheck + test (the CI gate)
 
 ## License
 
-[Apache-2.0](./LICENSE) © 2026 [Gul Labs](https://github.com/GulLabs)
+[Apache-2.0](./LICENSE) © 2026 [Gul Labs](https://github.com/gul-labs)

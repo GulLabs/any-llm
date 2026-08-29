@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/GulLabs/any-llm.git",
+    "url": "git+https://github.com/gul-labs/any-llm.git",
     "directory": "packages/testing"
   },
   "main": "./dist/index.cjs",
@@ -46,6 +46,6 @@
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/GulLabs/any-llm/tree/main/packages/testing#readme",
-  "bugs": "https://github.com/GulLabs/any-llm/issues"
+  "homepage": "https://github.com/gul-labs/any-llm/tree/main/packages/testing#readme",
+  "bugs": "https://github.com/gul-labs/any-llm/issues"
 }

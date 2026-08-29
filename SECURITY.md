@@ -8,7 +8,7 @@ Security fixes land on `main` and are published as patched npm releases of the a
 
 **Do not open a public issue.**
 
-Report privately through [GitHub Security Advisories](https://github.com/GulLabs/any-llm/security/advisories/new).
+Report privately through [GitHub Security Advisories](https://github.com/gul-labs/any-llm/security/advisories/new).
 
 We aim to acknowledge within a few business days. Please include:
 

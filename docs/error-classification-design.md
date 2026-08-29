@@ -2,7 +2,7 @@
 
 **Status:** Accepted (Codex APPROVE, task-msspdo9c-lplc0s, 2026-08-14). Implementation follows this document. ADR-028 records the decision.
 
-**Trigger:** [#65](https://github.com/GulLabs/any-llm/issues/65) — xAI safety-check HTTP 403 (`SAFETY_CHECK_TYPE_*`) is classified as `invalid_auth`. That is a symptom. The defect is the HTTP-status-only default in core plus an incomplete xAI overlay, plus docs that teach 403 = auth.
+**Trigger:** [#65](https://github.com/gul-labs/any-llm/issues/65) — xAI safety-check HTTP 403 (`SAFETY_CHECK_TYPE_*`) is classified as `invalid_auth`. That is a symptom. The defect is the HTTP-status-only default in core plus an incomplete xAI overlay, plus docs that teach 403 = auth.
 
 **P0:** No legacy compatibility. Prefer the clean current contract even when it is breaking. This change is a correctness repair of an existing kind (`content_filter`), not a compatibility shim and not a new kind.
 

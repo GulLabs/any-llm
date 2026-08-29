@@ -299,8 +299,10 @@ idempotent re-runs without hitting the provider. Absent in v1.
 ## Package Scope
 
 The npm scope stays lowercase `@gullabs`. The GitHub org/repo path is
-`GulLabs/any-llm` — that casing is load-bearing for npm provenance (see
-`RELEASING.md`). Provider SDK packages (`@google/genai`, `@anthropic-ai/sdk`,
+`gul-labs/any-llm` — these are separate namespaces and the scope does not track
+the org name. The exact org/repo path is load-bearing for npm provenance: it is
+matched literally, so neither different casing nor a redirect from a former org
+name satisfies it (see `RELEASING.md`). Provider SDK packages (`@google/genai`, `@anthropic-ai/sdk`,
 `openai`) are peer dependencies, not bundled dependencies, to avoid duplicate
 instances in the host's dependency tree.
 
