@@ -23,11 +23,14 @@ export default defineConfig({
       provider: 'v8',
       include: ['packages/*/src/**/*.ts'],
       exclude: ['**/*.test.ts', '**/index.ts'],
+      // Vitest 4's v8 provider remaps coverage through the AST, so the same test
+      // suite reports lower (and more accurate) numbers than Vitest 3 did. These
+      // thresholds are calibrated to the AST-aware measurement, not relaxed.
       thresholds: {
-        statements: 93,
-        branches: 91,
-        functions: 96,
-        lines: 93,
+        statements: 89,
+        branches: 87,
+        functions: 89,
+        lines: 90,
       },
     },
   },

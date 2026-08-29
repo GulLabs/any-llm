@@ -34,13 +34,11 @@ export function makeTestDescriptor(
  * provider's strict per-field schema. Use {@link makeTestDescriptor} instead
  * when a test specifically needs strict-schema rejection behavior.
  */
-const PermissiveConfigSchema = z
-  .looseObject({})
-  .meta({
-    title: 'PermissiveConfig',
-    description: 'Permissive test schema.',
-    examples: [{}],
-  })
+const PermissiveConfigSchema = z.looseObject({}).meta({
+  title: 'PermissiveConfig',
+  description: 'Permissive test schema.',
+  examples: [{}],
+})
 
 const PermissiveConfigJsonSchema = toConfigJsonSchema(PermissiveConfigSchema)
 const PermissiveConfigValidator = zodToStandardSchema(PermissiveConfigSchema)

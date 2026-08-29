@@ -1,9 +1,11 @@
 /**
  * Permanence guard: published package.json repository metadata must keep the
- * `GulLabs/any-llm` org/repo path. Lowercase `gullabs` fails npm provenance
- * (Release run 31787709259). The Release workflow compares the same path to
- * `GITHUB_REPOSITORY` immediately before publish. After an org/repo rename,
- * update `repoPath` here first so CI and the Release gate stay aligned.
+ * `gul-labs/any-llm` org/repo path exactly. The path is matched literally against
+ * the provenance attestation — a redirect from a former org name does not satisfy
+ * it, and neither does different casing (`gullabs` failed this way in Release run
+ * 31787709259). The Release workflow compares the same path to `GITHUB_REPOSITORY`
+ * immediately before publish. After an org/repo rename, update `repoPath` here
+ * first so CI and the Release gate stay aligned.
  *
  * @module
  */
@@ -14,7 +16,7 @@ import { describe, expect, it } from 'vitest'
 
 const workspaceRoot = resolve(import.meta.dirname, '../../..')
 const packagesRoot = join(workspaceRoot, 'packages')
-const repoPath = 'GulLabs/any-llm'
+const repoPath = 'gul-labs/any-llm'
 const hostedUrl = `https://github.com/${repoPath}`
 
 type Manifest = {
@@ -50,7 +52,7 @@ describe('published package metadata', () => {
   })
 
   it.each(publishedManifests())(
-    '$dir repository path uses GulLabs/any-llm casing',
+    '$dir repository path is exactly gul-labs/any-llm',
     ({ dir, pkg }) => {
       expect(pkg.repository?.type).toBe('git')
       expect(pkg.repository?.directory).toBe(`packages/${dir}`)

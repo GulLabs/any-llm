@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/GulLabs/any-llm.git",
+    "url": "git+https://github.com/gul-labs/any-llm.git",
     "directory": "packages/quota"
   },
   "main": "./dist/index.cjs",
@@ -30,7 +30,7 @@
     "@gullabs/core": "workspace:*"
   },
   "engines": {
-    "node": ">=20.9.0"
+    "node": ">=22.12.0"
   },
   "sideEffects": false,
   "keywords": [
@@ -45,6 +45,6 @@
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/GulLabs/any-llm/tree/main/packages/quota#readme",
-  "bugs": "https://github.com/GulLabs/any-llm/issues"
+  "homepage": "https://github.com/gul-labs/any-llm/tree/main/packages/quota#readme",
+  "bugs": "https://github.com/gul-labs/any-llm/issues"
 }

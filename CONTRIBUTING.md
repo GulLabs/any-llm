@@ -6,7 +6,7 @@ Only [@atifgul99](https://github.com/atifgul99) can push or merge to `main`. Eve
 
 ## Dev setup
 
-Node `>=20.9.0`. Package manager is **pnpm 9.12.0** (see `packageManager` in the root `package.json`).
+Node `>=24` for development (`.nvmrc` pins 24.20.0; published packages support Node `>=22.12.0`). Package manager is **pnpm 11.24.0** (see `packageManager` in the root `package.json`). pnpm settings — overrides, peer-dependency behavior, and build approvals — live in `pnpm-workspace.yaml`.
 
 ```bash
 pnpm install
@@ -14,7 +14,8 @@ pnpm lint           # ESLint flat config
 pnpm typecheck      # tsc --noEmit across the workspace
 pnpm test           # vitest, no network
 pnpm -r build       # tsup: ESM + CJS + d.ts
-pnpm quality        # build + lint + typecheck + test (same gate CI runs)
+pnpm format:check   # Prettier
+pnpm quality        # build + format:check + lint + typecheck + test (same gate CI runs)
 pnpm example        # network-free end-to-end demo
 ```
 

@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/GulLabs/any-llm.git",
+    "url": "git+https://github.com/gul-labs/any-llm.git",
     "directory": "packages/xai"
   },
   "main": "./dist/index.cjs",
@@ -30,14 +30,14 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "openai": "^6 || ^7"
+    "openai": "^7"
   },
   "devDependencies": {
-    "openai": "^7.4.0",
+    "openai": "^7.8.0",
     "@gullabs/testing": "workspace:*"
   },
   "engines": {
-    "node": ">=20.9.0"
+    "node": ">=22.12.0"
   },
   "sideEffects": false,
   "keywords": [
@@ -54,6 +54,6 @@
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/GulLabs/any-llm/tree/main/packages/xai#readme",
-  "bugs": "https://github.com/GulLabs/any-llm/issues"
+  "homepage": "https://github.com/gul-labs/any-llm/tree/main/packages/xai#readme",
+  "bugs": "https://github.com/gul-labs/any-llm/issues"
 }

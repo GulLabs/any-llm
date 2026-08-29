@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/GulLabs/any-llm/actions/workflows/ci.yml"><img src="https://github.com/GulLabs/any-llm/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/gul-labs/any-llm/actions/workflows/ci.yml"><img src="https://github.com/gul-labs/any-llm/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://www.npmjs.com/package/@gullabs/any-llm"><img src="https://img.shields.io/npm/v/@gullabs/any-llm.svg" alt="npm @gullabs/any-llm"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="Apache-2.0"></a>
   <a href="https://www.npmjs.com/package/@gullabs/any-llm"><img src="https://img.shields.io/node/v/@gullabs/any-llm.svg" alt="Node current"></a>
@@ -150,7 +150,7 @@ Gemini 2.5 uses `reasoning.budgetTokens`. Gemini 3 / Gemma built-ins use `reason
 | [`@gullabs/claude-cli`](./packages/claude-cli) | Dev-only local `claude` CLI provider. Not for production                     |
 | [`@gullabs/codex-cli`](./packages/codex-cli)   | Dev-only local `codex` CLI provider. Not for production                      |
 
-Published on npm under `@gullabs`, Apache-2.0, Node `>=20.9.0`.
+Published on npm under `@gullabs`, Apache-2.0, Node `>=22.12.0`.
 
 ## Pipeline
 
@@ -210,4 +210,4 @@ pnpm quality   # build + lint + typecheck + test (the CI gate)
 
 ## License
 
-[Apache-2.0](./LICENSE) © 2026 [Gul Labs](https://github.com/GulLabs)
+[Apache-2.0](./LICENSE) © 2026 [Gul Labs](https://github.com/gul-labs)

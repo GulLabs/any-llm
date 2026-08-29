@@ -10,20 +10,20 @@ pnpm add -D @gullabs/testing @gullabs/core @gullabs/google
 
 ## Key exports
 
-| Export                       | What it is                                                                                     |
-| ---------------------------- | ---------------------------------------------------------------------------------------------- |
-| `FakeClock`                  | Deterministic `Clock` — `advance(ms)` / `set(ms)` for latency assertions                       |
-| `FakeIds`                    | Sequential `IdGenerator` — returns `call_1`, `attempt_1`, etc.                                 |
-| `RecordingSink`              | In-memory `UsageSink` — accumulates records; inspect via `sink.records` / `sink.last()`        |
-| `makeFakeGemini(script)`     | Creates a fake `@google/genai`-compatible client from a scripted response                      |
-| `fakeGeminiResponse(opts)`   | Builds a `GeminiResponseLike` with usage metadata, thought parts, and JSON output              |
-| `fakeGeminiBlocked(opts)`    | Builds a safety-blocked `GeminiResponseLike` (no candidates, `promptFeedback.blockReason` set) |
-| `FakeAdapter`                | Scriptable `ProviderAdapter` — use at the port level (bypasses Gemini SDK entirely)            |
-| `SignalAwareFakeAdapter`     | Like `FakeAdapter` but observes and honours `AbortSignal` from `AdapterCtx`                    |
-| `scriptedRateLimiter(opts)`  | RateLimiter fake with injectable wait for deterministic `queueDelayMs` assertions              |
-| `inMemoryRateLimiter(opts?)` | Convenience re-export of `@gullabs/core`'s in-process `RateLimiter` implementation             |
-| `makeFakeXai` / `fakeXaiResponse` | Fake xAI Responses client for `@gullabs/xai` adapter tests |
-| `FakeXaiFileStore` | In-memory xAI Files store (upload/TTL/delete/`failClosed`) for host unit tests |
+| Export                            | What it is                                                                                     |
+| --------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `FakeClock`                       | Deterministic `Clock` — `advance(ms)` / `set(ms)` for latency assertions                       |
+| `FakeIds`                         | Sequential `IdGenerator` — returns `call_1`, `attempt_1`, etc.                                 |
+| `RecordingSink`                   | In-memory `UsageSink` — accumulates records; inspect via `sink.records` / `sink.last()`        |
+| `makeFakeGemini(script)`          | Creates a fake `@google/genai`-compatible client from a scripted response                      |
+| `fakeGeminiResponse(opts)`        | Builds a `GeminiResponseLike` with usage metadata, thought parts, and JSON output              |
+| `fakeGeminiBlocked(opts)`         | Builds a safety-blocked `GeminiResponseLike` (no candidates, `promptFeedback.blockReason` set) |
+| `FakeAdapter`                     | Scriptable `ProviderAdapter` — use at the port level (bypasses Gemini SDK entirely)            |
+| `SignalAwareFakeAdapter`          | Like `FakeAdapter` but observes and honours `AbortSignal` from `AdapterCtx`                    |
+| `scriptedRateLimiter(opts)`       | RateLimiter fake with injectable wait for deterministic `queueDelayMs` assertions              |
+| `inMemoryRateLimiter(opts?)`      | Convenience re-export of `@gullabs/core`'s in-process `RateLimiter` implementation             |
+| `makeFakeXai` / `fakeXaiResponse` | Fake xAI Responses client for `@gullabs/xai` adapter tests                                     |
+| `FakeXaiFileStore`                | In-memory xAI Files store (upload/TTL/delete/`failClosed`) for host unit tests                 |
 
 ## Quick example — end-to-end with fake Gemini client
 

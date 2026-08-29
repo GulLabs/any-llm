@@ -96,7 +96,7 @@ paths to other repos.
 - **Priority:** P3
 - **Status:** largely done on branch `chore/dependabot-upgrades-careful` — routine
   devDeps + `openai@7` (peer `^6 || ^7`) + `@google/genai@2.16` (peer already `^1 || ^2`)
-  + `actions/setup-node@v7` + pglite 0.5.4. `pnpm quality` green against new majors.
+  - `actions/setup-node@v7` + pglite 0.5.4. `pnpm quality` green against new majors.
 - **Origin:** open dependabot PRs.
 - **Next step:** merge upgrade PR; close Dependabot PRs as superseded. Skipped
   `@changesets/cli@3` and TypeScript 7 / Vitest 4 (out of Dependabot scope; separate plan).
@@ -109,6 +109,27 @@ paths to other repos.
 - **Status:** proposal dropped by owner, awaiting triage.
 - **Origin:** `docs/response-chaining-enhancement.md`.
 - **Next step:** owner triage decision.
+
+---
+
+## B-008 — xAI fixture re-capture script
+
+- **Priority:** P2
+- **Status:** open, plan not yet written.
+- **Origin:** `packages/xai/src/__fixtures__/*.json` are live captures (grok-4.5 on
+  2026-07-09, grok-4.6 on 2026-08-12) backing 63 contract tests, including the only
+  external check on cost math — `pricing.test.ts` reconciles `XAI_PRICING` against xAI's
+  own `/v1/models` prices and against `cost_in_usd_ticks` from a real billed call. They
+  were captured by hand and there is no way to refresh them, so they prove the adapter
+  handled the API _as of the capture date_, not as of today. Silent provider drift stays
+  green.
+- **Scope:** a manual, key-gated dev script in the shape of `scripts/probe-capabilities.mjs`
+  (not in CI, documented cost warning): replay each recorded request against the live
+  Responses API, strip Authorization/Bearer/API-key-shaped strings, write the response
+  back to `__fixtures__/`, and diff so drift shows up as a reviewable change. Fixtures are
+  Prettier-ignored so a re-capture produces no formatting noise.
+- **Next step:** write the plan; decide whether the diff runs on a release cadence or
+  ad hoc.
 
 ---
 

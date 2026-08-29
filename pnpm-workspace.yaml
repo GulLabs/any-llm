@@ -1,2 +1,17 @@
 packages:
   - 'packages/*'
+
+autoInstallPeers: false
+strictPeerDependencies: false
+
+overrides:
+  # GHSA-g7r4-m6w7-qqqr — tsup still resolves a vulnerable esbuild.
+  esbuild: '>=0.28.1'
+
+minimumReleaseAgeExclude:
+  - openai@7.8.0
+
+allowBuilds:
+  '@google/genai': true
+  esbuild: true
+  protobufjs: true

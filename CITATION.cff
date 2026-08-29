@@ -4,11 +4,11 @@ message: If you use this software, please cite it as below.
 type: software
 authors:
   - name: Gul Labs
-    website: https://github.com/GulLabs
+    website: https://github.com/gul-labs
   - family-names: Gul
     given-names: Atif
     website: https://github.com/atifgul99
-repository-code: https://github.com/GulLabs/any-llm
+repository-code: https://github.com/gul-labs/any-llm
 url: https://www.npmjs.com/package/@gullabs/any-llm
 license: Apache-2.0
 abstract: >-

@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/GulLabs/any-llm.git",
+    "url": "git+https://github.com/gul-labs/any-llm.git",
     "directory": "packages/any-llm"
   },
   "main": "./dist/index.cjs",
@@ -27,12 +27,12 @@
     "build": "tsup"
   },
   "dependencies": {
-    "@google/genai": "^1.45.0 || ^2",
+    "@google/genai": "^2.19.0",
     "@gullabs/core": "workspace:*",
     "@gullabs/google": "workspace:*"
   },
   "engines": {
-    "node": ">=20.9.0"
+    "node": ">=22.12.0"
   },
   "sideEffects": false,
   "keywords": [
@@ -49,6 +49,6 @@
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/GulLabs/any-llm/tree/main/packages/any-llm#readme",
-  "bugs": "https://github.com/GulLabs/any-llm/issues"
+  "homepage": "https://github.com/gul-labs/any-llm/tree/main/packages/any-llm#readme",
+  "bugs": "https://github.com/gul-labs/any-llm/issues"
 }

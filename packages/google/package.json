@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/GulLabs/any-llm.git",
+    "url": "git+https://github.com/gul-labs/any-llm.git",
     "directory": "packages/google"
   },
   "main": "./dist/index.cjs",
@@ -30,14 +30,14 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@google/genai": "^1 || ^2"
+    "@google/genai": "^2"
   },
   "devDependencies": {
-    "@google/genai": "^2.16.0",
+    "@google/genai": "^2.19.0",
     "@gullabs/testing": "workspace:*"
   },
   "engines": {
-    "node": ">=20.9.0"
+    "node": ">=22.12.0"
   },
   "sideEffects": false,
   "keywords": [
@@ -54,6 +54,6 @@
   "publishConfig": {
     "access": "public"
   },
-  "homepage": "https://github.com/GulLabs/any-llm/tree/main/packages/google#readme",
-  "bugs": "https://github.com/GulLabs/any-llm/issues"
+  "homepage": "https://github.com/gul-labs/any-llm/tree/main/packages/google#readme",
+  "bugs": "https://github.com/gul-labs/any-llm/issues"
 }
