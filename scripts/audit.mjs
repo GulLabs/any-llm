@@ -177,7 +177,55 @@ async function queryWithCanary(payload) {
   return data
 }
 
-const installed = readInstalledPackages(lockfilePath)
+/**
+ * Production-only closure, for repos whose policy is that a dev-only advisory
+ * never reaches a consumer. Uses pnpm's own resolution rather than trying to
+ * re-derive prod reachability from the lockfile by hand.
+ */
+async function readProductionPackages() {
+  const { spawn } = await import('node:child_process')
+  const json = await new Promise((resolve) => {
+    const child = spawn('pnpm', ['ls', '-r', '--prod', '--depth', 'Infinity', '--json'], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    let out = ''
+    child.stdout.on('data', (c) => (out += c))
+    child.on('error', () => resolve(null))
+    child.on('close', (code) => resolve(code === 0 ? out : null))
+  })
+  if (!json) fail('could not enumerate production dependencies via `pnpm ls`')
+
+  let importers
+  try {
+    importers = JSON.parse(json)
+  } catch (error) {
+    fail(`could not parse \`pnpm ls\` output: ${error?.message ?? error}`)
+  }
+
+  const packages = new Map()
+  const visit = (deps) => {
+    for (const [name, info] of Object.entries(deps ?? {})) {
+      const version = info?.version
+      if (typeof version === 'string' && version.length > 0) {
+        if (!packages.has(name)) packages.set(name, new Set())
+        packages.get(name).add(version)
+      }
+      if (info?.dependencies) visit(info.dependencies)
+    }
+  }
+  for (const importer of Array.isArray(importers) ? importers : []) {
+    visit(importer?.dependencies)
+    visit(importer?.optionalDependencies)
+  }
+  if (packages.size === 0) {
+    fail('`pnpm ls --prod` reported no production packages; refusing to report clean')
+  }
+  return packages
+}
+
+const installed = args.includes('--prod')
+  ? await readProductionPackages()
+  : readInstalledPackages(lockfilePath)
 const payload = Object.fromEntries(
   [...installed].map(([name, versions]) => [name, [...versions]]),
 )

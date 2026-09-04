@@ -16,7 +16,7 @@
  */
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:http'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, chmodSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -74,11 +74,11 @@ function startService(mode, findings = {}) {
   })
 }
 
-function runGate({ url, lockfile, env = {} }) {
+function runGate({ url, lockfile, extraArgs = [], env = {} }) {
   return new Promise((resolve) => {
     const child = spawn(
       process.execPath,
-      [GATE, '--audit-level=high', `--lockfile=${lockfile}`],
+      [GATE, '--audit-level=high', `--lockfile=${lockfile}`, ...extraArgs],
       {
         env: {
           ...process.env,
@@ -227,6 +227,60 @@ await withService('healthy', {}, async (url) => {
     `exit=${missing.code} out=${missing.out.trim()}`,
   )
 })
+
+// --prod uses pnpm's own resolution instead of the lockfile. Faked with a PATH
+// shim so the walker is exercised without needing a vulnerable prod tree.
+function makePnpmShim(stdout, exitCode = 0) {
+  const dir = mkdtempSync(join(tmpdir(), 'audit-shim-'))
+  writeFileSync(
+    join(dir, 'pnpm'),
+    `#!/bin/sh\ncat <<'JSON'\n${stdout}\nJSON\nexit ${exitCode}\n`,
+  )
+  chmodSync(join(dir, 'pnpm'), 0o755)
+  return dir
+}
+
+const PROD_TREE = JSON.stringify([
+  {
+    name: 'root',
+    dependencies: {
+      react: { version: '19.2.8' },
+      minimist: { version: '1.2.5', dependencies: { nested: { version: '2.0.0' } } },
+    },
+  },
+])
+
+await withService(
+  'healthy',
+  { minimist: [{ id: 4, severity: 'critical', title: 'Prototype Pollution' }] },
+  async (url) => {
+    const shim = makePnpmShim(PROD_TREE)
+    const prod = await runGate({
+      url,
+      lockfile: cleanLock,
+      extraArgs: ['--prod'],
+      env: { PATH: `${shim}:${process.env.PATH}` },
+    })
+    check(
+      '--prod walks the pnpm tree and flags a transitive prod finding',
+      prod.code === 1 && /VULNERABLE/.test(prod.out) && /minimist/.test(prod.out),
+      `exit=${prod.code} out=${prod.out.trim()}`,
+    )
+
+    const emptyShim = makePnpmShim('[]')
+    const emptyProd = await runGate({
+      url,
+      lockfile: cleanLock,
+      extraArgs: ['--prod'],
+      env: { PATH: `${emptyShim}:${process.env.PATH}` },
+    })
+    check(
+      '--prod with an empty tree -> refuses to report clean, exit 1',
+      emptyProd.code === 1 && !/CLEAN/.test(emptyProd.out),
+      `exit=${emptyProd.code} out=${emptyProd.out.trim()}`,
+    )
+  },
+)
 
 if (failures > 0) {
   console.error(`\naudit gate self-test: ${failures} failure(s)`)
