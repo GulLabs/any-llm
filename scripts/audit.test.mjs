@@ -34,9 +34,10 @@ const CANARY_ADVISORY = {
 function makeLockfile(keys) {
   const dir = mkdtempSync(join(tmpdir(), 'audit-lock-'))
   const file = join(dir, 'pnpm-lock.yaml')
-  const body =
-    `lockfileVersion: '9.0'\n\npackages:\n\n` +
-    keys.map((k) => `  '${k}':\n    resolution: {integrity: sha512-x}\n`).join('\n')
+  const entries = keys
+    .map((k) => `  '${k}':\n    resolution: {integrity: sha512-x}\n`)
+    .join('\n')
+  const body = `lockfileVersion: '9.0'\n\npackages:\n\n${entries}`
   writeFileSync(file, body)
   return file
 }
