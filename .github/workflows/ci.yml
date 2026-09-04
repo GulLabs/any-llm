@@ -46,7 +46,13 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Not `pnpm audit` directly. That command cannot distinguish "found a high
+      # severity vulnerability" from "npm's advisory service is unreachable" —
+      # its plain form exits 1 for both, and its --json form is worse, exiting 0
+      # with an empty advisory list that reads as CLEAN. `audit:gate` probes the
+      # service with a known-vulnerable canary first, so an outage is reported as
+      # UNDETERMINED instead of being silently laundered into a pass.
       - name: Audit dependencies
-        run: pnpm audit --audit-level=high
+        run: pnpm audit:gate
 
       - run: pnpm quality

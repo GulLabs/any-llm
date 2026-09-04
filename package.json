@@ -14,12 +14,14 @@
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "quality": "pnpm -r build && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
+    "quality": "pnpm -r build && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:audit-gate && pnpm test",
     "clean": "pnpm -r exec rm -rf dist",
     "example": "tsx examples/basic.ts",
     "changeset": "changeset",
     "version-packages": "changeset version",
-    "release": "pnpm -r build && changeset publish"
+    "release": "pnpm -r build && changeset publish",
+    "audit:gate": "node scripts/audit.mjs --audit-level=high",
+    "test:audit-gate": "node scripts/audit.test.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.1",
@@ -37,7 +39,8 @@
     "tsx": "^4.23.12",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.68.0",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "yaml": "^2.9.0"
   },
   "packageManager": "pnpm@11.24.0"
 }
